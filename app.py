@@ -13,7 +13,7 @@ FINNHUB_KEY = st.secrets.get("FINNHUB_KEY")
 def get_market_overview():
     data = {}
     
-    # 1. VIX (Multi-Source Check)
+    # 1. VIX (Multi-Source Check für maximale Stabilität)
     vix_p, vix_c = 0.0, 0.0
     vix_found = False
     try:
@@ -130,27 +130,34 @@ if ticker:
                 df = df[df['strike'] < price] if side == "put" else df[df['strike'] > price]
                 df = df.sort_values('strike', ascending=(side == "call"))
                 
-                for _, row in df.head(10).iterrows():
-                    # Delta-Handling
+                for _, row in df.head(12).iterrows():
                     d_val = row['delta'] if row['delta'] is not None else 0.0
                     d_abs = abs(float(d_val))
                     pop = (1 - d_abs) * 100
                     
-                    # Logik für Ampel & Ausbuchung
+                    # LOGIK FÜR REPAIR-MODUS & SICHERHEIT
                     is_safe = d_abs < (0.15 if vix_status == "panic" else 0.12)
-                    color = "🟢" if is_safe else "🟡" if d_abs < 0.25 else "🔴"
-                    if side == "call" and my_buyin and row['strike'] < my_buyin: color = "❌"
                     
-                    with st.expander(f"{color} Strike {row['strike']:.1f}$ | Chance: {pop:.0f}%"):
-                        # HIER WURDE DER FEHLER AUS BILD 10 BEHOBEN
+                    if side == "call" and my_buyin and row['strike'] < my_buyin:
+                        color = "⚠️"
+                        note = "REPAIR (Unter Einstand)"
+                    else:
+                        color = "🟢" if is_safe else "🟡" if d_abs < 0.25 else "🔴"
+                        note = "SICHER" if is_safe else "AGRESSIV"
+                    
+                    with st.expander(f"{color} Strike {row['strike']:.1f}$ | {note} | Chance: {pop:.0f}%"):
                         col_a, col_b, col_c = st.columns(3)
                         col_a.metric("Prämie", f"{row['mid']:.2f}$")
-                        col_b.metric("Delta", f"{d_abs:.2f}")
+                        col_b.metric("Delta", f"{d_abs:.2f}", help="Je niedriger, desto unwahrscheinlicher das Ausbuchen.")
                         
                         if side == "call" and my_buyin:
                             profit = (row['strike'] - my_buyin) + row['mid']
-                            col_c.metric("Profit bei Ausübung", f"{profit:.2f}$")
+                            col_c.metric("Profit bei Ausübung", f"{profit:.2f}$", 
+                                         delta=f"{profit:.2f}$", delta_color="normal" if profit > 0 else "inverse")
                         else:
                             col_c.metric("Gewinn-Chance", f"{pop:.1f}%")
                             
                         st.progress(max(0.0, min(1.0, pop / 100)))
+                        
+                        if color == "⚠️":
+                            st.caption("❗ ACHTUNG: Dieser Strike liegt unter deinem Einstandspreis. Bei Ausübung droht ein Buchverlust.")
