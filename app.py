@@ -3,117 +3,86 @@ import pandas as pd
 import requests
 from datetime import datetime
 
-# --- KONFIGURATION ---
+# --- SETUP ---
 st.set_page_config(page_title="Stillhalter Pro Scanner", layout="wide")
 
-# Keys aus den Streamlit Secrets
 MD_KEY = st.secrets.get("MARKETDATA_KEY")
 FINNHUB_KEY = st.secrets.get("FINNHUB_KEY")
 
-# --- HILFSFUNKTIONEN ---
-
 def get_live_price(symbol):
-    """Holt den aktuellen Kurs über Finnhub"""
     try:
         url = f'https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_KEY}'
         r = requests.get(url).json()
         return float(r['c']) if r.get('c') else None
-    except:
-        return None
+    except: return None
 
 def get_marketdata_options(symbol):
-    """Holt die Optionskette von MarketData.app"""
     url = f"https://api.marketdata.app/v1/options/chain/{symbol}/"
     params = {"token": MD_KEY, "side": "put", "range": "otm"}
     try:
         response = requests.get(url, params=params).json()
         if response.get('s') == 'ok':
-            return pd.DataFrame({
+            df = pd.DataFrame({
                 'strike': response['strike'],
                 'mid': response['mid'],
                 'expiration': response['expiration'],
-                'delta': response.get('delta', [0] * len(response['strike'])),
-                'iv': response.get('iv', [0] * len(response['strike']))
+                'delta': response.get('delta', [0] * len(response['strike']))
             })
-    except:
-        return None
+            
+            # DER FIX: Alle Zeitstempel sofort in echtes Datum umwandeln
+            def fix_date(x):
+                try:
+                    if isinstance(x, (int, float)) or (isinstance(x, str) and x.isdigit()):
+                        return datetime.fromtimestamp(int(x)).strftime('%Y-%m-%d')
+                    return str(x)
+                except: return str(x)
+            
+            df['expiration'] = df['expiration'].apply(fix_date)
+            return df
+    except: return None
     return None
 
-def format_expiry_label(val):
-    """Wandelt Unix-Zahlen (wie 1771621200) in lesbare Daten um"""
-    try:
-        # Wenn es eine Zahl oder ein Zahlen-String ist
-        if isinstance(val, (int, float)) or (isinstance(val, str) and val.isdigit()):
-            return datetime.fromtimestamp(int(val)).strftime('%d.%m.%Y')
-        return str(val)
-    except:
-        return str(val)
-
-# --- USER INTERFACE ---
+# --- UI ---
 st.title("🛡️ Pro Stillhalter Scanner")
 
-# Favoriten-Leiste
 watchlist = ["AAPL", "TSLA", "NVDA", "MSFT", "AMD", "META"]
 sel_fav = st.pills("Schnellauswahl", watchlist)
-user_input = st.text_input("Ticker manuell", "")
-ticker = (sel_fav if sel_fav else user_input).strip().upper()
+ticker = (sel_fav if sel_fav else st.text_input("Ticker", "AAPL")).strip().upper()
 
 if ticker:
     price = get_live_price(ticker)
     if price:
-        st.metric(f"Aktueller Kurs {ticker}", f"{price:.2f} $")
-        
-        with st.spinner('Lade Optionsdaten...'):
-            chain = get_marketdata_options(ticker)
+        st.metric(f"Kurs {ticker}", f"{price:.2f} $")
+        chain = get_marketdata_options(ticker)
         
         if chain is not None and not chain.empty:
-            # Ablaufdaten für das Menü vorbereiten
+            # Jetzt sind alle Daten in 'chain' garantiert Text-Daten (YYYY-MM-DD)
             expirations = sorted(chain['expiration'].unique())
             
-            # WICHTIG: format_func sorgt dafür, dass du im Menü ein Datum siehst statt Zahlen
+            # Schönere Anzeige im Dropdown
             selected_expiry = st.selectbox(
                 "Ablaufdatum wählen", 
-                expirations, 
-                format_func=format_expiry_label
+                expirations,
+                format_func=lambda x: datetime.strptime(x, '%Y-%m-%d').strftime('%d.%m.%Y')
             )
             
-            # Filterung auf das gewählte Datum
             df_expiry = chain[chain['expiration'] == selected_expiry].copy()
-            st.subheader(f"Puts für {format_expiry_label(selected_expiry)}")
-
-            # Anzeige der Strikes
-            for _, row in df_expiry.sort_values('strike', ascending=False).head(15).iterrows():
-                # --- DTE BERECHNUNG FIX ---
-                try:
-                    raw_exp = row['expiration']
-                    if isinstance(raw_exp, (int, float)) or (isinstance(raw_exp, str) and raw_exp.isdigit()):
-                        exp_dt = datetime.fromtimestamp(int(raw_exp))
-                    else:
-                        exp_dt = datetime.strptime(str(raw_exp), '%Y-%m-%d')
-                    
-                    # Restlaufzeit in Tagen
-                    dte = (exp_dt - datetime.now()).days
-                    dte = max(1, dte) # Verhindert Division durch Null
-                except:
-                    dte = 30
+            
+            for _, row in df_expiry.sort_values('strike', ascending=False).head(12).iterrows():
+                # DTE Berechnung ist jetzt sicher
+                exp_dt = datetime.strptime(row['expiration'], '%Y-%m-%d')
+                dte = max(1, (exp_dt - datetime.now()).days)
                 
-                # Rendite & Kennzahlen
                 ann_return = (row['mid'] / row['strike']) * (365 / dte) * 100
                 delta_val = abs(row['delta'])
-                puffer = ((price / row['strike']) - 1) * 100
                 
-                # Risiko-Ampel-Logik
                 color = "🔴" if delta_val > 0.25 else "🟡" if delta_val > 0.15 else "🟢"
-
+                
                 with st.expander(f"{color} Strike {row['strike']}$ | Delta: {delta_val:.2f} | {ann_return:.1f}% p.a."):
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Prämie (Mid)", f"{row['mid']}$")
-                    c2.metric("Puffer", f"{puffer:.1f}%")
-                    c3.metric("Laufzeit", f"{dte} Tage")
+                    c1, c2 = st.columns(2)
+                    c1.metric("Prämie", f"{row['mid']}$")
+                    c2.metric("Laufzeit", f"{dte} Tage")
         else:
-            st.warning("Keine Daten gefunden. Prüfe dein API-Limit oder den Ticker.")
+            st.warning("Keine Daten. API-Limit erreicht?")
     else:
-        st.error(f"Konnte Kurs für '{ticker}' nicht laden.")
-
-st.divider()
-st.link_button("TradingView Chart", f"https://www.tradingview.com/symbols/{ticker}/")
+        st.error(f"Ticker {ticker} nicht gefunden.")
