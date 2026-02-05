@@ -1,5 +1,5 @@
 import streamlit as st
-import pd
+import pandas as pd
 import requests
 from datetime import datetime
 
@@ -13,12 +13,10 @@ FINNHUB_KEY = st.secrets.get("FINNHUB_KEY")
 def get_market_overview():
     data = {"VIX": {"price": 15.0}, "S&P 500": {"price": 0.0, "change": 0.0}, "Nasdaq": {"price": 0.0, "change": 0.0}}
     try:
-        # VIX Abfrage
         r_vix = requests.get(f"https://api.marketdata.app/v1/indices/quotes/VIX/?token={MD_KEY}").json()
         if r_vix.get('s') == 'ok':
             data["VIX"]["price"] = r_vix['last'][0]
         
-        # Markt-Indizes via Finnhub (SPY/QQQ Proxy)
         for name, etf in [("S&P 500", "SPY"), ("Nasdaq", "QQQ")]:
             rf = requests.get(f'https://finnhub.io/api/v1/quote?symbol={etf}&token={FINNHUB_KEY}').json()
             if rf.get('c'):
@@ -56,7 +54,6 @@ def get_best_put_opportunity(symbol):
     try:
         dates = get_all_expirations(symbol)
         if not dates: return None
-        # Ziel: Laufzeit zwischen 20 und 50 Tagen
         target_date = next((d for d in dates if 20 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 50), dates[0])
         df = get_chain_for_date(symbol, target_date, "put")
         if df is not None and not df.empty:
@@ -68,7 +65,7 @@ def get_best_put_opportunity(symbol):
     except: return None
 
 # --- UI START ---
-st.title("🛡️ CapTrader Pro Scanner")
+st.title("🛡️ Pro Stillhalter Dashboard")
 
 # 1. MARKT-STATUS
 m = get_market_overview()
@@ -101,13 +98,16 @@ if opps:
 
 st.divider()
 
-# 3. PORTFOLIO REPAIR STATUS
+# 3. PORTFOLIO REPAIR STATUS (Basierend auf deinen Screenshots)
 st.subheader("💼 Portfolio Repair-Status")
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = pd.DataFrame([
-        {"Ticker": "AFRM", "Einstand": 76.00}, {"Ticker": "ELF", "Einstand": 109.00}, 
-        {"Ticker": "ETSY", "Einstand": 67.00}, {"Ticker": "GTLB", "Einstand": 41.00},
-        {"Ticker": "HOOD", "Einstand": 120.00}, {"Ticker": "TTD", "Einstand": 102.00}
+        {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0}, 
+        {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
+        {"Ticker": "GTM", "Einstand": 17.0}, {"Ticker": "HIMS", "Einstand": 37.0},
+        {"Ticker": "HOOD", "Einstand": 120.0}, {"Ticker": "JKS", "Einstand": 50.0},
+        {"Ticker": "NVO", "Einstand": 97.0}, {"Ticker": "RBRK", "Einstand": 70.0},
+        {"Ticker": "SE", "Einstand": 170.0}, {"Ticker": "TTD", "Einstand": 102.0}
     ])
 
 c_tab, c_status = st.columns([1, 1.2])
@@ -120,67 +120,51 @@ with c_status:
         curr = get_live_price(row['Ticker'])
         if curr:
             diff = (curr/row['Einstand'] - 1) * 100
-            # Farblogik nach deinen Screenshots
             if diff >= 0:
                 icon, stat, note = "🟢", "OK", "GO"
             elif diff > -20:
                 icon, stat, note = "🟡", "REPAIR", "Delta 0.10 wählen"
             else:
                 icon, stat, note = "🔵", "DEEP REPAIR", "Nur Delta 0.05!"
-            
             st.write(f"{icon} **{row['Ticker']}**: {curr:.2f}$ ({diff:.1f}%) → `{stat}: {note}`")
 
 st.divider()
 
-# 4. ROBUSTER OPTIONS-FINDER
+# 4. OPTIONS-FINDER (REPAIR CALL FINDER)
 st.subheader("🔍 Options-Finder")
 c_strat, c_tick = st.columns([1, 2])
 with c_strat:
-    option_type = st.radio("Strategie", ["Put 🛡️", "Call 📈 (Covered Call)"], horizontal=True)
+    option_type = st.radio("Strategie", ["Put 🛡️", "Call 📈"], horizontal=True)
     side = "put" if "Put" in option_type else "call"
 with c_tick:
     ticker = st.text_input("Ticker für Detail-Scan (z.B. HOOD)").strip().upper()
 
 if ticker:
     price = get_live_price(ticker)
-    # Check ob Ticker im Portfolio für Basis-Preis Vergleich
     portfolio_match = st.session_state.portfolio[st.session_state.portfolio['Ticker'] == ticker]
     my_buyin = portfolio_match['Einstand'].iloc[0] if not portfolio_match.empty else 0
     
     if price:
         st.info(f"Aktueller Kurs: {price:.2f}$ | Dein Einstand: {f'{my_buyin:.2f}$' if my_buyin > 0 else 'Nicht im Bestand'}")
-        
         dates = get_all_expirations(ticker)
         if dates:
-            # Dropdown mit Tagen bis Ablauf
             d_labels = {d: f"{datetime.strptime(d, '%Y-%m-%d').strftime('%d.%m.%Y')} ({(datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days} Tage)" for d in dates}
             sel_date = st.selectbox("Laufzeit wählen", dates, format_func=lambda x: d_labels.get(x))
-            
             df = get_chain_for_date(ticker, sel_date, side)
             if df is not None and not df.empty:
-                # Filter Out-of-the-money
                 df = df[df['strike'] < price] if side == "put" else df[df['strike'] > price]
                 df = df.sort_values('strike', ascending=(side == "call"))
-                
                 for _, row in df.head(10).iterrows():
                     d_abs = abs(float(row['delta']))
                     pop = (1 - d_abs) * 100
-                    
-                    # Farblogik für Risiko
                     is_safe = d_abs < (0.15 if vix_val > 25 else 0.12)
                     color = "🟢" if is_safe else "🟡" if d_abs < 0.25 else "🔴"
-                    
-                    # Spezielle Warnung für Calls unter Einstand
-                    if side == "call" and my_buyin > 0 and row['strike'] < my_buyin:
-                        color = "⚠️"
-                    
+                    if side == "call" and my_buyin > 0 and row['strike'] < my_buyin: color = "⚠️"
                     with st.expander(f"{color} Strike {row['strike']:.1f}$ | Delta: {d_abs:.2f} | Chance: {pop:.0f}%"):
                         ca, cb, cc = st.columns(3)
                         ca.metric("Prämie", f"{row['mid']:.2f}$")
                         cb.metric("Abstand", f"{abs(row['strike']/price-1)*100:.1f}%")
                         if side == "call" and my_buyin > 0:
-                            cc.metric("Basis neu", f"{my_buyin - row['mid']:.2f}$", help="Dein neuer effektiver Einstand")
+                            cc.metric("Basis neu", f"{my_buyin - row['mid']:.2f}$")
                         else:
                             cc.metric("Gewinn-Wahrsch.", f"{pop:.1f}%")
-        else:
-            st.warning("Keine Laufzeiten für diesen Ticker gefunden.")
