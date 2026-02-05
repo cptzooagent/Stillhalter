@@ -6,11 +6,11 @@ from datetime import datetime
 # --- KONFIGURATION ---
 st.set_page_config(page_title="Stillhalter Pro Scanner", layout="wide")
 
-# Keys aus den Streamlit Secrets
-MD_KEY = st.secrets["MARKETDATA_KEY"]
-FINNHUB_KEY = st.secrets["FINNHUB_KEY"]
+# Keys aus den Streamlit Secrets (Stelle sicher, dass beide in Cloud hinterlegt sind!)
+MD_KEY = st.secrets.get("MARKETDATA_KEY")
+FINNHUB_KEY = st.secrets.get("FINNHUB_KEY")
 
-# --- FUNKTIONEN ---
+# --- HILFSFUNKTIONEN ---
 
 def get_live_price(symbol):
     """Holt den aktuellen Kurs über Finnhub"""
@@ -40,9 +40,9 @@ def get_marketdata_options(symbol):
     return None
 
 def format_expiry_label(val):
-    """FIX FÜR BILD 9: Wandelt Unix-Zahlen in lesbare Daten um"""
+    """Wandelt Unix-Timestamps (z.B. 1771621200) in echtes Datum um"""
     try:
-        # Wenn es eine Zahl ist (Unix Timestamp)
+        # Check ob es eine Zahl ist
         if isinstance(val, (int, float)) or (isinstance(val, str) and val.isdigit()):
             return datetime.fromtimestamp(int(val)).strftime('%d.%m.%Y')
         return str(val)
@@ -52,7 +52,7 @@ def format_expiry_label(val):
 # --- USER INTERFACE ---
 st.title("🛡️ Pro Stillhalter Scanner")
 
-# Favoriten-Leiste
+# Favoriten-Leiste (wie in deinem Screenshot 13.png)
 watchlist = ["AAPL", "TSLA", "NVDA", "MSFT", "AMD", "META"]
 sel_fav = st.pills("Schnellauswahl", watchlist)
 user_input = st.text_input("Ticker manuell", "")
@@ -63,11 +63,11 @@ if ticker:
     if price:
         st.metric(f"Aktueller Kurs {ticker}", f"{price:.2f} $")
         
-        with st.spinner('Lade Optionskette...'):
+        with st.spinner('Lade Optionsdaten...'):
             chain = get_marketdata_options(ticker)
         
         if chain is not None and not chain.empty:
-            # Dropdown mit Datums-Fix
+            # Ablaufdaten sortieren und lesbar machen (Fix für Bild 13)
             expirations = sorted(chain['expiration'].unique())
             selected_expiry = st.selectbox(
                 "Ablaufdatum wählen", 
@@ -75,12 +75,13 @@ if ticker:
                 format_func=format_expiry_label
             )
             
-            # Filterung
+            # Daten filtern
             df_expiry = chain[chain['expiration'] == selected_expiry].copy()
             st.subheader(f"Puts für {format_expiry_label(selected_expiry)}")
 
-            for _, row in df_expiry.sort_values('strike', ascending=False).head(10).iterrows():
-                # --- DTE BERECHNUNG FIX ---
+            # Anzeige der Strikes
+            for _, row in df_expiry.sort_values('strike', ascending=False).head(12).iterrows():
+                # --- DTE BERECHNUNG (Fix für TypeError aus Bild 9/11) ---
                 try:
                     raw_exp = row['expiration']
                     if isinstance(raw_exp, (int, float)) or (isinstance(raw_exp, str) and raw_exp.isdigit()):
@@ -91,23 +92,22 @@ if ticker:
                 except:
                     dte = 30 # Notlösung
                 
-                # Werte berechnen
                 ann_return = (row['mid'] / row['strike']) * (365 / max(1, dte)) * 100
                 delta_val = abs(row['delta'])
                 puffer = ((price / row['strike']) - 1) * 100
                 
-                # Risiko-Ampel
-                color = "🟢" if delta_val < 0.16 else "🟡" if delta_val < 0.25 else "🔴"
+                # Risiko-Ampel-Logik
+                color = "🔴" if delta_val > 0.25 else "🟡" if delta_val > 0.15 else "🟢"
 
                 with st.expander(f"{color} Strike {row['strike']}$ | Delta: {delta_val:.2f} | {ann_return:.1f}% p.a."):
                     c1, c2, c3 = st.columns(3)
-                    c1.metric("Prämie", f"{row['mid']}$")
+                    c1.metric("Prämie (Mid)", f"{row['mid']}$")
                     c2.metric("Puffer", f"{puffer:.1f}%")
-                    c3.metric("Laufzeit", f"{dte} Tage")
+                    c3.metric("Restlaufzeit", f"{dte} Tage")
         else:
-            st.warning("Keine Daten gefunden. API-Limit erreicht?")
+            st.warning("Keine Daten gefunden. Prüfe dein API-Limit oder den Ticker.")
     else:
         st.error(f"Konnte Kurs für '{ticker}' nicht laden.")
 
 st.divider()
-st.link_button("Chart öffnen (TradingView)", f"https://www.tradingview.com/symbols/{ticker}/")
+st.link_button("TradingView Chart", f"https://www.tradingview.com/symbols/{ticker}/")
