@@ -34,8 +34,10 @@ def get_live_price(symbol):
 def get_all_expirations(symbol):
     try:
         r = requests.get(f"https://api.marketdata.app/v1/options/expirations/{symbol}/?token={MD_KEY}").json()
-        return sorted(r.get('expirations', [])) if r.get('s') == 'ok' else []
-    except: return []
+        if r.get('s') == 'ok':
+            return sorted(r.get('expirations', []))
+    except: pass
+    return []
 
 def get_chain_for_date(symbol, date_str, side):
     try:
@@ -48,21 +50,24 @@ def get_chain_for_date(symbol, date_str, side):
                 'delta': r.get('delta', [0.0]*len(r['strike'])), 
                 'iv': r.get('iv', [0.0]*len(r['strike']))
             })
-    except: return None
+    except: pass
+    return None
 
 def get_best_put_opportunity(symbol):
     try:
         dates = get_all_expirations(symbol)
         if not dates: return None
-        target_date = next((d for d in dates if 20 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 50), dates[0])
+        # Suche Laufzeit zwischen 20 und 55 Tagen
+        target_date = next((d for d in dates if 20 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.today()).days <= 55), dates[0])
         df = get_chain_for_date(symbol, target_date, "put")
         if df is not None and not df.empty:
             df['diff'] = (df['delta'].abs() - 0.15).abs()
             best = df.sort_values('diff').iloc[0].to_dict()
-            days = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
-            best.update({'ticker': symbol, 'days': days, 'yield': (best['mid']/best['strike'])*(365/days)*100})
+            days = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.today()).days
+            best.update({'ticker': symbol, 'days': days, 'yield': (best['mid']/best['strike'])*(365/max(1, days))*100})
             return best
-    except: return None
+    except: pass
+    return None
 
 # --- UI START ---
 st.title("🛡️ Pro Stillhalter Dashboard")
@@ -80,10 +85,13 @@ with st.container(border=True):
 st.subheader("💎 Top 10 High-IV Put Gelegenheiten (Delta 0.15)")
 watchlist = ["TSLA", "NVDA", "AMD", "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", "UPST", "HOOD", "SOFI"]
 opps = []
+
+# Spinner für Feedback beim Laden
 with st.spinner("Scanne High-IV Werte..."):
     for t in watchlist:
         res = get_best_put_opportunity(t)
-        if res and res['mid'] > 0.10: opps.append(res)
+        if res and res.get('mid', 0) > 0.10:
+            opps.append(res)
 
 if opps:
     opp_df = pd.DataFrame(opps).sort_values('yield', ascending=False).head(10)
@@ -94,11 +102,13 @@ if opps:
                 st.markdown(f"**{row['ticker']}**")
                 st.write(f"Strike: **{row['strike']:.1f}$**")
                 st.metric("Yield p.a.", f"{row['yield']:.1f}%", f"{row['mid']:.2f}$")
-                st.caption(f"{row['days']} Tage | IV: {row['iv']*100:.0f}%")
+                st.caption(f"{row['days']} Tage | IV: {row.get('iv', 0)*100:.0f}%")
+else:
+    st.info("Keine aktuellen High-IV Gelegenheiten gefunden. API-Limit prüfen.")
 
 st.divider()
 
-# 3. PORTFOLIO REPAIR STATUS (Basierend auf deinen Screenshots)
+# 3. PORTFOLIO REPAIR STATUS
 st.subheader("💼 Portfolio Repair-Status")
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = pd.DataFrame([
@@ -120,51 +130,46 @@ with c_status:
         curr = get_live_price(row['Ticker'])
         if curr:
             diff = (curr/row['Einstand'] - 1) * 100
-            if diff >= 0:
-                icon, stat, note = "🟢", "OK", "GO"
-            elif diff > -20:
-                icon, stat, note = "🟡", "REPAIR", "Delta 0.10 wählen"
-            else:
-                icon, stat, note = "🔵", "DEEP REPAIR", "Nur Delta 0.05!"
+            icon, stat, note = ("🟢", "OK", "GO") if diff >= 0 else ("🟡", "REPAIR", "Delta 0.10") if diff > -20 else ("🔵", "DEEP REPAIR", "Delta 0.05")
             st.write(f"{icon} **{row['Ticker']}**: {curr:.2f}$ ({diff:.1f}%) → `{stat}: {note}`")
 
 st.divider()
 
-# 4. OPTIONS-FINDER (REPAIR CALL FINDER)
+# 4. OPTIONS-FINDER
 st.subheader("🔍 Options-Finder")
 c_strat, c_tick = st.columns([1, 2])
 with c_strat:
     option_type = st.radio("Strategie", ["Put 🛡️", "Call 📈"], horizontal=True)
     side = "put" if "Put" in option_type else "call"
 with c_tick:
-    ticker = st.text_input("Ticker für Detail-Scan (z.B. HOOD)").strip().upper()
+    ticker = st.text_input("Ticker für Detail-Scan (z.B. TSLA)").strip().upper()
 
 if ticker:
     price = get_live_price(ticker)
-    portfolio_match = st.session_state.portfolio[st.session_state.portfolio['Ticker'] == ticker]
-    my_buyin = portfolio_match['Einstand'].iloc[0] if not portfolio_match.empty else 0
-    
     if price:
-        st.info(f"Aktueller Kurs: {price:.2f}$ | Dein Einstand: {f'{my_buyin:.2f}$' if my_buyin > 0 else 'Nicht im Bestand'}")
+        st.info(f"Aktueller Kurs: {price:.2f}$")
+        
+        # WICHTIG: Expliziter Check der Laufzeiten
         dates = get_all_expirations(ticker)
         if dates:
-            d_labels = {d: f"{datetime.strptime(d, '%Y-%m-%d').strftime('%d.%m.%Y')} ({(datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days} Tage)" for d in dates}
+            d_labels = {d: f"{d} ({(datetime.strptime(d, '%Y-%m-%d') - datetime.today()).days} Tage)" for d in dates}
             sel_date = st.selectbox("Laufzeit wählen", dates, format_func=lambda x: d_labels.get(x))
+            
             df = get_chain_for_date(ticker, sel_date, side)
             if df is not None and not df.empty:
+                # OTM Filter
                 df = df[df['strike'] < price] if side == "put" else df[df['strike'] > price]
                 df = df.sort_values('strike', ascending=(side == "call"))
+                
                 for _, row in df.head(10).iterrows():
                     d_abs = abs(float(row['delta']))
                     pop = (1 - d_abs) * 100
-                    is_safe = d_abs < (0.15 if vix_val > 25 else 0.12)
-                    color = "🟢" if is_safe else "🟡" if d_abs < 0.25 else "🔴"
-                    if side == "call" and my_buyin > 0 and row['strike'] < my_buyin: color = "⚠️"
+                    color = "🟢" if d_abs < 0.15 else "🟡" if d_abs < 0.25 else "🔴"
                     with st.expander(f"{color} Strike {row['strike']:.1f}$ | Delta: {d_abs:.2f} | Chance: {pop:.0f}%"):
-                        ca, cb, cc = st.columns(3)
+                        ca, cb = st.columns(2)
                         ca.metric("Prämie", f"{row['mid']:.2f}$")
                         cb.metric("Abstand", f"{abs(row['strike']/price-1)*100:.1f}%")
-                        if side == "call" and my_buyin > 0:
-                            cc.metric("Basis neu", f"{my_buyin - row['mid']:.2f}$")
-                        else:
-                            cc.metric("Gewinn-Wahrsch.", f"{pop:.1f}%")
+            else:
+                st.warning("Keine Optionskette für dieses Datum verfügbar.")
+        else:
+            st.error(f"Keine Laufzeiten für {ticker} gefunden. Bitte Ticker prüfen oder API-Limits beachten.")
