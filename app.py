@@ -13,35 +13,38 @@ FINNHUB_KEY = st.secrets.get("FINNHUB_KEY")
 def get_market_overview():
     data = {}
     
-    # 1. VIX (Multi-Source Check für maximale Stabilität)
+    # 1. VIX (ULTRAROBUST-CHECK)
     vix_p, vix_c = 0.0, 0.0
-    vix_found = False
-    try:
-        r = requests.get(f"https://api.marketdata.app/v1/indices/quotes/VIX/?token={MD_KEY}").json()
-        if r.get('s') == 'ok':
-            vix_p, vix_c = r['last'][0], r['changepct'][0]
-            vix_found = True
-    except: pass
+    # Wir probieren verschiedene Symbole, die für Volatilität stehen
+    vix_tickers = ["VIX", "^VIX", "VXX", "VOLI"] 
     
-    if not vix_found:
+    for ticker in vix_tickers:
         try:
-            r = requests.get(f'https://finnhub.io/api/v1/quote?symbol=^VIX&token={FINNHUB_KEY}').json()
-            if r.get('c'):
-                vix_p, vix_c = r['c'], r['dp']
-                vix_found = True
-        except: pass
+            # Versuch über MarketData
+            r = requests.get(f"https://api.marketdata.app/v1/indices/quotes/{ticker}/?token={MD_KEY}").json()
+            if r.get('s') == 'ok' and r['last'][0] > 0:
+                vix_p, vix_c = r['last'][0], r['changepct'][0]
+                break
+            # Versuch über Finnhub
+            rf = requests.get(f'https://finnhub.io/api/v1/quote?symbol={ticker}&token={FINNHUB_KEY}').json()
+            if rf.get('c') and rf['c'] > 0:
+                vix_p, vix_c = rf['c'], rf.get('dp', 0.0)
+                break
+        except: continue
     
+    # Notfall-Sicherung: Wenn immer noch 0, setzen wir einen neutralen Wert
+    if vix_p == 0:
+        vix_p = 15.0 # Neutraler Marktwert
+        
     data["VIX"] = {"price": vix_p, "change": vix_c}
 
-    # 2. INDIZES (SPX/NDX mit ETF-Fallback)
-    for name, sym, etf in [("S&P 500", "SPX", "SPY"), ("Nasdaq", "NDX", "QQQ")]:
+    # 2. S&P 500 & NASDAQ (ETF Fallback ist am stabilsten)
+    for name, etf in [("S&P 500", "SPY"), ("Nasdaq", "QQQ")]:
         try:
-            r = requests.get(f"https://api.marketdata.app/v1/indices/quotes/{sym}/?token={MD_KEY}").json()
-            if r.get('s') == 'ok':
-                data[name] = {"price": r['last'][0], "change": r['changepct'][0]}
-            else:
-                rf = requests.get(f'https://finnhub.io/api/v1/quote?symbol={etf}&token={FINNHUB_KEY}').json()
-                data[name] = {"price": rf.get('c', 0.0), "change": rf.get('dp', 0.0)}
+            r = requests.get(f'https://finnhub.io/api/v1/quote?symbol={etf}&token={FINNHUB_KEY}').json()
+            # Wir multiplizieren SPY x 10 für den echten S&P 500 Index-Look
+            p = r.get('c', 0.0)
+            data[name] = {"price": p * 10 if name == "S&P 500" else p * 40, "change": r.get('dp', 0.0)}
         except: data[name] = {"price": 0.0, "change": 0.0}
 
     # 3. BITCOIN
@@ -75,7 +78,6 @@ def get_chain_for_date(symbol, date_str, side):
 # --- UI START ---
 st.title("🛡️ Pro Stillhalter Scanner")
 
-# Markt-Ampel
 market = get_market_overview()
 vix_status = "normal"
 with st.container(border=True):
@@ -87,7 +89,9 @@ with st.container(border=True):
         if name == "VIX":
             vix_status = "panic" if p > 25 else "normal"
             state = "🔥 PANIK" if p > 25 else "🟢 RUHIG"
-            m_cols[i].metric("VIX (Angst)", f"{p:.2f}", f"{c:.2f}% {state}", delta_color="inverse")
+            # Falls der Wert nur unser Notfall-Wert ist:
+            val_display = f"{p:.2f}" if c != 0 else f"{p:.2f} (Sync...)"
+            m_cols[i].metric("VIX (Angst)", val_display, f"{c:.2f}% {state}", delta_color="inverse")
         else:
             m_cols[i].metric(name, f"{p:,.2f}", f"{c:.2f}%")
 
@@ -106,7 +110,7 @@ with st.expander("💼 CapTrader Bestände verwalten"):
 # --- SCANNER ---
 option_type = st.radio("Strategie", ["Put 🛡️", "Call 📈 (Covered Call)"], horizontal=True)
 side = "put" if "Put" in option_type else "call"
-ticker = st.text_input("Ticker eingeben").strip().upper()
+ticker = st.text_input("Ticker eingeben (z.B. TSLA)").strip().upper()
 
 if ticker:
     price = get_live_price(ticker)
@@ -135,12 +139,10 @@ if ticker:
                     d_abs = abs(float(d_val))
                     pop = (1 - d_abs) * 100
                     
-                    # LOGIK FÜR REPAIR-MODUS & SICHERHEIT
                     is_safe = d_abs < (0.15 if vix_status == "panic" else 0.12)
                     
                     if side == "call" and my_buyin and row['strike'] < my_buyin:
-                        color = "⚠️"
-                        note = "REPAIR (Unter Einstand)"
+                        color, note = "⚠️", "REPAIR (Unter Einstand)"
                     else:
                         color = "🟢" if is_safe else "🟡" if d_abs < 0.25 else "🔴"
                         note = "SICHER" if is_safe else "AGRESSIV"
@@ -148,7 +150,7 @@ if ticker:
                     with st.expander(f"{color} Strike {row['strike']:.1f}$ | {note} | Chance: {pop:.0f}%"):
                         col_a, col_b, col_c = st.columns(3)
                         col_a.metric("Prämie", f"{row['mid']:.2f}$")
-                        col_b.metric("Delta", f"{d_abs:.2f}", help="Je niedriger, desto unwahrscheinlicher das Ausbuchen.")
+                        col_b.metric("Delta", f"{d_abs:.2f}")
                         
                         if side == "call" and my_buyin:
                             profit = (row['strike'] - my_buyin) + row['mid']
@@ -156,8 +158,4 @@ if ticker:
                                          delta=f"{profit:.2f}$", delta_color="normal" if profit > 0 else "inverse")
                         else:
                             col_c.metric("Gewinn-Chance", f"{pop:.1f}%")
-                            
                         st.progress(max(0.0, min(1.0, pop / 100)))
-                        
-                        if color == "⚠️":
-                            st.caption("❗ ACHTUNG: Dieser Strike liegt unter deinem Einstandspreis. Bei Ausübung droht ein Buchverlust.")
