@@ -31,6 +31,7 @@ def get_marketdata_options(symbol):
     try:
         response = requests.get(url, params=params).json()
         if response.get('s') == 'ok':
+            # Daten in ein DataFrame umwandeln
             df = pd.DataFrame({
                 'strike': response['strike'],
                 'mid': response['mid'],
@@ -44,7 +45,7 @@ def get_marketdata_options(symbol):
     return None
 
 def format_expiry_label(val):
-    """Wandelt Timestamps oder Text in lesbare Daten um (für das Menü)"""
+    """Wandelt Timestamps oder Text in lesbare Daten um (Fix für Bild 9 & 10)"""
     try:
         if isinstance(val, (int, float)):
             return datetime.fromtimestamp(val).strftime('%d.%m.%Y')
@@ -61,7 +62,7 @@ watchlist = ["AAPL", "TSLA", "NVDA", "MSFT", "AMD", "META"]
 selected_fav = st.pills("Schnellauswahl", watchlist)
 user_input = st.text_input("Ticker manuell", "")
 
-# Ticker Logik: Favorit gewinnt vor manuellem Input
+# Ticker Logik: Favorit gewinnt vor manuellem Input + Auto-Großschreibung
 ticker = (selected_fav if selected_fav else user_input).strip().upper()
 
 if ticker:
@@ -74,7 +75,7 @@ if ticker:
             chain = get_marketdata_options(ticker)
         
         if chain is not None and not chain.empty:
-            # Ablaufdaten für das Dropdown vorbereiten
+            # Ablaufdaten sortieren und für das Menü formatieren
             expirations = sorted(chain['expiration'].unique())
             selected_expiry = st.selectbox(
                 "Ablaufdatum wählen", 
@@ -89,7 +90,7 @@ if ticker:
 
             # Ergebnisse anzeigen
             for _, row in df_expiry.sort_values('strike', ascending=False).head(10).iterrows():
-                # --- DTE BERECHNUNG (Fix für deinen Fehler) ---
+                # --- DTE BERECHNUNG (Der Fix für deinen TypeError) ---
                 try:
                     if isinstance(row['expiration'], (int, float)):
                         exp_dt = datetime.fromtimestamp(row['expiration'])
@@ -97,7 +98,7 @@ if ticker:
                         exp_dt = datetime.strptime(str(row['expiration']), '%Y-%m-%d')
                     dte = (exp_dt - datetime.now()).days
                 except:
-                    dte = 30 # Fallback
+                    dte = 30 # Fallback falls Format unbekannt
                 
                 # Rendite & Puffer
                 ann_return = (row['mid'] / row['strike']) * (365 / max(1, dte)) * 100
@@ -119,11 +120,11 @@ if ticker:
                     c2.metric("Puffer", f"{puffer:.1f}%")
                     c3.metric("Laufzeit", f"{dte} Tage")
                     
-                    st.progress(min(max(delta_val * 4, 0.0), 1.0), help="Risiko-Visualisierung basierend auf Delta")
+                    st.progress(min(max(delta_val * 4, 0.0), 1.0), help="Risiko-Visualisierung")
         else:
-            st.warning("Keine OTM-Puts gefunden. Eventuell sind die API-Credits für heute verbraucht.")
+            st.warning("Keine passenden Puts gefunden. (API Limit erreicht oder Ticker falsch?)")
     else:
-        st.error(f"Konnte keinen Kurs für '{ticker}' finden. Bitte Ticker prüfen.")
+        st.error(f"Konnte keinen Kurs für '{ticker}' finden. Bitte prüfe das Kürzel.")
 
 # ANALYSE LINKS
 st.divider()
