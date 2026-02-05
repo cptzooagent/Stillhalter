@@ -3,155 +3,118 @@ import pandas as pd
 import requests
 from datetime import datetime
 
-# --- SETUP & DESIGN ---
+# --- SETUP ---
 st.set_page_config(page_title="Stillhalter Pro Scanner", layout="wide")
 
-# Keys aus den Streamlit Secrets laden
 MD_KEY = st.secrets.get("MARKETDATA_KEY")
 FINNHUB_KEY = st.secrets.get("FINNHUB_KEY")
 
-# --- FUNKTIONEN ---
+# --- MARKT-DATEN FUNKTION ---
+def get_market_overview():
+    try:
+        symbols = {"VIX": "^VIX", "SP500": "SPY", "Nasdaq": "QQQ", "BTC": "BINANCE:BTCUSDT"}
+        data = {}
+        for name, sym in symbols.items():
+            r = requests.get(f'https://finnhub.io/api/v1/quote?symbol={sym}&token={FINNHUB_KEY}').json()
+            data[name] = {"price": r.get('c', 0), "change": r.get('dp', 0)}
+        return data
+    except: return None
 
 def get_live_price(symbol):
-    """Holt den aktuellen Kurs über Finnhub"""
     try:
-        url = f'https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_KEY}'
-        r = requests.get(url).json()
+        r = requests.get(f'https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_KEY}').json()
         return float(r['c']) if r.get('c') else None
-    except:
-        return None
+    except: return None
 
 def get_sma_200(symbol):
-    """Berechnet den SMA 200 Trend-Indikator via Finnhub"""
     try:
-        url = f'https://finnhub.io/api/v1/stock/candle?symbol={symbol}&resolution=D&count=250&token={FINNHUB_KEY}'
-        r = requests.get(url).json()
+        r = requests.get(f'https://finnhub.io/api/v1/stock/candle?symbol={symbol}&resolution=D&count=250&token={FINNHUB_KEY}').json()
         if r.get('s') == 'ok':
             closes = r.get('c', [])
-            if len(closes) >= 200:
-                return sum(closes[-200:]) / 200
-    except:
-        return None
-    return None
+            return sum(closes[-200:]) / 200 if len(closes) >= 200 else None
+    except: return None
 
 def get_all_expirations(symbol):
-    """Holt alle verfügbaren Verfallstermine"""
-    url = f"https://api.marketdata.app/v1/options/expirations/{symbol}/"
-    params = {"token": MD_KEY}
     try:
-        response = requests.get(url, params=params).json()
-        if response.get('s') == 'ok':
-            return sorted(response.get('expirations', []))
-    except:
-        return []
-    return []
+        r = requests.get(f"https://api.marketdata.app/v1/options/expirations/{symbol}/?token={MD_KEY}").json()
+        return sorted(r.get('expirations', [])) if r.get('s') == 'ok' else []
+    except: return []
 
 def get_chain_for_date(symbol, date_str, side):
-    """Holt die Optionskette für ein spezifisches Datum"""
-    url = f"https://api.marketdata.app/v1/options/chain/{symbol}/"
-    params = {"token": MD_KEY, "side": side, "expiration": date_str}
     try:
-        response = requests.get(url, params=params).json()
-        if response.get('s') == 'ok':
-            return pd.DataFrame({
-                'strike': response['strike'],
-                'mid': response['mid'],
-                'delta': response.get('delta', [0] * len(response['strike'])),
-                'iv': response.get('iv', [0] * len(response['strike'])),
-                'expiration': date_str
-            })
-    except:
-        return None
-    return None
+        params = {"token": MD_KEY, "side": side, "expiration": date_str}
+        r = requests.get(f"https://api.marketdata.app/v1/options/chain/{symbol}/", params=params).json()
+        if r.get('s') == 'ok':
+            return pd.DataFrame({'strike': r['strike'], 'mid': r['mid'], 'delta': r.get('delta', [0]*len(r['strike'])), 'expiration': date_str})
+    except: return None
 
-def format_date_label(date_str):
-    """Wandelt API-Datum in lesbares Format um"""
-    try:
-        dt = datetime.strptime(date_str, '%Y-%m-%d')
-        dte = (dt - datetime.now()).days
-        return f"{dt.strftime('%d.%m.%Y')} ({max(0, dte)} Tage)"
-    except:
-        return date_str
-
-# --- USER INTERFACE ---
+# --- UI START ---
 st.title("🛡️ Pro Stillhalter Scanner")
 
-# Wahl der Strategie
-option_type = st.radio("Was möchtest du verkaufen?", ["Put 🛡️", "Call 📈"], horizontal=True)
-side = "put" if "Put" in option_type else "call"
+# 1. MARKT-AMPEL & DYNAMISCHE LOGIK
+market = get_market_overview()
+vix_status = "normal"
+if market:
+    vix = market['VIX']['price']
+    with st.container(border=True):
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("VIX (Angst)", f"{vix:.2f}", "🔥 PANIK" if vix > 25 else "🟢 RUHIG", delta_color="inverse")
+        m2.metric("S&P 500", f"{market['SP500']['price']:.1f}", f"{market['SP500']['change']:.2f}%")
+        m3.metric("Nasdaq", f"{market['Nasdaq']['price']:.1f}", f"{market['Nasdaq']['change']:.2f}%")
+        m4.metric("Bitcoin", f"{market['BTC']['price']:.0f}", f"{market['BTC']['change']:.2f}%")
+        
+        if vix > 25:
+            vix_status = "panic"
+            st.error("⚠️ Marktsituation: Hohe Volatilität. Die Sicherheits-Grenzwerte wurden automatisch verschärft.")
+            with st.expander("📝 Stillhalter-Checkliste für Panik-Tage"):
+                st.write("- [ ] Delta unter 0.12 wählen\n- [ ] Nur Aktien über SMA 200 (Bullish)\n- [ ] Positionsgröße halbieren\n- [ ] Cash-Reserve prüfen")
 
-# Schnellauswahl & Ticker
+st.divider()
+
+# 2. EINGABE
+option_type = st.radio("Strategie", ["Put 🛡️", "Call 📈"], horizontal=True)
+side = "put" if "Put" in option_type else "call"
 watchlist = ["AAPL", "TSLA", "NVDA", "MSFT", "AMD", "META", "GOOGL", "AMZN"]
-sel_fav = st.pills("Schnellauswahl", watchlist)
-user_input = st.text_input("Ticker manuell", "")
-ticker = (sel_fav if sel_fav else user_input).strip().upper()
+sel_fav = st.pills("Favoriten", watchlist)
+ticker = (sel_fav if sel_fav else st.text_input("Ticker", "")).strip().upper()
 
 if ticker:
     price = get_live_price(ticker)
     sma200 = get_sma_200(ticker)
-    
     if price:
-        # --- TREND-INDIKATOREN OBEN ---
-        c1, c2 = st.columns(2)
-        c1.metric(f"Aktueller Kurs {ticker}", f"{price:.2f} $")
-        
+        c_p, c_t = st.columns(2)
+        c_p.metric(f"Kurs {ticker}", f"{price:.2f} $")
         if sma200:
             diff = ((price / sma200) - 1) * 100
-            trend_label = "✅ Bullish (Über SMA 200)" if price > sma200 else "⚠️ Bearish (Unter SMA 200)"
-            c2.metric("SMA 200 (Trend)", f"{sma200:.2f} $", f"{diff:.1f}%")
-            st.info(f"Technischer Status: {trend_label}")
-
-        all_dates = get_all_expirations(ticker)
+            trend = "✅ ÜBER SMA 200" if price > sma200 else "⚠️ UNTER SMA 200"
+            c_t.metric("SMA 200 Trend", f"{sma200:.2f} $", f"{diff:.1f}%", help=trend)
         
-        if all_dates:
-            default_index = 0
-            for i, d in enumerate(all_dates):
-                days = (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days
-                if 30 <= days <= 50:
-                    default_index = i
-                    break
-
-            selected_date = st.selectbox("Laufzeit wählen", all_dates, index=default_index, format_func=format_date_label)
-            
-            with st.spinner(f"Lade {side}s..."):
-                df = get_chain_for_date(ticker, selected_date, side)
+        dates = get_all_expirations(ticker)
+        if dates:
+            idx = next((i for i, d in enumerate(dates) if 30 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 50), 0)
+            sel_date = st.selectbox("Laufzeit", dates, index=idx)
+            df = get_chain_for_date(ticker, sel_date, side)
             
             if df is not None and not df.empty:
-                st.subheader(f"{'Puts' if side == 'put' else 'Calls'} für {format_date_label(selected_date)}")
+                df = df[df['strike'] < price] if side == "put" else df[df['strike'] > price]
+                df = df.sort_values('strike', ascending=(side == "call"))
                 
-                # Filter Out-of-the-money
-                if side == "put":
-                    df_filtered = df[df['strike'] < price].sort_values('strike', ascending=False)
-                else:
-                    df_filtered = df[df['strike'] > price].sort_values('strike', ascending=True)
-                
-                # Ergebnisse anzeigen
-                for _, row in df_filtered.head(15).iterrows():
-                    dte = max(1, (datetime.strptime(selected_date, '%Y-%m-%d') - datetime.now()).days)
-                    ann_return = (row['mid'] / (row['strike'] if side == "put" else price)) * (365 / dte) * 100
-                    delta_val = abs(row['delta'] if row['delta'] is not None else 0)
-                    puffer = (abs(price - row['strike']) / price) * 100
+                for _, row in df.head(12).iterrows():
+                    d_abs = abs(row['delta'] if row['delta'] else 0)
+                    pop = (1 - d_abs) * 100
+                    dte = max(1, (datetime.strptime(sel_date, '%Y-%m-%d') - datetime.now()).days)
+                    ann_ret = (row['mid'] / (row['strike'] if side == "put" else price)) * (365 / dte) * 100
                     
-                    # --- INDIKATOR: GEWINNWAHRSCHEINLICHKEIT (PoP) ---
-                    pop_val = (1 - delta_val) * 100
-                    color = "🟢" if delta_val < 0.16 else "🟡" if delta_val < 0.25 else "🔴"
+                    # DYNAMISCHE AMPEL-LOGIK
+                    # Im Panik-Modus (VIX > 25) ist Grün viel schwerer zu erreichen
+                    if vix_status == "panic":
+                        color = "🟢" if d_abs < 0.10 else "🟡" if d_abs < 0.18 else "🔴"
+                    else:
+                        color = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.25 else "🔴"
                     
-                    # Korrigierte Anzeige im Expander (Behebt TypeError aus Bild 2)
-                    with st.expander(f"{color} Strike {row['strike']:.1f}$ | Chance: {pop_val:.0f}% | {ann_return:.1f}% p.a."):
-                        col_a, col_b, col_c = st.columns(3)
-                        col_a.metric("Prämie", f"{row['mid']:.2f}$")
-                        col_b.metric("Abstand", f"{puffer:.1f}%")
-                        col_c.metric("Gewinn-Wahrsch.", f"{pop_val:.1f}%")
-                        
-                        # Fix für st.progress: Wert muss zwischen 0.0 und 1.0 liegen
-                        progress_val = max(0.0, min(1.0, pop_val / 100))
-                        st.progress(progress_val)
-                        st.caption(f"Statistische Wahrscheinlichkeit von {pop_val:.1f}%, dass die Option wertlos verfällt.")
-            else:
-                st.warning(f"Keine {side}s gefunden.")
-        else:
-            st.error("Keine Laufzeiten verfügbar.")
-
-st.divider()
-st.link_button("Analyse in OptionStrat öffnen", 
-               f"https://optionstrat.com/visualizer/cash-secured-put/{ticker}" if side == "put" else f"https://optionstrat.com/visualizer/covered-call/{ticker}")
+                    with st.expander(f"{color} Strike {row['strike']:.1f}$ | Chance: {pop:.0f}% | {ann_ret:.1f}% p.a."):
+                        ca, cb, cc = st.columns(3)
+                        ca.metric("Prämie", f"{row['mid']:.2f}$")
+                        cb.metric("Abstand", f"{(abs(price-row['strike'])/price)*100:.1f}%")
+                        cc.metric("Gewinn-Chance", f"{pop:.1f}%")
+                        st.progress(max(0.0, min(1.0, pop / 100)))
