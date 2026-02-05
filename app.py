@@ -24,7 +24,6 @@ def get_live_price(symbol):
 def get_sma_200(symbol):
     """Berechnet den SMA 200 Trend-Indikator via Finnhub"""
     try:
-        # Abfrage der letzten 250 Tage, um saubere 200 Tage Durchschnitt zu bilden
         url = f'https://finnhub.io/api/v1/stock/candle?symbol={symbol}&resolution=D&count=250&token={FINNHUB_KEY}'
         r = requests.get(url).json()
         if r.get('s') == 'ok':
@@ -36,7 +35,7 @@ def get_sma_200(symbol):
     return None
 
 def get_all_expirations(symbol):
-    """Holt alle verfügbaren Verfallstermine von MarketData"""
+    """Holt alle verfügbaren Verfallstermine"""
     url = f"https://api.marketdata.app/v1/options/expirations/{symbol}/"
     params = {"token": MD_KEY}
     try:
@@ -50,11 +49,7 @@ def get_all_expirations(symbol):
 def get_chain_for_date(symbol, date_str, side):
     """Holt die Optionskette für ein spezifisches Datum"""
     url = f"https://api.marketdata.app/v1/options/chain/{symbol}/"
-    params = {
-        "token": MD_KEY,
-        "side": side,
-        "expiration": date_str
-    }
+    params = {"token": MD_KEY, "side": side, "expiration": date_str}
     try:
         response = requests.get(url, params=params).json()
         if response.get('s') == 'ok':
@@ -70,7 +65,7 @@ def get_chain_for_date(symbol, date_str, side):
     return None
 
 def format_date_label(date_str):
-    """Wandelt API-Datum in lesbares Format um (Fix für Bild 9/10)"""
+    """Wandelt API-Datum in lesbares Format um"""
     try:
         dt = datetime.strptime(date_str, '%Y-%m-%d')
         dte = (dt - datetime.now()).days
@@ -85,7 +80,7 @@ st.title("🛡️ Pro Stillhalter Scanner")
 option_type = st.radio("Was möchtest du verkaufen?", ["Put 🛡️", "Call 📈"], horizontal=True)
 side = "put" if "Put" in option_type else "call"
 
-# Schnellauswahl & Ticker (Fix für Bild 10: Auto-Upper)
+# Schnellauswahl & Ticker
 watchlist = ["AAPL", "TSLA", "NVDA", "MSFT", "AMD", "META", "GOOGL", "AMZN"]
 sel_fav = st.pills("Schnellauswahl", watchlist)
 user_input = st.text_input("Ticker manuell", "")
@@ -109,7 +104,6 @@ if ticker:
         all_dates = get_all_expirations(ticker)
         
         if all_dates:
-            # Automatische Vorauswahl (nächste 30-50 Tage)
             default_index = 0
             for i, d in enumerate(all_dates):
                 days = (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days
@@ -119,7 +113,7 @@ if ticker:
 
             selected_date = st.selectbox("Laufzeit wählen", all_dates, index=default_index, format_func=format_date_label)
             
-            with st.spinner(f"Lade {side}s von MarketData..."):
+            with st.spinner(f"Lade {side}s..."):
                 df = get_chain_for_date(ticker, selected_date, side)
             
             if df is not None and not df.empty:
@@ -135,27 +129,28 @@ if ticker:
                 for _, row in df_filtered.head(15).iterrows():
                     dte = max(1, (datetime.strptime(selected_date, '%Y-%m-%d') - datetime.now()).days)
                     ann_return = (row['mid'] / (row['strike'] if side == "put" else price)) * (365 / dte) * 100
-                    delta_val = abs(row['delta'])
+                    delta_val = abs(row['delta'] if row['delta'] is not None else 0)
                     puffer = (abs(price - row['strike']) / price) * 100
                     
-                    # --- INDIKATOR: GEWINNWAHRSCHEINLICHKEIT ---
-                    pop = (1 - delta_val) * 100
+                    # --- INDIKATOR: GEWINNWAHRSCHEINLICHKEIT (PoP) ---
+                    pop_val = (1 - delta_val) * 100
                     color = "🟢" if delta_val < 0.16 else "🟡" if delta_val < 0.25 else "🔴"
                     
-                    with st.expander(f"{color} Strike {row['strike']:.1f}$ | Chance: {pop:.0f}% | {ann_return:.1f}% p.a."):
+                    # Korrigierte Anzeige im Expander (Behebt TypeError aus Bild 2)
+                    with st.expander(f"{color} Strike {row['strike']:.1f}$ | Chance: {pop_val:.0f}% | {ann_return:.1f}% p.a."):
                         col_a, col_b, col_c = st.columns(3)
                         col_a.metric("Prämie", f"{row['mid']:.2f}$")
                         col_b.metric("Abstand", f"{puffer:.1f}%")
-                        col_c.metric("Gewinn-Chance", f"{pop:.1f}%")
+                        col_c.metric("Gewinn-Wahrsch.", f"{pop_val:.1f}%")
                         
-                        # Risiko-Visualisierung
-                        st.progress(pop/100, help=f"Statistische Wahrscheinlichkeit: {pop:.1f}%")
+                        # Fix für st.progress: Wert muss zwischen 0.0 und 1.0 liegen
+                        progress_val = max(0.0, min(1.0, pop_val / 100))
+                        st.progress(progress_val)
+                        st.caption(f"Statistische Wahrscheinlichkeit von {pop_val:.1f}%, dass die Option wertlos verfällt.")
             else:
-                st.warning(f"Keine {side}s gefunden. API-Limit erreicht?")
+                st.warning(f"Keine {side}s gefunden.")
         else:
-            st.error("Keine Laufzeiten verfügbar. Ticker prüfen?")
-    else:
-        st.error(f"Konnte keinen Kurs für '{ticker}' finden.")
+            st.error("Keine Laufzeiten verfügbar.")
 
 st.divider()
 st.link_button("Analyse in OptionStrat öffnen", 
