@@ -4,37 +4,29 @@ import requests
 from datetime import datetime
 
 # --- SETUP ---
-st.set_page_config(page_title="Stillhalter Pro Scanner", layout="wide")
+st.set_page_config(page_title="Stillhalter Pro Repair Scanner", layout="wide")
 
 MD_KEY = st.secrets.get("MARKETDATA_KEY")
 FINNHUB_KEY = st.secrets.get("FINNHUB_KEY")
 
-# --- ROBUSTE MARKT-DATEN FUNKTION ---
+# --- DATA FUNCTIONS ---
 def get_market_overview():
     data = {}
-    vix_p, vix_c = 0.0, 0.0
-    vix_tickers = ["VIX", "^VIX", "VXX"] 
-    for ticker in vix_tickers:
+    vix_p = 0.0
+    for ticker in ["VIX", "^VIX", "VXX"]:
         try:
             r = requests.get(f"https://api.marketdata.app/v1/indices/quotes/{ticker}/?token={MD_KEY}").json()
             if r.get('s') == 'ok' and r['last'][0] > 0:
-                vix_p, vix_c = r['last'][0], r['changepct'][0]
+                vix_p = r['last'][0]
                 break
         except: continue
-    if vix_p == 0: vix_p = 15.0
-    data["VIX"] = {"price": vix_p, "change": vix_c}
-
+    data["VIX"] = {"price": vix_p if vix_p > 0 else 15.0}
+    
     for name, etf in [("S&P 500", "SPY"), ("Nasdaq", "QQQ")]:
         try:
             r = requests.get(f'https://finnhub.io/api/v1/quote?symbol={etf}&token={FINNHUB_KEY}').json()
-            p = r.get('c', 0.0)
-            data[name] = {"price": p * 10 if name == "S&P 500" else p * 40, "change": r.get('dp', 0.0)}
+            data[name] = {"price": r.get('c', 0.0) * (10 if name=="S&P 500" else 40), "change": r.get('dp', 0.0)}
         except: data[name] = {"price": 0.0, "change": 0.0}
-
-    try:
-        rb = requests.get(f'https://finnhub.io/api/v1/quote?symbol=BINANCE:BTCUSDT&token={FINNHUB_KEY}').json()
-        data["Bitcoin"] = {"price": rb.get('c', 0.0), "change": rb.get('dp', 0.0)}
-    except: data["Bitcoin"] = {"price": 0.0, "change": 0.0}
     return data
 
 def get_live_price(symbol):
@@ -58,106 +50,96 @@ def get_chain_for_date(symbol, date_str, side):
     except: return None
 
 # --- UI START ---
-st.title("🛡️ Pro Stillhalter Pro Scanner")
+st.title("🛡️ Stillhalter Repair Scanner")
 
-# 1. MARKT-AMPEL
 market = get_market_overview()
-vix_status = "normal"
+vix_val = market["VIX"]["price"]
+
 with st.container(border=True):
-    m_cols = st.columns(4)
-    order = ["VIX", "S&P 500", "Nasdaq", "Bitcoin"]
-    for i, name in enumerate(order):
-        info = market.get(name, {"price": 0.0, "change": 0.0})
-        p, c = info['price'], info['change']
-        if name == "VIX":
-            vix_status = "panic" if p > 25 else "normal"
-            m_cols[i].metric("VIX (Angst)", f"{p:.2f}", f"{c:.2f}% {'🔥' if p > 25 else '🟢'}", delta_color="inverse")
-        else:
-            m_cols[i].metric(name, f"{p:,.2f}", f"{c:.2f}%")
+    m_cols = st.columns(3)
+    m_cols[0].metric("VIX (Angst)", f"{vix_val:.2f}", "🔥 Panik" if vix_val > 25 else "🟢 Ruhig")
+    m_cols[1].metric("S&P 500", f"{market['S&P 500']['price']:,.0f}")
+    m_cols[2].metric("Nasdaq", f"{market['Nasdaq']['price']:,.0f}")
 
 st.divider()
 
-# 2. KOMPAKTES PORTFOLIO MIT AMPEL
-st.subheader("💼 CapTrader Portfolio Analyse")
+# --- PORTFOLIO & REPAIR AMPEL ---
+st.subheader("💼 Portfolio Repair-Status")
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = pd.DataFrame([
-        {"Ticker": "AFRM", "Einstand": 120.50}, {"Ticker": "ELF", "Einstand": 185.00},
+        {"Ticker": "AFRM", "Einstand": 76.00}, {"Ticker": "ELF", "Einstand": 109.00},
         {"Ticker": "ETSY", "Einstand": 67.00}, {"Ticker": "GTLB", "Einstand": 41.00}
     ])
 
-# Zwei Spalten: Links Tabelle, Rechts Ampel-Analyse
-col_tab, col_status = st.columns([1, 1])
+col_tab, col_status = st.columns([1, 1.2])
 
 with col_tab:
-    with st.expander("Bestände editieren", expanded=False):
+    with st.expander("Bestände editieren"):
         st.session_state.portfolio = st.data_editor(st.session_state.portfolio, num_rows="dynamic", use_container_width=True)
 
 with col_status:
-    # Analyse-Logik für die Portfolio-Ampel
     for _, row in st.session_state.portfolio.iterrows():
-        t = row['Ticker']
-        buyin = row['Einstand']
+        t, buyin = row['Ticker'], row['Einstand']
         curr_p = get_live_price(t)
-        
         if curr_p:
-            # Ampel-Logik
+            # Erweiterte Ampel-Logik für Repair
+            diff_pct = (curr_p / buyin - 1) * 100
             if curr_p >= buyin:
-                status_icon = "🟢"
-                status_text = "GO (Über Einstand)"
-            elif curr_p >= buyin * 0.85:
-                status_icon = "🟡"
-                status_text = "REPAIR (Knapp unter Einstand)"
+                icon, stat = "🟢", "PROFIT: Call schreiben!"
+            elif diff_pct > -20:
+                icon, stat = "🟡", "REPAIR: Delta 0.10 wählen"
             else:
-                status_icon = "🔴"
-                status_text = "STOP (Stark im Minus)"
+                icon, stat = "🔵", "DEEP REPAIR: Nur Delta 0.05!"
             
-            # Kompakte Anzeige pro Ticker
-            st.markdown(f"**{status_icon} {t}**: {curr_p:.2f}$ (vs. {buyin:.2f}$) → `{status_text}`")
+            st.write(f"{icon} **{t}**: {curr_p:.2f}$ ({diff_pct:.1f}%) → `{stat}`")
 
 st.divider()
 
-# 3. SCANNER
-st.subheader("🔍 Options-Scanner")
-c_a, c_b = st.columns([1, 2])
-with c_a:
-    option_type = st.radio("Strategie", ["Put 🛡️", "Call 📈 (Covered Call)"], horizontal=False)
-    side = "put" if "Put" in option_type else "call"
-with c_b:
-    ticker = st.text_input("Ticker für Detail-Scan (z.B. NVDA)").strip().upper()
+# --- REPAIR SCANNER ---
+st.subheader("🔍 Repair Call Finder")
+ticker = st.text_input("Ticker für Detail-Scan (z.B. HOOD)").strip().upper()
 
 if ticker:
     price = get_live_price(ticker)
     p_row = st.session_state.portfolio[st.session_state.portfolio['Ticker'] == ticker]
-    my_buyin = p_row.iloc[0]['Einstand'] if not p_row.empty else None
+    my_buyin = p_row.iloc[0]['Einstand'] if not p_row.empty else 0
     
     if price:
-        st.metric(f"Aktueller Kurs {ticker}", f"{price:.2f} $")
+        st.info(f"Aktueller Kurs: {price:.2f}$ | Dein Einstand: {my_buyin:.2f}$")
         dates = get_all_expirations(ticker)
         if dates:
-            d_labels = {d: f"{datetime.strptime(d, '%Y-%m-%d').strftime('%d.%m.%Y')} ({(datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days} T.)" for d in dates}
-            sel_date = st.selectbox("Laufzeit", dates, format_func=lambda x: d_labels.get(x))
+            sel_date = st.selectbox("Laufzeit (Repair ideal: 14-30 Tage)", dates)
+            df = get_chain_for_date(ticker, sel_date, "call")
             
-            df = get_chain_for_date(ticker, sel_date, side)
-            if df is not None and not df.empty:
-                df = df[df['strike'] < price] if side == "put" else df[df['strike'] > price]
-                df = df.sort_values('strike', ascending=(side == "call"))
+            if df is not None:
+                # Wir filtern auf Strikes, die OTM sind
+                df = df[df['strike'] > price].sort_values('strike')
                 
-                for _, row in df.head(10).iterrows():
+                for _, row in df.head(15).iterrows():
                     d_abs = abs(float(row['delta']))
                     pop = (1 - d_abs) * 100
-                    is_safe = d_abs < (0.15 if vix_status == "panic" else 0.12)
                     
-                    if side == "call" and my_buyin and row['strike'] < my_buyin:
-                        color, note = "⚠️", "REPAIR"
+                    # Logik für "Sicheren Repair"
+                    # Wenn weit unter Einstand, ist Delta 0.10 das Maximum
+                    is_repair_safe = d_abs <= 0.12
+                    
+                    if my_buyin > 0 and row['strike'] < my_buyin:
+                        color = "🔵" if d_abs < 0.10 else "🟡"
+                        note = "REPAIR MODE"
                     else:
-                        color = "🟢" if is_safe else "🟡" if d_abs < 0.25 else "🔴"
-                        note = "SAFE" if is_safe else "AGR."
+                        color = "🟢" if d_abs < 0.15 else "🔴"
+                        note = "TARGET REACHED"
                     
-                    with st.expander(f"{color} Strike {row['strike']:.1f}$ | {note} | Chance: {pop:.0f}%"):
-                        ca, cb, cc = st.columns(3)
-                        ca.metric("Prämie", f"{row['mid']:.2f}$")
-                        cb.metric("Delta", f"{d_abs:.2f}")
-                        if side == "call" and my_buyin:
-                            cc.metric("Profit bei Ausübung", f"{(row['strike'] - my_buyin) + row['mid']:.2f}$")
+                    with st.expander(f"{color} Strike {row['strike']:.1f}$ | Delta: {d_abs:.2f} | Chance: {pop:.0f}%"):
+                        c1, c2, c3 = st.columns(3)
+                        c1.metric("Prämie", f"{row['mid']:.2f}$")
+                        c2.metric("Abstand", f"{(row['strike']/price-1)*100:.1f}%")
+                        
+                        # Effektive Senkung des Einstands
+                        new_basis = my_buyin - row['mid']
+                        c3.metric("Basis neu", f"{new_basis:.2f}$", help="Dein neuer theoretischer Einstand")
+                        
+                        if d_abs > 0.15 and row['strike'] < my_buyin:
+                            st.warning("⚠️ Achtung: Hohes Risiko einer Ausbuchung unter Einstand!")
                         else:
-                            cc.metric("Gewinn-Chance", f"{pop:.1f}%")
+                            st.success("✅ Guter Repair-Kandidat: Geringes Risiko, senkt deine Kostenbasis.")
