@@ -3,65 +3,69 @@ import yfinance as yf
 import pandas as pd
 from datetime import datetime
 
-# Seite einstellen
-st.set_page_config(page_title="Stillhalter Scanner", layout="centered")
+st.set_page_config(page_title="Scanner", layout="centered")
 
-# --- CACHING FUNKTION ---
-# Diese Funktion merkt sich die Daten für 10 Minuten (600 Sekunden)
+# 1. Kursdaten cachen (Funktioniert, da es ein einfacher DataFrame ist)
 @st.cache_data(ttl=600)
-def get_data(symbol):
-    stock = yf.Ticker(symbol)
-    hist = stock.history(period="1y")
-    return stock, hist
+def get_historical_data(symbol):
+    t = yf.Ticker(symbol)
+    return t.history(period="1y")
 
-st.title("🛡️ Stillhalter Scanner")
+# 2. Options-Liste cachen
+@st.cache_data(ttl=3600)
+def get_expiry_dates(symbol):
+    t = yf.Ticker(symbol)
+    return t.options
+
+st.title("Scanner")
 
 ticker_symbol = st.text_input("Aktien-Ticker (z.B. AAPL)", "AAPL").upper()
 max_delta_input = st.slider("Max. Delta (für Puts)", 0.05, 0.40, 0.20, step=0.01)
 
 if ticker_symbol:
     try:
-        # Daten über die Cache-Funktion laden
-        stock, hist = get_data(ticker_symbol)
+        hist = get_historical_data(ticker_symbol)
         
         if hist.empty:
-            st.error("Keine Daten gefunden. Ticker korrekt?")
+            st.error("Keine Daten gefunden.")
         else:
             current_price = hist['Close'].iloc[-1]
             sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1]
-            support_level = hist['Low'].tail(60).min() # 60-Tage Tief
+            support_level = hist['Low'].tail(60).min()
 
-            # Anzeige der Metriken
             st.metric("Kurs", f"{current_price:.2f} $")
-            col1, col2 = st.columns(2)
-            col1.write(f"**Trend:** {'✅ Bullish' if current_price > sma_200 else '⚠️ Bearish'}")
-            col2.write(f"**Support (60T):** {support_level:.2f} $")
+            
+            # Trend-Check
+            if current_price > sma_200:
+                st.success(f"Trend: Bullish (über SMA 200)")
+            else:
+                st.warning(f"Trend: Bearish (unter SMA 200)")
 
-            # Chart für Handy-Ansicht
+            st.write(f"Support (60T): **{support_level:.2f} $**")
             st.line_chart(hist['Close'].tail(90))
 
-            # Optionsdaten
-            expirations = stock.options
+            # Optionen laden
+            expirations = get_expiry_dates(ticker_symbol)
             if expirations:
                 expiry = st.selectbox("Ablaufdatum", expirations)
                 dte = (datetime.strptime(expiry, '%Y-%m-%d') - datetime.now()).days
                 
-                # Chain laden (auch hier könnte man Caching nutzen, falls nötig)
-                puts = stock.option_chain(expiry).puts
+                # Dieser Teil bleibt live
+                t_obj = yf.Ticker(ticker_symbol)
+                puts = t_obj.option_chain(expiry).puts
                 
-                # Filter: Nur Puts unter aktuellem Kurs
-                filtered_puts = puts[puts['strike'] <= current_price].sort_values(by='strike', ascending=False)
-
-                st.subheader(f"Puts für {expiry}")
-                for index, row in filtered_puts.head(5).iterrows():
-                    # Berechnung Annualized Return
-                    ann_return = (row['lastPrice'] / (row['strike'])) * (365 / max(1, dte)) * 100
-                    
-                    with st.expander(f"Strike {row['strike']}$ - {ann_return:.1f}% p.a."):
-                        st.write(f"Prämie: {row['lastPrice']}$")
-                        st.write(f"IV: {row['impliedVolatility']:.1%}")
+                # Filter & Berechnung
+                filtered = puts[puts['strike'] <= current_price].sort_values('strike', ascending=False)
+                
+                st.subheader(f"Puts ({max(1, dte)} Tage)")
+                for _, row in filtered.head(5).iterrows():
+                    ann_return = (row['lastPrice'] / row['strike']) * (365 / max(1, dte)) * 100
+                    with st.expander(f"Strike {row['strike']}$ | {ann_return:.1f}% p.a."):
+                        st.write(f"Prämie: **{row['lastPrice']}$**")
                         st.write(f"Abstand: {((current_price/row['strike'])-1)*100:.1f}%")
+            else:
+                st.info("Keine Optionen verfügbar.")
 
     except Exception as e:
-        st.error(f"Fehler beim Laden: {e}")
-        st.info("Yahoo blockiert gerade. Bitte in 10 Min nochmal probieren oder anderen Ticker testen.")
+        st.error(f"Yahoo-Limit erreicht oder Fehler: {e}")
+        st.info("Tipp: Warte kurz oder versuche einen sehr bekannten Ticker wie MSFT.")
