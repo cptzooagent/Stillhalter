@@ -82,7 +82,6 @@ with col_status:
         t, buyin = row['Ticker'], row['Einstand']
         curr_p = get_live_price(t)
         if curr_p:
-            # Erweiterte Ampel-Logik für Repair
             diff_pct = (curr_p / buyin - 1) * 100
             if curr_p >= buyin:
                 icon, stat = "🟢", "PROFIT: Call schreiben!"
@@ -90,14 +89,21 @@ with col_status:
                 icon, stat = "🟡", "REPAIR: Delta 0.10 wählen"
             else:
                 icon, stat = "🔵", "DEEP REPAIR: Nur Delta 0.05!"
-            
             st.write(f"{icon} **{t}**: {curr_p:.2f}$ ({diff_pct:.1f}%) → `{stat}`")
 
 st.divider()
 
 # --- REPAIR SCANNER ---
-st.subheader("🔍 Repair Call Finder")
-ticker = st.text_input("Ticker für Detail-Scan (z.B. HOOD)").strip().upper()
+st.subheader("🔍 Options-Finder")
+
+# Strategie-Auswahl wiederhergestellt
+c_strat, c_tick = st.columns([1, 2])
+with c_strat:
+    option_type = st.radio("Strategie", ["Put 🛡️ (Short Put)", "Call 📈 (Covered Call)"], horizontal=False)
+    side = "put" if "Put" in option_type else "call"
+
+with c_tick:
+    ticker = st.text_input("Ticker für Detail-Scan (z.B. HOOD)").strip().upper()
 
 if ticker:
     price = get_live_price(ticker)
@@ -108,38 +114,44 @@ if ticker:
         st.info(f"Aktueller Kurs: {price:.2f}$ | Dein Einstand: {my_buyin:.2f}$")
         dates = get_all_expirations(ticker)
         if dates:
-            sel_date = st.selectbox("Laufzeit (Repair ideal: 14-30 Tage)", dates)
-            df = get_chain_for_date(ticker, sel_date, "call")
+            # Berechnung der verbleibenden Tage (DTE) korrigiert
+            today = datetime.now()
+            d_labels = {}
+            for d in dates:
+                exp_date = datetime.strptime(d, '%Y-%m-%d')
+                days_left = (exp_date - today).days
+                d_labels[d] = f"{exp_date.strftime('%d.%m.%Y')} ({max(0, days_left)} T.)"
             
+            sel_date = st.selectbox("Laufzeit", dates, format_func=lambda x: d_labels.get(x))
+            
+            df = get_chain_for_date(ticker, sel_date, side)
             if df is not None:
-                # Wir filtern auf Strikes, die OTM sind
-                df = df[df['strike'] > price].sort_values('strike')
+                # Filter: Puts unter Kurs, Calls über Kurs
+                df = df[df['strike'] < price] if side == "put" else df[df['strike'] > price]
+                df = df.sort_values('strike', ascending=(side == "call"))
                 
                 for _, row in df.head(15).iterrows():
                     d_abs = abs(float(row['delta']))
                     pop = (1 - d_abs) * 100
                     
-                    # Logik für "Sicheren Repair"
-                    # Wenn weit unter Einstand, ist Delta 0.10 das Maximum
-                    is_repair_safe = d_abs <= 0.12
+                    # Logik für Repair & Sicherheit
+                    is_safe = d_abs < (0.15 if vix_val > 25 else 0.12)
                     
-                    if my_buyin > 0 and row['strike'] < my_buyin:
-                        color = "🔵" if d_abs < 0.10 else "🟡"
-                        note = "REPAIR MODE"
+                    if side == "call" and my_buyin > 0 and row['strike'] < my_buyin:
+                        color, note = "🔵" if d_abs < 0.10 else "🟡", "REPAIR MODE"
                     else:
-                        color = "🟢" if d_abs < 0.15 else "🔴"
-                        note = "TARGET REACHED"
+                        color = "🟢" if is_safe else "🔴"
+                        note = "SAFE" if is_safe else "AGR."
                     
                     with st.expander(f"{color} Strike {row['strike']:.1f}$ | Delta: {d_abs:.2f} | Chance: {pop:.0f}%"):
                         c1, c2, c3 = st.columns(3)
                         c1.metric("Prämie", f"{row['mid']:.2f}$")
-                        c2.metric("Abstand", f"{(row['strike']/price-1)*100:.1f}%")
+                        c2.metric("Abstand", f"{abs(row['strike']/price-1)*100:.1f}%")
                         
-                        # Effektive Senkung des Einstands
-                        new_basis = my_buyin - row['mid']
-                        c3.metric("Basis neu", f"{new_basis:.2f}$", help="Dein neuer theoretischer Einstand")
-                        
-                        if d_abs > 0.15 and row['strike'] < my_buyin:
-                            st.warning("⚠️ Achtung: Hohes Risiko einer Ausbuchung unter Einstand!")
+                        if side == "call" and my_buyin > 0:
+                            new_basis = my_buyin - row['mid']
+                            c3.metric("Basis neu", f"{new_basis:.2f}$", help="Theoretischer neuer Einstand")
                         else:
-                            st.success("✅ Guter Repair-Kandidat: Geringes Risiko, senkt deine Kostenbasis.")
+                            c3.metric("Gewinn-Chance", f"{pop:.1f}%")
+                        
+                        st.progress(max(0.0, min(1.0, pop / 100)))
