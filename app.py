@@ -6,7 +6,7 @@ from datetime import datetime
 # --- KONFIGURATION ---
 st.set_page_config(page_title="Stillhalter Pro Scanner", layout="wide")
 
-# Keys aus den Streamlit Secrets (Stelle sicher, dass beide in Cloud hinterlegt sind!)
+# Keys aus den Streamlit Secrets
 MD_KEY = st.secrets.get("MARKETDATA_KEY")
 FINNHUB_KEY = st.secrets.get("FINNHUB_KEY")
 
@@ -40,9 +40,9 @@ def get_marketdata_options(symbol):
     return None
 
 def format_expiry_label(val):
-    """Wandelt Unix-Timestamps (z.B. 1771621200) in echtes Datum um"""
+    """Wandelt Unix-Zahlen (wie 1771621200) in lesbare Daten um"""
     try:
-        # Check ob es eine Zahl ist
+        # Wenn es eine Zahl oder ein Zahlen-String ist
         if isinstance(val, (int, float)) or (isinstance(val, str) and val.isdigit()):
             return datetime.fromtimestamp(int(val)).strftime('%d.%m.%Y')
         return str(val)
@@ -52,7 +52,7 @@ def format_expiry_label(val):
 # --- USER INTERFACE ---
 st.title("🛡️ Pro Stillhalter Scanner")
 
-# Favoriten-Leiste (wie in deinem Screenshot 13.png)
+# Favoriten-Leiste
 watchlist = ["AAPL", "TSLA", "NVDA", "MSFT", "AMD", "META"]
 sel_fav = st.pills("Schnellauswahl", watchlist)
 user_input = st.text_input("Ticker manuell", "")
@@ -67,32 +67,38 @@ if ticker:
             chain = get_marketdata_options(ticker)
         
         if chain is not None and not chain.empty:
-            # Ablaufdaten sortieren und lesbar machen (Fix für Bild 13)
+            # Ablaufdaten für das Menü vorbereiten
             expirations = sorted(chain['expiration'].unique())
+            
+            # WICHTIG: format_func sorgt dafür, dass du im Menü ein Datum siehst statt Zahlen
             selected_expiry = st.selectbox(
                 "Ablaufdatum wählen", 
                 expirations, 
                 format_func=format_expiry_label
             )
             
-            # Daten filtern
+            # Filterung auf das gewählte Datum
             df_expiry = chain[chain['expiration'] == selected_expiry].copy()
             st.subheader(f"Puts für {format_expiry_label(selected_expiry)}")
 
             # Anzeige der Strikes
-            for _, row in df_expiry.sort_values('strike', ascending=False).head(12).iterrows():
-                # --- DTE BERECHNUNG (Fix für TypeError aus Bild 9/11) ---
+            for _, row in df_expiry.sort_values('strike', ascending=False).head(15).iterrows():
+                # --- DTE BERECHNUNG FIX ---
                 try:
                     raw_exp = row['expiration']
                     if isinstance(raw_exp, (int, float)) or (isinstance(raw_exp, str) and raw_exp.isdigit()):
                         exp_dt = datetime.fromtimestamp(int(raw_exp))
                     else:
                         exp_dt = datetime.strptime(str(raw_exp), '%Y-%m-%d')
+                    
+                    # Restlaufzeit in Tagen
                     dte = (exp_dt - datetime.now()).days
+                    dte = max(1, dte) # Verhindert Division durch Null
                 except:
-                    dte = 30 # Notlösung
+                    dte = 30
                 
-                ann_return = (row['mid'] / row['strike']) * (365 / max(1, dte)) * 100
+                # Rendite & Kennzahlen
+                ann_return = (row['mid'] / row['strike']) * (365 / dte) * 100
                 delta_val = abs(row['delta'])
                 puffer = ((price / row['strike']) - 1) * 100
                 
@@ -103,7 +109,7 @@ if ticker:
                     c1, c2, c3 = st.columns(3)
                     c1.metric("Prämie (Mid)", f"{row['mid']}$")
                     c2.metric("Puffer", f"{puffer:.1f}%")
-                    c3.metric("Restlaufzeit", f"{dte} Tage")
+                    c3.metric("Laufzeit", f"{dte} Tage")
         else:
             st.warning("Keine Daten gefunden. Prüfe dein API-Limit oder den Ticker.")
     else:
