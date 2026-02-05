@@ -1,63 +1,55 @@
 import streamlit as st
 import pandas as pd
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# --- SETUP & API ---
-st.set_page_config(page_title="Pro Stillhalter Strategie-Scanner", layout="wide")
+# --- SETUP ---
+st.set_page_config(page_title="Stillhalter Pro Scanner", layout="wide")
+
 MD_KEY = st.secrets.get("MARKETDATA_KEY")
 FINNHUB_KEY = st.secrets.get("FINNHUB_KEY")
 
+# --- ROBUSTE DATEN-FUNKTIONEN ---
 def get_market_overview():
-    data = {}
-    vix_p = 0.0
-    for ticker in ["VIX", "^VIX", "VXX"]:
-        try:
-            r = requests.get(f"https://api.marketdata.app/v1/indices/quotes/{ticker}/?token={MD_KEY}").json()
-            if r.get('s') == 'ok' and r['last'][0] > 0:
-                vix_p = r['last'][0]
-                break
-        except: continue
-    data["VIX"] = {"price": vix_p if vix_p > 0 else 15.0}
-    for name, etf in [("S&P 500", "SPY"), ("Nasdaq", "QQQ")]:
-        try:
-            r = requests.get(f'https://finnhub.io/api/v1/quote?symbol={etf}&token={FINNHUB_KEY}').json()
-            data[name] = {"price": r.get('c', 0.0) * (10 if name=="S&P 500" else 40), "change": r.get('dp', 0.0)}
-        except: data[name] = {"price": 0.0, "change": 0.0}
-    return data
-
-def get_trend_analysis(symbol):
-    """Analysiert Höhere Hochs/Tiefs und SMA"""
+    data = {"VIX": {"price": 15.0}, "S&P 500": {"price": 0.0, "change": 0.0}, "Nasdaq": {"price": 0.0, "change": 0.0}}
     try:
-        # Wir holen historische Daten der letzten 30 Tage
-        res = requests.get(f"https://finnhub.io/api/v1/stock/candle?symbol={symbol}&resolution=D&count=30&token={FINNHUB_KEY}").json()
-        if res.get('s') == 'ok':
-            highs = res['h']
-            lows = res['l']
-            close = res['c']
-            
-            # Trend-Check: Letzte 5 Tage vs 5 Tage davor
-            recent_high = max(highs[-5:])
-            prev_high = max(highs[-10:-5])
-            recent_low = min(lows[-5:])
-            prev_low = min(lows[-10:-5])
-            
-            sma50 = sum(close) / len(close) # Vereinfachter 30-Tage Durchschnitt
-            current = close[-1]
-            
-            if recent_high > prev_high and recent_low > prev_low:
-                return "Bullish 📈 (Höhere Hochs/Tiefs)", "🟢 Short Puts bevorzugen"
-            elif recent_high < prev_high and recent_low < prev_low:
-                return "Bearish 📉 (Tiefere Hochs/Tiefs)", "🔴 Nur Repair-Calls schreiben"
-            else:
-                return "Seitwärts ↔️", "🟡 Neutral / Iron Condors"
-    except: return "Keine Daten", "⚪ Analyse nicht möglich"
+        # VIX Check
+        for ticker in ["VIX", "^VIX", "VXX"]:
+            r = requests.get(f"https://api.marketdata.app/v1/indices/quotes/{ticker}/?token={MD_KEY}").json()
+            if r.get('s') == 'ok' and r.get('last'):
+                data["VIX"]["price"] = r['last'][0]
+                break
+        # Indizes via ETF Fallback
+        for name, etf in [("S&P 500", "SPY"), ("Nasdaq", "QQQ")]:
+            rf = requests.get(f'https://finnhub.io/api/v1/quote?symbol={etf}&token={FINNHUB_KEY}').json()
+            if rf.get('c'):
+                data[name] = {"price": rf['c'] * (10 if name=="S&P 500" else 40), "change": rf.get('dp', 0.0)}
+    except: pass
+    return data
 
 def get_live_price(symbol):
     try:
         r = requests.get(f'https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_KEY}').json()
         return float(r['c']) if r.get('c') else None
     except: return None
+
+def get_trend_analysis(symbol):
+    """Prüft auf Höhere Hochs/Tiefs (Trendstruktur)"""
+    try:
+        r = requests.get(f"https://finnhub.io/api/v1/stock/candle?symbol={symbol}&resolution=D&count=20&token={FINNHUB_KEY}").json()
+        if r.get('s') == 'ok' and len(r.get('h', [])) > 10:
+            h, l = r['h'], r['l']
+            # Vergleich letzte 5 Tage vs 5 Tage davor
+            curr_h, prev_h = max(h[-5:]), max(h[-10:-5])
+            curr_l, prev_l = min(l[-5:]), min(l[-10:-5])
+            
+            if curr_h > prev_h and curr_l > prev_l:
+                return "Bullish 📈", "🟢 Höhere Hochs & Tiefs"
+            elif curr_h < prev_h and curr_l < prev_l:
+                return "Bearish 📉", "🔴 Tiefer Hochs & Tiefs"
+            return "Seitwärts ↔️", "🟡 Keine klare Struktur"
+    except: pass
+    return "Unklar ⚪", "Keine Trenddaten"
 
 def get_all_expirations(symbol):
     try:
@@ -70,61 +62,81 @@ def get_chain_for_date(symbol, date_str, side):
         params = {"token": MD_KEY, "side": side, "expiration": date_str}
         r = requests.get(f"https://api.marketdata.app/v1/options/chain/{symbol}/", params=params).json()
         if r.get('s') == 'ok':
-            return pd.DataFrame({'strike': r['strike'], 'mid': r['mid'], 'delta': r.get('delta', [0.0]*len(r['strike'])), 'iv': r.get('iv', [0.0]*len(r['strike']))})
+            return pd.DataFrame({'strike': r['strike'], 'mid': r['mid'], 'delta': r.get('delta', [0.0]*len(r['strike']))})
     except: return None
 
-# --- UI ---
-st.title("🛡️ Pro Stillhalter & Trend-Scanner")
+# --- UI START ---
+st.title("🛡️ Pro Stillhalter Scanner")
 
 market = get_market_overview()
-vix = market["VIX"]["price"]
-
-# 1. MARKT-STIMMUNG
 with st.container(border=True):
     c1, c2, c3 = st.columns(3)
-    c1.metric("VIX", f"{vix:.2f}", "Panik-Zone" if vix > 25 else "Sorglos-Zone", delta_color="inverse")
-    st.info("💡 **Tipp:** Bei VIX > 25 sind Puts extrem lukrativ. Bei VIX < 15 eher defensiv agieren.")
+    c1.metric("VIX (Angst)", f"{market['VIX']['price']:.2f}", "🔥 Panik" if market['VIX']['price'] > 25 else "🟢 Ruhig")
+    c2.metric("S&P 500", f"{market['S&P 500']['price']:,.0f}")
+    c3.metric("Nasdaq", f"{market['Nasdaq']['price']:,.0f}")
 
 st.divider()
 
-# 2. PORTFOLIO MIT TREND-SIGNAL
+# --- PORTFOLIO ---
 st.subheader("💼 Portfolio & Trend-Check")
 if 'portfolio' not in st.session_state:
-    st.session_state.portfolio = pd.DataFrame([{"Ticker": "AFRM", "Einstand": 76.00}, {"Ticker": "ELF", "Einstand": 109.00}])
+    st.session_state.portfolio = pd.DataFrame([
+        {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
+        {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0}
+    ])
 
-col_p1, col_p2 = st.columns([1, 1.5])
-with col_p1:
-    st.session_state.portfolio = st.data_editor(st.session_state.portfolio, num_rows="dynamic", use_container_width=True)
+col_tab, col_trend = st.columns([1, 1.2])
 
-with col_p2:
+with col_tab:
+    with st.expander("Bestände editieren", expanded=False):
+        st.session_state.portfolio = st.data_editor(st.session_state.portfolio, num_rows="dynamic", use_container_width=True)
+
+with col_trend:
     for _, row in st.session_state.portfolio.iterrows():
         t = row['Ticker']
         price = get_live_price(t)
         if price:
-            trend_txt, action = get_trend_analysis(t)
-            diff = (price/row['Einstand']-1)*100
-            with st.expander(f"**{t}**: {price:.2f}$ ({diff:.1f}%)"):
-                st.write(f"Struktur: **{trend_txt}**")
-                st.write(f"Empfehlung: **{action}**")
-                if diff < -20: st.warning("⚠️ Starker Buchverlust: Fokus auf Repair-Calls mit Delta < 0.10")
+            trend_label, trend_desc = get_trend_analysis(t)
+            diff = (price/row['Einstand'] - 1) * 100
+            color = "🔵" if diff < -20 else "🟡" if diff < 0 else "🟢"
+            st.write(f"{color} **{t}**: {price:.2f}$ ({diff:.1f}%) | {trend_label} | `{trend_desc}`")
 
 st.divider()
 
-# 3. DETAIL SCANNER MIT STRATEGIE-HINWEIS
-st.subheader("🔍 Strategie-Finder")
-ticker = st.text_input("Ticker eingeben").upper()
+# --- SCANNER ---
+st.subheader("🔍 Options-Scanner")
+c_strat, c_tick = st.columns([1, 2])
+with c_strat:
+    option_type = st.radio("Strategie", ["Put 🛡️", "Call 📈"], horizontal=True)
+    side = "put" if "Put" in option_type else "call"
+with c_tick:
+    ticker = st.text_input("Ticker für Detail-Scan").strip().upper()
 
 if ticker:
     price = get_live_price(ticker)
-    trend_txt, action = get_trend_analysis(ticker)
-    
     if price:
-        st.subheader(f"{ticker} Analyse: {trend_txt}")
-        st.success(f"Handlungsanweisung: {action}")
+        trend_label, trend_desc = get_trend_analysis(ticker)
+        st.info(f"Aktueller Trend für {ticker}: **{trend_label}** ({trend_desc})")
         
-        # Laufzeiten & Strikes (Rest des Codes bleibt gleich für die Anzeige...)
         dates = get_all_expirations(ticker)
         if dates:
             d_labels = {d: f"{d} ({(datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days} T.)" for d in dates}
             sel_date = st.selectbox("Laufzeit", dates, format_func=lambda x: d_labels.get(x))
-            # ... Filterung und Anzeige der Strikes ...
+            
+            df = get_chain_for_date(ticker, sel_date, side)
+            if df is not None and not df.empty:
+                df = df[df['strike'] < price] if side == "put" else df[df['strike'] > price]
+                df = df.sort_values('strike', ascending=(side == "call"))
+                
+                for _, row in df.head(10).iterrows():
+                    d_abs = abs(float(row['delta']))
+                    pop = (1 - d_abs) * 100
+                    is_safe = d_abs < 0.15
+                    color = "🟢" if is_safe else "🔴"
+                    
+                    with st.expander(f"{color} Strike {row['strike']:.1f}$ | Delta: {d_abs:.2f} | Chance: {pop:.0f}%"):
+                        st.write(f"Prämie: **{row['mid']:.2f}$**")
+                        if trend_label == "Bearish 📉" and side == "put":
+                            st.warning("⚠️ Vorsicht: Trend ist abwärts gerichtet. Put-Verkauf riskant!")
+                        elif trend_label == "Bullish 📈" and side == "put":
+                            st.success("✅ Trend unterstützt den Put-Verkauf.")
