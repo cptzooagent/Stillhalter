@@ -24,8 +24,7 @@ def get_live_price(symbol):
     return None
 
 def get_marketdata_options(symbol):
-    """Holt die gesamte Optionskette (alle Laufzeiten) von MarketData.app"""
-    # Wir lassen 'range' weg, um alle verfügbaren Verfallstermine zu erhalten
+    """Holt die gesamte Optionskette von MarketData.app"""
     url = f"https://api.marketdata.app/v1/options/chain/{symbol}/"
     params = {
         "token": MD_KEY, 
@@ -42,7 +41,7 @@ def get_marketdata_options(symbol):
                 'iv': response.get('iv', [0] * len(response['strike']))
             })
             
-            # WICHTIG: Sofortige Umwandlung der Unix-Zahlen in Text-Datum (YYYY-MM-DD)
+            # Umwandlung der Unix-Zahlen in Text-Datum (YYYY-MM-DD)
             def fix_date(x):
                 try:
                     if isinstance(x, (int, float)) or (isinstance(x, str) and x.isdigit()):
@@ -58,8 +57,86 @@ def get_marketdata_options(symbol):
     return None
 
 def format_expiry_with_dte(date_str):
-    """Formatierungsfunktion für das Dropdown-Menü (Datum + DTE)"""
+    """Formatierungsfunktion für das Dropdown (Datum + DTE) - FIX FÜR SYNTAX ERROR"""
     try:
         exp_dt = datetime.strptime(date_str, '%Y-%m-%d')
         days_to_expiry = (exp_dt - datetime.now()).days
-        return f"{exp_dt.strftime('%d.%m.%Y')} ({max
+        # Hier war der Fehler: Klammer muss geschlossen werden
+        return f"{exp_dt.strftime('%d.%m.%Y')} ({max(0, days_to_expiry)} Tage)"
+    except:
+        return date_str
+
+# --- USER INTERFACE ---
+st.title("🛡️ Pro Stillhalter Scanner")
+
+# Favoriten-Leiste
+watchlist = ["AAPL", "TSLA", "NVDA", "MSFT", "AMD", "META", "GOOGL", "AMZN"]
+sel_fav = st.pills("Schnellauswahl", watchlist)
+user_input = st.text_input("Ticker manuell (z.B. MSTR)", "")
+
+ticker = (sel_fav if sel_fav else user_input).strip().upper()
+
+if ticker:
+    price = get_live_price(ticker)
+    
+    if price:
+        st.metric(f"Aktueller Kurs {ticker}", f"{price:.2f} $")
+        
+        with st.spinner(f'Lade alle Laufzeiten für {ticker}...'):
+            chain = get_marketdata_options(ticker)
+        
+        if chain is not None and not chain.empty:
+            # Nur Strikes unter dem Kurs (OTM)
+            otm_chain = chain[chain['strike'] < price].copy()
+            
+            # Alle Verfallstage sortieren
+            expirations = sorted(otm_chain['expiration'].unique())
+            
+            selected_expiry = st.selectbox(
+                "Wähle Laufzeit (Datum & Resttage)", 
+                expirations, 
+                format_func=format_expiry_with_dte
+            )
+            
+            df_expiry = otm_chain[otm_chain['expiration'] == selected_expiry].copy()
+            
+            st.subheader(f"Puts für {format_expiry_with_dte(selected_expiry)}")
+
+            # Anzeige der Strikes
+            for _, row in df_expiry.sort_values('strike', ascending=False).head(15).iterrows():
+                try:
+                    exp_dt = datetime.strptime(row['expiration'], '%Y-%m-%d')
+                    dte = max(1, (exp_dt - datetime.now()).days)
+                except:
+                    dte = 30
+                
+                ann_return = (row['mid'] / row['strike']) * (365 / dte) * 100
+                delta_val = abs(row['delta'])
+                puffer = ((price / row['strike']) - 1) * 100
+                
+                # Risiko-Ampel
+                if delta_val < 0.16:
+                    color = "🟢"
+                elif delta_val < 0.25:
+                    color = "🟡"
+                else:
+                    color = "🔴"
+
+                with st.expander(f"{color} Strike {row['strike']:.1f}$ | Delta: {delta_val:.2f} | {ann_return:.1f}% p.a."):
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Prämie (Mid)", f"{row['mid']:.2f}$")
+                    c2.metric("Puffer", f"{puffer:.1f}%")
+                    c3.metric("Laufzeit", f"{dte} Tage")
+                    
+                    st.write(f"Annualisierte Rendite: **{ann_return:.1f}%**")
+        else:
+            st.warning("Keine Daten gefunden. Prüfe dein API-Limit.")
+    else:
+        st.error(f"Konnte Kurs für '{ticker}' nicht laden.")
+
+st.divider()
+st.caption("Externe Analyse:")
+c1, c2, c3 = st.columns(3)
+c1.link_button("TradingView", f"https://www.tradingview.com/symbols/{ticker}/")
+c2.link_button("OptionStrat", f"https://optionstrat.com/visualizer/cash-secured-put/{ticker}")
+c3.link_button("Stock3", f"https://stock3.com/aktien/{ticker}-aktie")
