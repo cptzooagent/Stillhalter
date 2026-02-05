@@ -1,62 +1,48 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
 from datetime import datetime
-import requests
 
-st.set_page_config(page_title="Pro-Scanner", layout="centered")
+st.set_page_config(page_title="Scanner Mittelweg", layout="centered")
 
-# API Key aus den Secrets laden
-API_KEY = st.secrets["ALPHA_VANTAGE_KEY"]
+# --- DER TRICK: DATEN AUF DISK SPEICHERN ---
+# ttl="1d" bedeutet: Die Daten werden nur 1x am Tag wirklich neu geladen.
+@st.cache_data(persist="disk", ttl="1d")
+def get_persistent_data(symbol):
+    stock = yf.Ticker(symbol)
+    hist = stock.history(period="1y")
+    options = stock.options
+    # Wir geben nur die wichtigsten Infos zurück, um Speicher zu sparen
+    return {"hist": hist, "options": options, "price": hist['Close'].iloc[-1]}
 
-@st.cache_data(ttl=600)
-def get_price_alpha(symbol):
-    url = f'https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol={symbol}&apikey={API_KEY}'
-    r = requests.get(url)
-    data = r.json()
-    return float(data['Global Quote']['05. price'])
+st.title("🛡️ Stillhalter Scanner")
 
-st.title("🛡️ Pro-Stillhalter")
-
-ticker_symbol = st.text_input("Ticker (z.B. MSFT)", "MSFT").upper()
+# Ticker Auswahl
+ticker_symbol = st.text_input("Aktien-Ticker", "MSFT").upper()
 
 if ticker_symbol:
     try:
-        current_price = get_price_alpha(ticker_symbol)
-        st.metric("Echtzeit-Kurs", f"{current_price:.2f} $")
+        # Daten laden (entweder frisch oder aus dem Speicher)
+        data = get_persistent_data(ticker_symbol)
         
-        stock = yf.Ticker(ticker_symbol)
-        expirations = stock.options
-        
-        if expirations:
-            expiry = st.selectbox("Ablaufdatum", expirations)
-            dte = (datetime.strptime(expiry, '%Y-%m-%d') - datetime.now()).days
+        st.metric("Kurs (gespeichert)", f"{data['price']:.2f} $")
+        st.line_chart(data['hist']['Close'].tail(60))
+
+        if data['options']:
+            expiry = st.selectbox("Ablaufdatum", data['options'])
             
+            # Optionsketten sind leider schwer zu persistieren, 
+            # daher laden wir sie hier "vorsichtig" live.
+            stock = yf.Ticker(ticker_symbol)
             puts = stock.option_chain(expiry).puts
-            # Nur Puts mit Volumen und unter dem aktuellen Preis
-            filtered = puts[puts['strike'] <= current_price].sort_values('strike', ascending=False)
             
-            selected_strike = st.selectbox("Strike für Profit-Profil wählen", filtered['strike'].head(10))
-            
-            # Prämie für den gewählten Strike finden
-            premium = filtered[filtered['strike'] == selected_strike]['lastPrice'].values[0]
-            
-            # --- PROFIT PROFIL GRAFIK ---
-            st.subheader("Gewinn/Verlust Profil")
-            s_range = np.linspace(selected_strike * 0.8, current_price * 1.1, 100)
-            # Gewinn = Prämie - Max(0, Strike - Kurs)
-            profit = np.where(s_range >= selected_strike, premium * 100, (premium - (selected_strike - s_range)) * 100)
-            
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=s_range, y=profit, name='P&L at Expiry', line=dict(color='#00FF00' if profit[-1] > 0 else '#FF0000')))
-            fig.add_hline(y=0, line_dash="dash", line_color="white")
-            fig.add_vline(x=selected_strike, line_dash="dot", line_color="orange", annotation_text="Strike")
-            fig.update_layout(title="GuV am Laufzeitende", xaxis_title="Aktienkurs", yaxis_title="Gewinn/Verlust $", template="plotly_dark", height=350)
-            st.plotly_chart(fig, use_container_width=True)
-            
-            st.info(f"Break-Even: **{(selected_strike - premium):.2f} $**")
+            st.subheader(f"Puts für {expiry}")
+            st.write(puts[['strike', 'lastPrice', 'volatility']].head(5))
 
     except Exception as e:
-        st.warning("Limit erreicht. Die Grafik lädt in Kürze neu...")
+        st.error(f"Daten gerade nicht verfügbar: {e}")
+
+# Button zum manuellen Löschen des Speichers
+if st.button("Daten erzwingen neu laden"):
+    st.cache_data.clear()
+    st.rerun()
