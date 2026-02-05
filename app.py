@@ -36,6 +36,24 @@ def get_live_price(symbol):
         return float(r['c']) if r.get('c') else None
     except: return None
 
+def get_trend_analysis(symbol):
+    """Analysiert Höhere Hochs (HH) und Höhere Tiefs (HL) für die Price Action"""
+    try:
+        r = requests.get(f"https://finnhub.io/api/v1/stock/candle?symbol={symbol}&resolution=D&count=20&token={FINNHUB_KEY}").json()
+        if r.get('s') == 'ok' and len(r.get('h', [])) >= 10:
+            h, l = r['h'], r['l']
+            # Vergleich letzte 5 Tage vs. 5 Tage davor
+            curr_h, prev_h = max(h[-5:]), max(h[-10:-5])
+            curr_l, prev_l = min(l[-5:]), min(l[-10:-5])
+            
+            if curr_h > prev_h and curr_l > prev_l:
+                return "Bullish 📈", "Struktur: HH & HL (Aufwärtstrend)"
+            elif curr_h < prev_h and curr_l < prev_l:
+                return "Bearish 📉", "Struktur: LH & LL (Abwärtstrend)"
+            return "Seitwärts ↔️", "Keine klare Trendstruktur"
+    except: pass
+    return "Keine Daten ⚪", "Trend-Check nicht möglich"
+
 def get_all_expirations(symbol):
     try:
         r = requests.get(f"https://api.marketdata.app/v1/options/expirations/{symbol}/?token={MD_KEY}").json()
@@ -51,7 +69,6 @@ def get_chain_for_date(symbol, date_str, side):
     except: return None
 
 def get_best_put_opportunity(symbol):
-    """Scan für die Top 10 Liste: Sucht Strike bei Delta ~0.15"""
     try:
         dates = get_all_expirations(symbol)
         if not dates: return None
@@ -99,12 +116,12 @@ if opps:
 
 st.divider()
 
-# 3. PORTFOLIO REPAIR STATUS
-st.subheader("💼 Portfolio Repair-Status")
+# 3. PORTFOLIO REPAIR STATUS MIT TREND-CHECK
+st.subheader("💼 Portfolio Repair & Trend-Check")
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = pd.DataFrame([{"Ticker": "AFRM", "Einstand": 76.00}, {"Ticker": "ELF", "Einstand": 109.00}, {"Ticker": "ETSY", "Einstand": 67.00}])
 
-c_tab, c_status = st.columns([1, 1.2])
+c_tab, c_status = st.columns([1, 1.3])
 with c_tab:
     with st.expander("Bestände editieren"):
         st.session_state.portfolio = st.data_editor(st.session_state.portfolio, num_rows="dynamic", use_container_width=True)
@@ -113,13 +130,14 @@ with c_status:
     for _, row in st.session_state.portfolio.iterrows():
         curr = get_live_price(row['Ticker'])
         if curr:
+            trend_label, trend_desc = get_trend_analysis(row['Ticker'])
             diff = (curr/row['Einstand'] - 1) * 100
             icon, stat = ("🟢", "GO") if diff >= 0 else ("🟡", "REPAIR") if diff > -20 else ("🔵", "DEEP REPAIR")
-            st.write(f"{icon} **{row['Ticker']}**: {curr:.2f}$ ({diff:.1f}%) → `{stat}`")
+            st.write(f"{icon} **{row['Ticker']}**: {curr:.2f}$ ({diff:.1f}%) | {trend_label} | `{trend_desc}`")
 
 st.divider()
 
-# 4. DETAIL SCANNER (WIE VORHER)
+# 4. DETAIL SCANNER
 st.subheader("🔍 Options-Finder")
 c_strat, c_tick = st.columns([1, 2])
 with c_strat:
@@ -130,9 +148,18 @@ with c_tick:
 
 if ticker:
     price = get_live_price(ticker)
+    trend_label, trend_desc = get_trend_analysis(ticker)
     my_buyin = st.session_state.portfolio[st.session_state.portfolio['Ticker'] == ticker]['Einstand'].iloc[0] if ticker in st.session_state.portfolio['Ticker'].values else 0
+    
     if price:
-        st.info(f"Kurs: {price:.2f}$ | Einstand: {my_buyin:.2f}$")
+        st.info(f"Kurs: {price:.2f}$ | Trend: **{trend_label}** ({trend_desc})")
+        
+        # Strategie-Check
+        if side == "put" and "Bearish" in trend_label:
+            st.warning("⚠️ Trend ist bärisch: Put-Verkauf riskant (Fallendes Messer!)")
+        elif side == "put" and "Bullish" in trend_label:
+            st.success("✅ Trend unterstützt Put-Verkäufe.")
+
         dates = get_all_expirations(ticker)
         if dates:
             d_labels = {d: f"{datetime.strptime(d, '%Y-%m-%d').strftime('%d.%m.%Y')} ({(datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days} T.)" for d in dates}
