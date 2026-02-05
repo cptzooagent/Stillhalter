@@ -24,7 +24,8 @@ def get_live_price(symbol):
     return None
 
 def get_marketdata_options(symbol):
-    """Holt die gesamte Optionskette von MarketData.app"""
+    """Holt die KOMPLETTE Optionskette von MarketData.app"""
+    # WICHTIG: Wir entfernen 'range=otm', um wirklich alle verfügbaren Daten zu erhalten
     url = f"https://api.marketdata.app/v1/options/chain/{symbol}/"
     params = {
         "token": MD_KEY, 
@@ -57,11 +58,10 @@ def get_marketdata_options(symbol):
     return None
 
 def format_expiry_with_dte(date_str):
-    """Formatierungsfunktion für das Dropdown (Datum + DTE) - FIX FÜR SYNTAX ERROR"""
+    """Formatierungsfunktion für das Dropdown (Datum + DTE)"""
     try:
         exp_dt = datetime.strptime(date_str, '%Y-%m-%d')
         days_to_expiry = (exp_dt - datetime.now()).days
-        # Hier war der Fehler: Klammer muss geschlossen werden
         return f"{exp_dt.strftime('%d.%m.%Y')} ({max(0, days_to_expiry)} Tage)"
     except:
         return date_str
@@ -82,16 +82,17 @@ if ticker:
     if price:
         st.metric(f"Aktueller Kurs {ticker}", f"{price:.2f} $")
         
-        with st.spinner(f'Lade alle Laufzeiten für {ticker}...'):
+        with st.spinner(f'Lade alle verfügbaren Ketten für {ticker}...'):
             chain = get_marketdata_options(ticker)
         
         if chain is not None and not chain.empty:
-            # Nur Strikes unter dem Kurs (OTM)
+            # Wir filtern hier manuell auf OTM (Strikes < Aktueller Kurs)
             otm_chain = chain[chain['strike'] < price].copy()
             
-            # Alle Verfallstage sortieren
+            # Alle Verfallstage extrahieren und sortieren
             expirations = sorted(otm_chain['expiration'].unique())
             
+            # Falls die Liste sehr lang ist, hilft die Anzeige der Tage im Dropdown enorm
             selected_expiry = st.selectbox(
                 "Wähle Laufzeit (Datum & Resttage)", 
                 expirations, 
@@ -102,7 +103,7 @@ if ticker:
             
             st.subheader(f"Puts für {format_expiry_with_dte(selected_expiry)}")
 
-            # Anzeige der Strikes
+            # Anzeige der Strikes (Top 15, sortiert nach Strike-Höhe)
             for _, row in df_expiry.sort_values('strike', ascending=False).head(15).iterrows():
                 try:
                     exp_dt = datetime.strptime(row['expiration'], '%Y-%m-%d')
@@ -110,6 +111,7 @@ if ticker:
                 except:
                     dte = 30
                 
+                # Renditeberechnung
                 ann_return = (row['mid'] / row['strike']) * (365 / dte) * 100
                 delta_val = abs(row['delta'])
                 puffer = ((price / row['strike']) - 1) * 100
@@ -128,15 +130,15 @@ if ticker:
                     c2.metric("Puffer", f"{puffer:.1f}%")
                     c3.metric("Laufzeit", f"{dte} Tage")
                     
-                    st.write(f"Annualisierte Rendite: **{ann_return:.1f}%**")
+                    st.write(f"Voraussichtliche Rendite (annualisiert): **{ann_return:.1f}%**")
         else:
-            st.warning("Keine Daten gefunden. Prüfe dein API-Limit.")
+            st.warning("Keine Daten gefunden. Evtl. Ticker prüfen oder API-Limit erreicht.")
     else:
         st.error(f"Konnte Kurs für '{ticker}' nicht laden.")
 
 st.divider()
 st.caption("Externe Analyse:")
 c1, c2, c3 = st.columns(3)
-c1.link_button("TradingView", f"https://www.tradingview.com/symbols/{ticker}/")
-c2.link_button("OptionStrat", f"https://optionstrat.com/visualizer/cash-secured-put/{ticker}")
+c1.link_button("OptionStrat", f"https://optionstrat.com/visualizer/cash-secured-put/{ticker}")
+c2.link_button("TradingView", f"https://www.tradingview.com/symbols/{ticker}/")
 c3.link_button("Stock3", f"https://stock3.com/aktien/{ticker}-aktie")
