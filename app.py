@@ -11,34 +11,57 @@ FINNHUB_KEY = st.secrets.get("FINNHUB_KEY")
 
 # --- ROBUSTE MARKT-DATEN FUNKTION ---
 def get_market_overview():
-    """Versucht Indizes über mehrere Wege zu laden, damit nichts leer bleibt"""
     data = {}
-    # 1. Indizes (SPX, Nasdaq, VIX)
-    index_map = {"S&P 500": "SPX", "Nasdaq": "NDX", "VIX": "VIX"}
     
-    for name, sym in index_map.items():
-        # Versuch A: MarketData
+    # 1. VIX SPEZIAL-LOGIK (3-Stufen-Check)
+    vix_price, vix_change = 0.0, 0.0
+    vix_success = False
+    
+    # Stufe A: MarketData Index
+    try:
+        r = requests.get(f"https://api.marketdata.app/v1/indices/quotes/VIX/?token={MD_KEY}").json()
+        if r.get('s') == 'ok':
+            vix_price = r['last'][0]
+            vix_change = r['changepct'][0]
+            vix_success = True
+    except: pass
+    
+    # Stufe B: Finnhub Index Fallback
+    if not vix_success:
         try:
-            url = f"https://api.marketdata.app/v1/indices/quotes/{sym}/?token={MD_KEY}"
-            r = requests.get(url).json()
-            if r.get('s') == 'ok' and r.get('last'):
-                data[name] = {"price": r['last'][0], "change": r['changepct'][0]}
-                continue
-        except: pass
-        
-        # Versuch B: Finnhub Fallback (via ETFs)
-        try:
-            alt_sym = "SPY" if "S&P" in name else "QQQ" if "Nasdaq" in name else "^VIX"
-            r = requests.get(f'https://finnhub.io/api/v1/quote?symbol={alt_sym}&token={FINNHUB_KEY}').json()
+            r = requests.get(f'https://finnhub.io/api/v1/quote?symbol=^VIX&token={FINNHUB_KEY}').json()
             if r.get('c'):
-                data[name] = {"price": r['c'], "change": r['dp']}
-        except: 
+                vix_price = r['c']
+                vix_change = r['dp']
+                vix_success = True
+        except: pass
+
+    # Stufe C: Finnhub ETF Fallback (VXX als Proxy für Stimmung)
+    if not vix_success:
+        try:
+            r = requests.get(f'https://finnhub.io/api/v1/quote?symbol=VXX&token={FINNHUB_KEY}').json()
+            vix_price = r.get('c', 0.0)
+            vix_change = r.get('dp', 0.0)
+        except: pass
+    
+    data["VIX"] = {"price": vix_price, "change": vix_change}
+
+    # 2. S&P 500 & NASDAQ (MarketData mit Finnhub ETF Fallback)
+    for name, sym, etf in [("S&P 500", "SPX", "SPY"), ("Nasdaq", "NDX", "QQQ")]:
+        try:
+            r = requests.get(f"https://api.marketdata.app/v1/indices/quotes/{sym}/?token={MD_KEY}").json()
+            if r.get('s') == 'ok':
+                data[name] = {"price": r['last'][0], "change": r['changepct'][0]}
+            else:
+                r_f = requests.get(f'https://finnhub.io/api/v1/quote?symbol={etf}&token={FINNHUB_KEY}').json()
+                data[name] = {"price": r_f.get('c', 0.0), "change": r_f.get('dp', 0.0)}
+        except:
             data[name] = {"price": 0.0, "change": 0.0}
 
-    # 2. Bitcoin (Immer über Finnhub, da sehr stabil)
+    # 3. BITCOIN
     try:
         r_btc = requests.get(f'https://finnhub.io/api/v1/quote?symbol=BINANCE:BTCUSDT&token={FINNHUB_KEY}').json()
-        data["Bitcoin"] = {"price": r_btc.get('c', 0), "change": r_btc.get('dp', 0)}
+        data["Bitcoin"] = {"price": r_btc.get('c', 0.0), "change": r_btc.get('dp', 0.0)}
     except:
         data["Bitcoin"] = {"price": 0.0, "change": 0.0}
         
@@ -64,31 +87,38 @@ def get_chain_for_date(symbol, date_str, side):
             return pd.DataFrame({'strike': r['strike'], 'mid': r['mid'], 'delta': r.get('delta', [0]*len(r['strike']))})
     except: return None
 
-# --- UI START ---
+# --- UI ---
 st.title("🛡️ Pro Stillhalter Scanner")
 
-# 1. MARKT-AMPEL (IMMER SICHTBAR)
 market = get_market_overview()
 vix_status = "normal"
 
-if market:
-    with st.container(border=True):
-        m_cols = st.columns(4)
-        # Fix: Explizite Reihenfolge für die Spalten
-        order = ["VIX", "S&P 500", "Nasdaq", "Bitcoin"]
-        for i, name in enumerate(order):
-            if name in market:
-                info = market[name]
-                p, c = info['price'], info['change']
-                label = ""
-                if name == "VIX":
-                    vix_status = "panic" if p > 25 else "normal"
-                    label = "🔥 PANIK" if p > 25 else "🟢 RUHIG"
-                m_cols[i].metric(name, f"{p:,.2f}", f"{c:.2f}% {label}", delta_color="inverse" if name == "VIX" else "normal")
+with st.container(border=True):
+    m_cols = st.columns(4)
+    order = ["VIX", "S&P 500", "Nasdaq", "Bitcoin"]
+    for i, name in enumerate(order):
+        info = market.get(name, {"price": 0.0, "change": 0.0})
+        p, c = info['price'], info['change']
+        
+        display_name = name
+        delta_col = "normal"
+        val_str = f"{p:,.2f}" if p > 0 else "Wird geladen..."
+        
+        if name == "VIX":
+            vix_status = "panic" if p > 25 else "normal"
+            display_name = "VIX (Angst)"
+            delta_col = "inverse"
+            state = "🔥 PANIK" if p > 25 else "🟢 RUHIG"
+            m_cols[i].metric(display_name, val_str, f"{c:.2f}% {state}", delta_color=delta_col)
+        else:
+            m_cols[i].metric(display_name, val_str, f"{c:.2f}%")
+
+if vix_status == "panic":
+    st.error("⚠️ HOHE VOLATILITÄT: Märkte sind nervös. Wähle kleinere Deltas (< 0.12)!")
 
 st.divider()
 
-# 2. CAPTRADER PORTFOLIO
+# --- PORTFOLIO & SCANNER ---
 st.subheader("💼 CapTrader Portfolio")
 if 'portfolio' not in st.session_state:
     st.session_state.portfolio = pd.DataFrame([
@@ -98,14 +128,12 @@ if 'portfolio' not in st.session_state:
         {"Ticker": "GTLB", "Einstand": 41.00}
     ])
 
-with st.expander("Bestände verwalten (Ticker & Einstandspreis)"):
+with st.expander("Bestände verwalten"):
     st.session_state.portfolio = st.data_editor(st.session_state.portfolio, num_rows="dynamic")
 
-# 3. SCANNER
 option_type = st.radio("Strategie", ["Put 🛡️", "Call 📈 (Covered Call)"], horizontal=True)
 side = "put" if "Put" in option_type else "call"
-
-ticker = st.text_input("Ticker eingeben (z.B. NVDA)").strip().upper()
+ticker = st.text_input("Ticker eingeben").strip().upper()
 
 if ticker:
     price = get_live_price(ticker)
@@ -117,11 +145,7 @@ if ticker:
         c1.metric(f"Kurs {ticker}", f"{price:.2f} $")
         if my_buy_in:
             diff = ((price / my_buy_in) - 1) * 100
-            c2.metric("Mein Einstand", f"{my_buy_in:.2f} $", f"{diff:.1f}%")
-
-        # Covered Call Check
-        if side == "call" and my_buy_in and price < my_buy_in:
-            st.warning(f"⚠️ Kurs unter Einstand! Nur Strikes ÜBER {my_buy_in}$ wählen, um keinen Verlust zu realisieren.")
+            c2.metric("Einstandspreis", f"{my_buy_in:.2f} $", f"{diff:.1f}%")
 
         dates = get_all_expirations(ticker)
         if dates:
@@ -130,29 +154,16 @@ if ticker:
             
             df = get_chain_for_date(ticker, sel_date, side)
             if df is not None and not df.empty:
-                # OTM Filter
                 df = df[df['strike'] < price] if side == "put" else df[df['strike'] > price]
                 df = df.sort_values('strike', ascending=(side == "call"))
                 
                 for _, row in df.head(10).iterrows():
                     d_abs = abs(row['delta'] if row['delta'] else 0)
                     pop = (1 - d_abs) * 100
-                    
-                    # Dynamische Ampel für "Nicht ausbuchen"
                     is_safe = d_abs < (0.12 if vix_status == "normal" else 0.15)
                     color = "🟢" if is_safe else "🟡" if d_abs < 0.25 else "🔴"
-                    
-                    # Einstandspreis-Schutz
-                    if side == "call" and my_buy_in and row['strike'] < my_buy_in:
-                        color = "❌"
+                    if side == "call" and my_buy_in and row['strike'] < my_buy_in: color = "❌"
                     
                     with st.expander(f"{color} Strike {row['strike']:.1f}$ | Chance: {pop:.0f}%"):
                         ca, cb, cc = st.columns(3)
-                        ca.metric("Prämie", f"{row['mid']:.2f}$")
-                        cb.metric("Delta", f"{d_abs:.2f}")
-                        if side == "call" and my_buy_in:
-                            profit = (row['strike'] - my_buy_in) + row['mid']
-                            cc.metric("Profit bei Ausübung", f"{profit:.2f}$")
-                        else:
-                            cc.metric("Gewinn-Chance", f"{pop:.1f}%")
-                        st.progress(max(0.0, min(1.0, pop / 100)))
+                        ca.metric
