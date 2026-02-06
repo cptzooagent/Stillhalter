@@ -6,18 +6,17 @@ from scipy.stats import norm
 from datetime import datetime
 
 # --- SETUP ---
-st.set_page_config(page_title="CapTrader Pro Dashboard v2", layout="wide")
+st.set_page_config(page_title="CapTrader Pro Dashboard", layout="wide")
 
-# --- 1. MATHE: DELTA-BERECHNUNG (BLACK-SCHOLES) ---
+# --- 1. MATHE: DELTA-BERECHNUNG ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
-    """Berechnet das theoretische Delta für die Risiko-Einschätzung."""
     if T <= 0 or sigma <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     if option_type == 'call':
         return norm.cdf(d1)
     return norm.cdf(d1) - 1
 
-# --- 2. DATEN-FUNKTIONEN (YAHOO FINANCE - 15M DELAY) ---
+# --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=900)
 def get_yf_data(symbol):
     try:
@@ -55,12 +54,11 @@ if st.button("🚀 Markt-Scan jetzt starten"):
         cols = st.columns(5)
         for idx, (_, row) in enumerate(opp_df.iterrows()):
             with cols[idx % 5]:
-                with st.container(border=True):
-                    st.write(f"**{row['ticker']}**")
-                    st.metric("Yield p.a.", f"{row['yield']:.1f}%")
-                    st.caption(f"Strike: {row['strike']:.1f}$ | {row['days']} T.")
+                st.markdown(f"### {row['ticker']}")
+                st.metric("Yield p.a.", f"{row['yield']:.1f}%")
+                st.write(f"Strike: {row['strike']:.1f}$ | {row['days']} T.")
 
-st.divider()
+st.write("---")
 
 # SEKTION 2: DEPOT
 st.subheader("💼 Depot & Repair-Status")
@@ -81,7 +79,7 @@ for i, item in enumerate(depot_data):
         with p_cols[i % 4]:
             st.write(f"{icon} **{item['Ticker']}**: {curr:.2f}$ ({diff:.1f}%)")
 
-st.divider()
+st.write("---")
 
 # SEKTION 3: FINDER
 st.subheader("🔍 Options-Finder")
