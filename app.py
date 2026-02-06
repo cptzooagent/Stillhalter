@@ -53,7 +53,7 @@ if st.button("🔥 Gesamten Markt nach 0.15 Delta scannen"):
     status_text = st.empty()
     
     # Scan der ersten 50 Ticker für Stabilität
-    scan_list = full_watchlist[:50] 
+    scan_list = full_watchlist[:] 
     
     for i, t in enumerate(scan_list):
         status_text.text(f"Analysiere {t} ({i+1}/{len(scan_list)})...")
@@ -144,3 +144,4 @@ if ticker_input:
                 c1.write(f"**Delta:** {abs(delta):.2f}")
                 c1.write(f"**Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
                 c2.write(f"**Bid/Ask:** {opt['bid']:.2f}$ / {opt['ask']:.2f}$")
+
