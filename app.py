@@ -19,13 +19,26 @@ def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
 # --- 2. DATEN-FUNKTIONEN (CACHED) ---
 @st.cache_data(ttl=86400)
 def get_auto_watchlist():
-    """Holt die Nasdaq-100 Liste von Wikipedia."""
+    """Holt eine erweiterte Mischung aus Nasdaq-100 und High-IV Werten."""
+    # Wir definieren eine starke Basis-Liste mit volatileren Werten
+    # So bist du nicht von Wikipedia abhängig
+    high_yield_candidates = [
+        "TSLA", "NVDA", "AMD", "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", 
+        "UPST", "HOOD", "SOFI", "MSTR", "AI", "PLUG", "LCID", "GME", "AMC",
+        "SNOW", "SHOP", "U", "NET", "DDOG", "RBLX", "PYPL", "Z", "ABNB"
+    ]
+    
     try:
+        # Versuch, die volle Nasdaq-Liste zu laden
         url = "https://en.wikipedia.org/wiki/Nasdaq-100"
-        table = pd.read_html(url)[4]
-        return table['Ticker'].tolist()
+        # Wir fügen einen 'User-Agent' hinzu, damit Wikipedia uns nicht blockiert
+        table = pd.read_html(url, storage_options={'User-Agent': 'Mozilla/5.0'})[4]
+        wiki_list = table['Ticker'].tolist()
+        # Kombiniere beide Listen und entferne Duplikate
+        return list(set(high_yield_candidates + wiki_list))
     except:
-        return ["TSLA", "NVDA", "AMD", "AAPL", "MSFT", "AMZN", "GOOGL", "META"]
+        # Wenn Wikipedia blockt, nimm unsere starke Vorauswahl
+        return high_yield_candidates
 
 @st.cache_data(ttl=900)
 def get_stock_basics(symbol):
@@ -144,4 +157,5 @@ if ticker_input:
                 c1.write(f"**Delta:** {abs(delta):.2f}")
                 c1.write(f"**Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
                 c2.write(f"**Bid/Ask:** {opt['bid']:.2f}$ / {opt['ask']:.2f}$")
+
 
