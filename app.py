@@ -23,24 +23,18 @@ def get_safety_metrics(symbol):
         tk = yf.Ticker(symbol)
         hist = tk.history(period="3mo")
         if len(hist) < 20: return 50.0, True
-        
-        # RSI 14 Tage
         delta = hist['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         rsi = 100 - (100 / (1 + rs)).iloc[-1]
-        
-        # Trend (SMA 50)
         sma50 = hist['Close'].tail(50).mean()
         trend_ok = hist['Close'].iloc[-1] > (sma50 * 0.95)
         return round(float(rsi), 1), bool(trend_ok)
-    except:
-        return 50.0, True
+    except: return 50.0, True
 
 @st.cache_data(ttl=900)
 def get_stock_data(symbol):
-    """Extrahiert Preise, Daten und Earnings ohne Ticker-Objekt-Fehler."""
     try:
         tk = yf.Ticker(symbol)
         price = tk.fast_info['last_price']
@@ -52,14 +46,13 @@ def get_stock_data(symbol):
                 earn = cal['Earnings Date'][0].strftime('%d.%m.')
         except: pass
         return price, dates, earn
-    except:
-        return None, [], ""
+    except: return None, [], ""
 
 # --- UI: SIDEBAR ---
 st.sidebar.header("🛡️ Strategie & Sicherheit")
 target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 85)
 min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
-rsi_min = st.sidebar.slider("Minimum RSI (Kein freier Fall)", 20, 45, 30)
+rsi_min = st.sidebar.slider("Minimum RSI", 20, 45, 30)
 
 st.sidebar.subheader("💰 Preis-Filter")
 min_stock_p = st.sidebar.number_input("Mindestkurs ($)", value=40)
@@ -73,10 +66,8 @@ if st.button("🚀 High-Safety Scan starten"):
     watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AVGO", "AMD", "NFLX", "COIN", "PLTR", "HOOD", "SQ", "MSTR", "SMCI", "UBER", "ABNB", "DIS", "PYPL"]
     results = []
     prog = st.progress(0)
-    status = st.empty()
     
     for i, t in enumerate(watchlist):
-        status.text(f"Analysiere {t}...")
         prog.progress((i + 1) / len(watchlist))
         price, dates, earn = get_stock_data(t)
         
@@ -97,14 +88,9 @@ if st.button("🚀 High-Safety Scan starten"):
                         best = safe_opts.sort_values('bid', ascending=False).iloc[0]
                         y_pa = (best['bid'] / best['strike']) * (365 / (T*365)) * 100
                         if y_pa >= min_yield_pa:
-                            results.append({
-                                'ticker': t, 'yield': y_pa, 'strike': best['strike'], 
-                                'rsi': rsi, 'price': price, 'earn': earn, 
-                                'bid': best['bid'], 'capital': best['strike'] * 100
-                            })
+                            results.append({'ticker': t, 'yield': y_pa, 'strike': best['strike'], 'rsi': rsi, 'price': price, 'earn': earn})
                 except: continue
 
-    status.text("Scan beendet!")
     if results:
         opp_df = pd.DataFrame(results).sort_values('yield', ascending=False).head(12)
         cols = st.columns(4)
@@ -114,9 +100,8 @@ if st.button("🚀 High-Safety Scan starten"):
                 st.metric("Rendite p.a.", f"{row['yield']:.1f}%")
                 st.write(f"Strike: **{row['strike']:.1f}$**")
                 st.caption(f"Kurs: {row['price']:.2f}$ | RSI: {row['rsi']}")
-                if row['earn']: st.warning(f"⚠️ ER: {row['earn']}")
-                st.info(f"💼 Bedarf: {row['capital']:,.0f}$")
-    else: st.warning("Keine Treffer gefunden. Versuche RSI oder Rendite zu senken.")
+                if row['earn']: st.warning(f"📅 ER: {row['earn']}")
+    else: st.warning("Keine Treffer unter diesen Sicherheits-Vorgaben.")
 
 st.write("---")
 
@@ -140,35 +125,51 @@ for i, item in enumerate(depot_data):
 
 st.write("---")
 
-# SEKTION 3: EINZEL-CHECK
+# SEKTION 3: EINZEL-CHECK (AMPEL-SYSTEM REAKTIVIERT)
 st.subheader("🔍 Experten Einzel-Check")
 c_type, c_tick = st.columns([1, 2])
-with c_type: mode = st.radio("Typ", ["put", "call"], horizontal=True)
-with c_tick: t_in = st.text_input("Ticker eingeben", value="NVDA").upper()
+with c_type: mode = st.radio("Optionstyp", ["put", "call"], horizontal=True)
+with c_tick: t_in = st.text_input("Ticker Symbol", value="NVDA").upper()
 
 if t_in:
     price, dates, earn = get_stock_data(t_in)
     if price and dates:
         rsi, trend_ok = get_safety_metrics(t_in)
         m1, m2, m3 = st.columns(3)
-        m1.metric("Kurs", f"{price:.2f}$")
+        m1.metric("Aktueller Kurs", f"{price:.2f}$")
         m2.metric("RSI (14d)", rsi)
-        m3.metric("Trend-Check", "Stabil" if trend_ok else "Schwach")
+        m3.metric("Trend", "Stabil" if trend_ok else "Schwach")
         
         d_sel = st.selectbox("Laufzeit wählen", dates, index=1 if len(dates)>1 else 0)
         tk = yf.Ticker(t_in)
-        chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
-        T = max((datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days, 1) / 365
-        
-        df = chain[chain['bid'] > 0].copy()
-        df = df[df['strike'] < price].sort_values('strike', ascending=False) if mode == "put" else df[df['strike'] > price].sort_values('strike', ascending=True)
-        
-        for _, opt in df.head(5).iterrows():
-            delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode)
-            prob = (1 - abs(delta)) * 100
-            with st.expander(f"Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$ | Wahrsch: {prob:.1f}%"):
-                col_a, col_b = st.columns(2)
-                col_a.write(f"💰 Cash-Einnahme: **{opt['bid']*100:.0f}$**")
-                col_a.write(f"🛡️ Puffer: **{(abs(opt['strike']-price)/price)*100:.1f}%**")
-                col_b.write(f"📉 Delta: **{abs(delta):.2f}**")
-                col_b.write(f"💼 Kapital: **{opt['strike']*100:,.0f}$**")
+        try:
+            chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
+            T = max((datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days, 1) / 365
+            
+            df = chain[chain['bid'] > 0].copy()
+            # Sortierung: Bei Put absteigend vom Kurs weg, bei Call aufsteigend vom Kurs weg
+            if mode == "put":
+                df = df[df['strike'] < price].sort_values('strike', ascending=False)
+            else:
+                df = df[df['strike'] > price].sort_values('strike', ascending=True)
+            
+            for _, opt in df.head(6).iterrows():
+                delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode)
+                abs_delta = abs(delta)
+                
+                # --- AMPEL LOGIK ---
+                if abs_delta <= 0.15: 
+                    risk_icon = "🟢 (Konservativ)"
+                elif abs_delta <= 0.30: 
+                    risk_icon = "🟡 (Moderat)"
+                else: 
+                    risk_icon = "🔴 (Spekulativ)"
+                
+                with st.expander(f"{risk_icon} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$"):
+                    col_a, col_b = st.columns(2)
+                    col_a.write(f"Wahrscheinlichkeit OTM: **{(1-abs_delta)*100:.1f}%**")
+                    col_a.write(f"Abstand zum Kurs: **{(abs(opt['strike']-price)/price)*100:.1f}%**")
+                    col_b.write(f"Delta: **{abs_delta:.2f}**")
+                    col_b.write(f"Kapitalbedarf: **{opt['strike']*100:,.0f}$**")
+        except:
+            st.error("Daten für diese Laufzeit nicht verfügbar.")
