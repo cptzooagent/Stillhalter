@@ -74,10 +74,9 @@ if st.button("🚀 Markt-Scan jetzt starten"):
 
 st.divider()
 
-# 2. MEIN DEPOT & AMPEL-LEGENDE (Nebeneinander)
+# 2. MEIN DEPOT & AMPEL-LEGENDE
 st.subheader("💼 Mein Depot & Strategie")
 
-# Layout: Depot links (Spalte 1), Legende rechts (Spalte 2)
 col_depot, col_legende = st.columns([2, 1])
 
 full_portfolio = [
@@ -106,7 +105,7 @@ with col_legende:
         st.markdown("🟡 **REPAIR:** Kurs bis -20%. Call **Delta 0.10**.")
         st.markdown("🔵 **DEEP:** Kurs < -20%. Call **Delta 0.05**.")
 
-# Ampel-Anzeige unter der Tabelle
+# Ampel-Anzeige mit aktuellem Wert (4 Spalten wie gewünscht)
 st.write("---")
 p_cols = st.columns(4)
 for i, (_, row) in enumerate(st.session_state.portfolio.iterrows()):
@@ -115,7 +114,8 @@ for i, (_, row) in enumerate(st.session_state.portfolio.iterrows()):
         if curr:
             diff = (curr / row['Einstand'] - 1) * 100
             icon = "🟢" if diff >= 0 else "🟡" if diff > -20 else "🔵"
-            st.write(f"{icon} **{row['Ticker']}**: {diff:.1f}%")
+            # Anzeige: Ticker, aktueller Kurs, prozentuale Abweichung
+            st.write(f"{icon} **{row['Ticker']}**: {curr:.2f}$ ({diff:.1f}%)")
 
 st.divider()
 
