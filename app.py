@@ -45,7 +45,7 @@ def get_stock_basics(symbol):
 
 # --- UI: SEITENLEISTE (SICHERHEITS-FILTER) ---
 st.sidebar.header("🛡️ Strategie-Einstellungen")
-target_prob = st.sidebar.slider("Gewünschte Sicherheit (OTM %)", 70, 98, 85, help="Wahrscheinlichkeit, dass die Option wertlos verfällt.")
+target_prob = st.sidebar.slider("Gewünschte Sicherheit (OTM %)", 70, 98, 85)
 max_delta = (100 - target_prob) / 100
 min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=10)
 
@@ -92,7 +92,6 @@ if st.button("🚀 Markt-Scan mit Sicherheits-Filter starten"):
 
     status_text.text("Scan abgeschlossen!")
     if results:
-        # Sortierung nach Puffer (Maximale Sicherheit)
         opp_df = pd.DataFrame(results).sort_values('puffer', ascending=False).head(10)
         cols = st.columns(5)
         for idx, (_, row) in enumerate(opp_df.iterrows()):
@@ -103,7 +102,7 @@ if st.button("🚀 Markt-Scan mit Sicherheits-Filter starten"):
                 st.write(f"Strike: **{row['strike']:.1f}$**")
                 st.caption(f"Delta: {row['delta']:.2f}")
 
-st.divider()
+st.write("---") # Ersatz für st.divider()
 
 # SEKTION 2: DEPOT
 st.subheader("💼 Depot-Status")
@@ -124,7 +123,7 @@ for i, item in enumerate(depot_data):
         with p_cols[i % 4]:
             st.write(f"{icon} **{item['Ticker']}**: {price:.2f}$ ({diff:.1f}%)")
 
-st.divider()
+st.write("---") # Ersatz für st.divider()
 
 # SEKTION 3: FINDER
 st.subheader("🔍 Einzel-Check")
