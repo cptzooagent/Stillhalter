@@ -7,19 +7,23 @@ from datetime import datetime
 # --- SETUP ---
 st.set_page_config(page_title="Pro Stillhalter Dashboard", layout="wide")
 
+# API Keys aus den Secrets laden
 MD_KEY = st.secrets.get("MARKETDATA_KEY")
 FINNHUB_KEY = st.secrets.get("FINNHUB_KEY")
 POLY_KEY = st.secrets.get("POLYGON_KEY")
 
-# --- DATA FUNCTIONS (MIT AUTO-SWITCH & CACHING) ---
+# --- DATA FUNCTIONS (MIT HYBRID-LOGIK & CACHING) ---
 
 @st.cache_data(ttl=600)
 def get_market_metrics():
+    """Holt Marktübersicht (VIX, BTC, S&P 500, Nasdaq)"""
     data = {"VIX": 15.0, "BTC": 0.0, "SP500": 0.0, "NASDAQ": 0.0, "SP_CHG": 0.0, "NAS_CHG": 0.0}
     try:
+        # VIX von MarketData
         r_vix = requests.get(f"https://api.marketdata.app/v1/indices/quotes/VIX/?token={MD_KEY}").json()
         if r_vix.get('s') == 'ok': data["VIX"] = r_vix['last'][0]
         
+        # Bitcoin & ETFs von Finnhub
         for name, sym in [("BTC", "BINANCE:BTCUSDT"), ("SP500", "SPY"), ("NASDAQ", "QQQ")]:
             rf = requests.get(f'https://finnhub.io/api/v1/quote?symbol={sym}&token={FINNHUB_KEY}').json()
             if rf.get('c'):
@@ -35,6 +39,7 @@ def get_market_metrics():
 
 @st.cache_data(ttl=900)
 def get_live_price(symbol):
+    """Echtzeit-Aktienkurs via Finnhub"""
     try:
         r = requests.get(f'https://finnhub.io/api/v1/quote?symbol={symbol}&token={FINNHUB_KEY}').json()
         return float(r['c']) if r.get('c') else None
@@ -42,17 +47,34 @@ def get_live_price(symbol):
 
 @st.cache_data(ttl=3600)
 def get_all_expirations(symbol):
+    """Holt alle Verfallstermine - Switcht zu Polygon wenn MarketData leer ist"""
     # 1. Versuch: MarketData
     try:
         r = requests.get(f"https://api.marketdata.app/v1/options/expirations/{symbol}/?token={MD_KEY}").json()
-        if r.get('s') == 'ok': return sorted(r.get('expirations', []))
+        if r.get('s') == 'ok' and r.get('expirations'): 
+            return sorted(r.get('expirations'))
     except: pass
     
-    # 2. Versuch: Polygon Fallback (Gibt Liste mit heutigem Datum zurück für Snapshot-Suche)
-    return [datetime.now().strftime("%Y-%m-%d")]
+    # 2. Versuch: Polygon (Extrahiert YYMMDD aus den Ticker-Strings)
+    try:
+        url = f"https://api.polygon.io/v3/snapshot/options/{symbol}?apiKey={POLY_KEY}"
+        r = requests.get(url).json()
+        if r.get('status') == 'OK':
+            dates = set()
+            for res in r.get('results', []):
+                t = res['details']['ticker']
+                # Ticker Aufbau: O:HOOD260220P... -> Wir suchen das Datum nach dem Symbol
+                raw_date = t.split(symbol)[1][:6]
+                formatted_date = datetime.strptime(raw_date, "%y%m%d").strftime("%Y-%m-%d")
+                dates.add(formatted_date)
+            if dates: return sorted(list(dates))
+    except: pass
+    
+    return [datetime.now().strftime("%Y-%m-%d")] # Absoluter Fallback
 
 @st.cache_data(ttl=600)
 def get_chain_for_date(symbol, date_str, side):
+    """Holt Optionskette - Switcht zu Polygon Snapshot wenn MarketData leer ist"""
     # 1. Versuch: MarketData
     try:
         params = {"token": MD_KEY, "side": side, "expiration": date_str}
@@ -65,18 +87,20 @@ def get_chain_for_date(symbol, date_str, side):
             })
     except: pass
 
-    # 2. Versuch: Polygon Snapshot
+    # 2. Versuch: Polygon Snapshot (Filtert das gewählte Datum)
     try:
         url = f"https://api.polygon.io/v3/snapshot/options/{symbol}?apiKey={POLY_KEY}"
         r = requests.get(url).json()
         if r.get('status') == 'OK':
             data = []
+            search_date = date_str.replace("-", "")[2:] # 2026-02-20 -> 260220
             for res in r.get('results', []):
-                if side.upper() in res['details']['ticker']:
+                t = res['details']['ticker']
+                if side.upper() in t and search_date in t:
                     data.append({
                         'strike': res['details']['strike_price'],
                         'mid': res.get('last_quote', {}).get('p', 0),
-                        'delta': -0.15 if side == "put" else 0.15, # Schätzwert
+                        'delta': -0.15 if side == "put" else 0.15, # Schätzwert im Free Plan
                         'iv': res.get('implied_volatility', 0)
                     })
             return pd.DataFrame(data)
@@ -84,9 +108,8 @@ def get_chain_for_date(symbol, date_str, side):
     return None
 
 # --- UI START ---
-st.title("🛡️ Pro Stillhalter Dashboard")
 
-# 1. MARKT-STATUS
+# 1. MARKTDATEN OBEN
 m = get_market_metrics()
 with st.container(border=True):
     c1, c2, c3, c4 = st.columns(4)
@@ -121,7 +144,7 @@ st.divider()
 st.subheader("🔍 Options-Finder")
 f1, f2 = st.columns([1, 2])
 with f1: side = st.radio("Typ", ["put", "call"], horizontal=True)
-with f2: ticker = st.text_input("Ticker eingeben").strip().upper()
+with f2: ticker = st.text_input("Ticker für Detail-Scan (z.B. TSLA)").strip().upper()
 
 if ticker:
     price = get_live_price(ticker)
@@ -131,8 +154,10 @@ if ticker:
             sel_date = st.selectbox("Laufzeit wählen", dates)
             df = get_chain_for_date(ticker, sel_date, side)
             if df is not None and not df.empty:
+                # OTM Filter & Sortierung
                 df = df[df['strike'] < price] if side == "put" else df[df['strike'] > price]
                 df = df.sort_values('strike', ascending=(side == "call"))
+                
                 for _, row in df.head(8).iterrows():
                     d_abs = abs(row['delta'])
                     pop = (1 - d_abs) * 100
@@ -147,11 +172,12 @@ st.subheader("💎 Top 10 High-IV Put Gelegenheiten")
 if st.button("🔥 High-IV Scan starten"):
     watchlist = ["TSLA", "NVDA", "AMD", "COIN", "MARA", "PLTR", "AFRM", "SQ", "HOOD", "SOFI"]
     opps = []
-    with st.spinner("Scanne..."):
+    with st.spinner("Scanne Märkte..."):
         for t in watchlist:
             exp = get_all_expirations(t)
             if exp:
-                target = next((d for d in exp if 25 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 55), exp[0])
+                # Suche Laufzeit ca. 30 Tage
+                target = next((d for d in exp if 25 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 50), exp[0])
                 df = get_chain_for_date(t, target, "put")
                 if df is not None and not df.empty:
                     df['diff'] = (df['delta'].abs() - 0.15).abs()
