@@ -6,13 +6,13 @@ from scipy.stats import norm
 from datetime import datetime
 import random
 
-# --- 1. CORE MATH ---
+# --- 1. MATHE ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     if T <= 0 or sigma <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
-# --- 2. DATA ENGINE ---
+# --- 2. DATA ENGINE (OPTIMIERT GEGEN CACHE-FEHLER) ---
 @st.cache_data(ttl=86400)
 def get_auto_watchlist():
     base = ["TSLA", "NVDA", "AMD", "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", "UPST", "HOOD", "SOFI"]
@@ -42,7 +42,7 @@ target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 85)
 max_delta, min_y = (100 - target_prob) / 100, st.sidebar.number_input("Mindestrendite p.a. (%)", value=10)
 st.title("🛡️ CapTrader AI Market Scanner")
 
-# --- 4. SECTION: SCANNER ---
+# --- 4. SCANNER ---
 if st.button("🚀 Markt-Scan starten"):
     results = []
     watchlist = random.sample(get_auto_watchlist(), 50)
@@ -77,7 +77,7 @@ if st.button("🚀 Markt-Scan starten"):
 
 st.write("---")
 
-# --- 5. SECTION: DEPOT ---
+# --- 5. DEPOT ---
 st.subheader("💼 Depot-Status")
 depot_list = ["AFRM", "ELF", "ETSY", "GTLB", "HOOD", "NVO", "SE", "TTD"]
 d_cols = st.columns(4)
@@ -88,7 +88,7 @@ for i, t in enumerate(depot_list):
 
 st.write("---")
 
-# --- 6. SECTION: SINGLE CHECK ---
+# --- 6. EINZEL-CHECK ---
 st.subheader("🔍 Einzel-Check")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
