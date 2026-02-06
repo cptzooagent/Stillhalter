@@ -17,15 +17,16 @@ def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
 
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=3600)
-def get_sp500_tickers():
-    # Top 50 S&P 500 Aktien nach Marktkapitalisierung/Liquidität
-    return [
-        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "BRK-B", "LLY", "AVGO", "V", "JPM",
-        "TSLA", "WMT", "XOM", "MA", "UNH", "PG", "ORCL", "COST", "JNJ", "HD",
-        "ABBV", "BAC", "NFLX", "KO", "AMD", "PEP", "ADBE", "TMO", "CRM", "WFC",
-        "CVX", "NKE", "INTC", "DIS", "PM", "CAT", "AXP", "MS", "IBM", "TXN",
-        "GE", "AMAT", "QCOM", "ISRG", "LOW", "PFE", "GS", "HON", "COP", "NOW"
+def get_combined_watchlist():
+    # Kombination aus S&P 500 Blue Chips und Nasdaq-100 Tech-Favoriten
+    sp500_nasdaq_mix = [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AVGO", "ADBE", "NFLX", 
+        "AMD", "INTC", "QCOM", "AMAT", "TXN", "MU", "ISRG", "LRCX", "PANW", "SNPS",
+        "LLY", "V", "MA", "JPM", "WMT", "XOM", "UNH", "PG", "ORCL", "COST", 
+        "ABBV", "BAC", "KO", "PEP", "CRM", "WFC", "DIS", "CAT", "AXP", "IBM",
+        "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", "UPST", "HOOD", "SOFI", "MSTR"
     ]
+    return list(set(sp500_nasdaq_mix)) # Duplikate entfernen
 
 @st.cache_data(ttl=900)
 def get_stock_basics(symbol):
@@ -47,21 +48,21 @@ def get_stock_basics(symbol):
 st.sidebar.header("🛡️ Strategie-Einstellungen")
 target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 83)
 max_delta = (100 - target_prob) / 100
-min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=15) # 15-20% sind bei S&P 500 realistischer
+min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
 
 # --- HAUPTBEREICH ---
 st.title("🛡️ CapTrader AI Market Scanner")
-st.subheader("Fokus: S&P 500 Blue Chips")
+st.subheader("Fokus: S&P 500 & Nasdaq-100 Quality Stocks")
 
 # SEKTION 1: SCANNER
-if st.button("🚀 S&P 500 Markt-Scan starten"):
-    watchlist = get_sp500_tickers()
+if st.button("🚀 Kombi-Scan starten"):
+    watchlist = get_combined_watchlist()
     results = []
     prog = st.progress(0)
     status = st.empty()
     
     for i, t in enumerate(watchlist):
-        status.text(f"Scanne S&P 500: {t}...")
+        status.text(f"Analysiere {t}...")
         prog.progress((i + 1) / len(watchlist))
         price, dates, earn = get_stock_basics(t)
         
@@ -89,19 +90,19 @@ if st.button("🚀 S&P 500 Markt-Scan starten"):
                         })
             except: continue
 
-    status.text("S&P 500 Scan abgeschlossen!")
+    status.text("Kombinations-Scan abgeschlossen!")
     if results:
         opp_df = pd.DataFrame(results).sort_values('yield', ascending=False).head(12)
         cols = st.columns(4)
         for idx, row in enumerate(opp_df.to_dict('records')):
             with cols[idx % 4]:
                 st.markdown(f"### {row['ticker']}")
-                if row['earn']: st.warning(f"📅 ER: {row['earn']}")
+                if row['earn']: st.warning(f"⚠️ ER: {row['earn']}")
                 st.metric("Rendite p.a.", f"{row['yield']:.1f}%")
                 st.write(f"💰 Bid: **{row['bid']:.2f}$** | Puffer: **{row['puffer']:.1f}%**")
                 st.write(f"🎯 Strike: **{row['strike']:.1f}$** (Δ {row['delta']:.2f})")
     else:
-        st.warning(f"Keine S&P 500 Treffer für {min_yield_pa}% Rendite.")
+        st.warning(f"Keine Treffer für {min_yield_pa}% Rendite.")
 
 st.write("---") 
 
@@ -131,7 +132,7 @@ st.write("---")
 st.subheader("🔍 Einzel-Check")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
-with c2: t_in = st.text_input("Ticker", value="AAPL").upper()
+with c2: t_in = st.text_input("Ticker", value="NVDA").upper()
 
 if t_in:
     price, dates, earn = get_stock_basics(t_in)
