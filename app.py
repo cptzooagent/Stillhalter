@@ -9,16 +9,14 @@ st.set_page_config(page_title="Pro Stillhalter Dashboard", layout="wide")
 MD_KEY = st.secrets.get("MARKETDATA_KEY")
 FINNHUB_KEY = st.secrets.get("FINNHUB_KEY")
 
-# --- 1. DATEN-FUNKTIONEN MIT CACHING (1 STUNDE) ---
+# --- DATA FUNCTIONS ---
 @st.cache_data(ttl=3600)
 def get_cached_expirations(symbol):
     try:
         url = f"https://api.marketdata.app/v1/options/expirations/{symbol}/?token={MD_KEY}"
         r = requests.get(url).json()
-        if r.get('s') == 'ok':
-            return sorted(r.get('expirations', []))
-    except: pass
-    return []
+        return sorted(r.get('expirations', [])) if r.get('s') == 'ok' else []
+    except: return []
 
 @st.cache_data(ttl=3600)
 def get_cached_chain(symbol, date_str, side):
@@ -30,11 +28,9 @@ def get_cached_chain(symbol, date_str, side):
             return pd.DataFrame({
                 'strike': r['strike'], 
                 'bid': r.get('bid', r['mid']), 
-                'delta': r.get('delta', [0.0]*len(r['strike'])), 
-                'iv': r.get('iv', [0.0]*len(r['strike']))
+                'delta': r.get('delta', [0.0]*len(r['strike']))
             })
-    except: pass
-    return None
+    except: return None
 
 def get_live_price(symbol):
     try:
@@ -45,9 +41,8 @@ def get_live_price(symbol):
 
 # --- UI START ---
 st.title("🛡️ CapTrader Pro Stillhalter Dashboard")
-st.info("💡 **Sparmodus aktiv:** Daten werden 1 Std. gespeichert, um dein API-Limit zu schonen.")
 
-# --- TOP 10 SCANNER ---
+# 1. TOP 10 SCANNER
 st.subheader("💎 Top 10 High-IV Put Gelegenheiten")
 if st.button("🚀 Markt-Scan jetzt starten"):
     watchlist = ["TSLA", "NVDA", "AMD", "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", "UPST", "HOOD", "SOFI"]
@@ -64,7 +59,7 @@ if st.button("🚀 Markt-Scan jetzt starten"):
                 best = df.sort_values('diff').iloc[0].to_dict()
                 days = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.today()).days
                 y_pa = (best['bid'] / best['strike']) * (365 / max(1, days)) * 100
-                best.update({'ticker': t, 'days': days, 'yield': y_pa, 'date': target_date})
+                best.update({'ticker': t, 'days': days, 'yield': y_pa})
                 opps.append(best)
     
     if opps:
@@ -73,66 +68,75 @@ if st.button("🚀 Markt-Scan jetzt starten"):
         for idx, (_, row) in enumerate(opp_df.iterrows()):
             with cols[idx % 5]:
                 with st.container(border=True):
-                    st.write(f"### {row['ticker']}")
+                    st.write(f"**{row['ticker']}**")
                     st.metric("Yield p.a.", f"{row['yield']:.1f}%")
-                    st.write(f"**Strike: {row['strike']:.1f}$**")
-                    st.caption(f"Bid: {row['bid']:.2f}$ | {row['days']} T.")
+                    st.caption(f"Strike: {row['strike']:.1f}$ | {row['days']} T.")
 
 st.divider()
 
-# --- PORTFOLIO REPAIR LISTE ---
+# 2. MEIN DEPOT (Kompakte Breite & Vollständiger Reset)
 st.subheader("💼 Mein Depot & Repair-Ampel")
-if 'portfolio' not in st.session_state:
-    # Jetzt mit ALLEN 12 Werten (inkl. GTM, HIMS, NVO, JKS, RBRK, SE)
-    st.session_state.portfolio = pd.DataFrame([
-        {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0}, 
-        {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
-        {"Ticker": "GTM", "Einstand": 17.0}, {"Ticker": "HIMS", "Einstand": 37.0},
-        {"Ticker": "HOOD", "Einstand": 120.0}, {"Ticker": "JKS", "Einstand": 50.0},
-        {"Ticker": "NVO", "Einstand": 97.0}, {"Ticker": "RBRK", "Einstand": 70.0},
-        {"Ticker": "SE", "Einstand": 170.0}, {"Ticker": "TTD", "Einstand": 102.0}
-    ])
 
-st.session_state.portfolio = st.data_editor(st.session_state.portfolio, num_rows="dynamic", use_container_width=True)
+# Liste aller 12 Ticker
+full_portfolio = [
+    {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0}, 
+    {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
+    {"Ticker": "GTM", "Einstand": 17.0}, {"Ticker": "HIMS", "Einstand": 37.0},
+    {"Ticker": "HOOD", "Einstand": 120.0}, {"Ticker": "JKS", "Einstand": 50.0},
+    {"Ticker": "NVO", "Einstand": 97.0}, {"Ticker": "RBRK", "Einstand": 70.0},
+    {"Ticker": "SE", "Einstand": 170.0}, {"Ticker": "TTD", "Einstand": 102.0}
+]
 
-p_cols = st.columns(2)
+# Wir erzwingen das Laden der vollen Liste, falls Ticker fehlen
+if 'portfolio' not in st.session_state or len(st.session_state.portfolio) < 10:
+    st.session_state.portfolio = pd.DataFrame(full_portfolio)
+
+# Spalten-Layout für kompakte Ansicht
+col_edit, col_empty = st.columns([1, 1]) # 1:1 Verhältnis halbiert die Breite
+
+with col_edit:
+    st.session_state.portfolio = st.data_editor(
+        st.session_state.portfolio, 
+        num_rows="dynamic", 
+        use_container_width=True
+    )
+
+# Ampel-Anzeige (ebenfalls kompakt)
+p_cols = st.columns(3) # 3 Spalten für bessere Übersicht
 for i, (_, row) in enumerate(st.session_state.portfolio.iterrows()):
     curr = get_live_price(row['Ticker'])
-    with (p_cols[0] if i % 2 == 0 else p_cols[1]):
+    with p_cols[i % 3]:
         if curr:
             diff = (curr / row['Einstand'] - 1) * 100
-            # Ampel-Logik: Grün (Profit), Gelb (Repair < 20%), Blau (Deep Repair > 20%)
-            icon, label, note = ("🟢", "PROFIT", "OK") if diff >= 0 else ("🟡", "REPAIR", "Call Delta 0.10") if diff > -20 else ("🔵", "DEEP REPAIR", "Call Delta 0.05")
-            st.write(f"{icon} **{row['Ticker']}**: {curr:.2f}$ ({diff:.1f}%) → `{label}: {note}`")
+            icon, label = ("🟢", "OK") if diff >= 0 else ("🟡", "REPAIR") if diff > -20 else ("🔵", "DEEP")
+            st.write(f"{icon} **{row['Ticker']}**: {diff:.1f}%")
 
 st.divider()
 
-# --- OPTIONS FINDER ---
-st.subheader("🔍 Detail-Analyse (Optionstyp wählen)")
+# 3. OPTIONS FINDER
+st.subheader("🔍 Options-Finder")
 c1, c2 = st.columns([1, 2])
 with c1:
-    # Auswahl Put oder Call zum Anklicken
-    option_mode = st.radio("Strategie wählen", ["put", "call"], horizontal=True)
+    option_mode = st.radio("Typ", ["put", "call"], horizontal=True)
 with c2:
-    find_ticker = st.text_input("Symbol eingeben", value="HOOD").upper()
+    find_ticker = st.text_input("Ticker", value="HOOD").upper()
 
 if find_ticker:
     live_p = get_live_price(find_ticker)
     if live_p:
-        st.write(f"Kurs {find_ticker}: **{live_p:.2f}$**")
+        st.write(f"Kurs: **{live_p:.2f}$**")
         all_dates = get_cached_expirations(find_ticker)
         if all_dates:
-            chosen_date = st.selectbox("Ablaufdatum", all_dates)
+            chosen_date = st.selectbox("Datum", all_dates)
             chain_df = get_cached_chain(find_ticker, chosen_date, option_mode)
             if chain_df is not None:
-                # Nur OTM Optionen filtern
                 if option_mode == "put":
                     chain_df = chain_df[chain_df['strike'] < live_p].sort_values('strike', ascending=False)
                 else:
                     chain_df = chain_df[chain_df['strike'] > live_p].sort_values('strike', ascending=True)
                 
-                for _, opt in chain_df.head(8).iterrows():
+                for _, opt in chain_df.head(6).iterrows():
                     d_val = abs(opt['delta'])
-                    risk_c = "🟢" if d_val < 0.16 else "🟡" if d_val < 0.31 else "🔴"
-                    with st.expander(f"{risk_c} Strike {opt['strike']:.1f}$ | Bid: {opt['bid']:.2f}$ | Delta: {d_val:.2f}"):
-                        st.write(f"Wahrscheinlichkeit für Profit: **{(1-d_val)*100:.1f}%**")
+                    risk = "🟢" if d_val < 0.16 else "🟡" if d_val < 0.31 else "🔴"
+                    with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Bid: {opt['bid']:.2f}$"):
+                        st.write(f"Delta: {d_val:.2f} | Chance: {(1-d_val)*100:.0f}%")
