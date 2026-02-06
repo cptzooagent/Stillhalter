@@ -3,7 +3,7 @@ import pandas as pd
 import yfinance as yf
 import numpy as np
 from scipy.stats import norm
-from datetime import datetime
+from datetime import datetime, timedelta
 import random
 
 # --- SETUP ---
@@ -20,6 +20,7 @@ def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
 def get_auto_watchlist():
+    """Holt Ticker aus stabiler Quelle und ergänzt High-IV Favoriten."""
     high_yield_base = [
         "TSLA", "NVDA", "AMD", "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", 
         "UPST", "HOOD", "SOFI", "MSTR", "AI", "SNOW", "SHOP", "PYPL", "ABNB"
@@ -32,15 +33,29 @@ def get_auto_watchlist():
     except:
         return high_yield_base
 
+def check_earnings_risk(ticker_obj):
+    """Prüft, ob in den nächsten 14 Tagen Earnings anstehen."""
+    try:
+        calendar = ticker_obj.calendar
+        if calendar is not None and 'Earnings Date' in calendar:
+            next_earnings = calendar['Earnings Date'][0]
+            # Vergleich mit aktuellem Datum
+            days_to_earnings = (next_earnings.replace(tzinfo=None) - datetime.now()).days
+            if 0 <= days_to_earnings <= 14:
+                return True, next_earnings.strftime('%d.%m.')
+        return False, None
+    except:
+        return False, None
+
 @st.cache_data(ttl=900)
 def get_stock_basics(symbol):
     try:
         tk = yf.Ticker(symbol)
         price = tk.fast_info['last_price']
         dates = list(tk.options)
-        return price, dates
+        return price, dates, tk
     except:
-        return None, []
+        return None, [], None
 
 # --- UI: SEITENLEISTE ---
 st.sidebar.header("🛡️ Strategie-Einstellungen")
@@ -50,7 +65,7 @@ min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=10)
 
 # --- HAUPTBEREICH ---
 st.title("🛡️ CapTrader AI Market Scanner")
-st.write(f"Suche nach Puts mit Delta ≤ **{max_delta:.2f}**.")
+st.write(f"Suche nach Puts mit Delta ≤ **{max_delta:.2f}** (Earnings-Check aktiv).")
 
 # SEKTION 1: AUTOMATISCHER SCANNER
 if st.button("🚀 Markt-Scan mit Sicherheits-Filter starten"):
@@ -65,10 +80,9 @@ if st.button("🚀 Markt-Scan mit Sicherheits-Filter starten"):
         status_text.text(f"Analysiere {t}...")
         progress_bar.progress((i + 1) / len(scan_list))
         
-        price, dates = get_stock_basics(t)
+        price, dates, tk = get_stock_basics(t)
         if price and dates:
             try:
-                tk = yf.Ticker(t)
                 target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
                 chain = tk.option_chain(target_date).puts
                 T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
@@ -82,8 +96,15 @@ if st.button("🚀 Markt-Scan mit Sicherheits-Filter starten"):
                     y_pa = (best['bid'] / best['strike']) * (365 / days) * 100
                     puffer = (abs(best['strike'] - price) / price) * 100
                     
+                    # NEU: Earnings Check
+                    has_earnings, e_date = check_earnings_risk(tk)
+                    
                     if y_pa >= min_yield_pa:
-                        results.append({'ticker': t, 'yield': y_pa, 'strike': best['strike'], 'bid': best['bid'], 'puffer': puffer, 'delta': abs(best['delta_val']), 'days': days})
+                        results.append({
+                            'ticker': t, 'yield': y_pa, 'strike': best['strike'], 'bid': best['bid'], 
+                            'puffer': puffer, 'delta': abs(best['delta_val']), 'days': days,
+                            'earnings': has_earnings, 'e_date': e_date
+                        })
             except: continue
 
     status_text.text("Scan abgeschlossen!")
@@ -92,14 +113,15 @@ if st.button("🚀 Markt-Scan mit Sicherheits-Filter starten"):
         cols = st.columns(5)
         for idx, (_, row) in enumerate(opp_df.iterrows()):
             with cols[idx % 5]:
+                # Warn-Emoji falls Earnings anstehen
+                e_warn = f"⚠️ Earnings {row['e_date']}" if row['earnings'] else ""
                 st.markdown(f"### {row['ticker']}")
+                if e_warn: st.caption(e_warn)
                 st.metric("Puffer", f"{row['puffer']:.1f}%")
                 st.write(f"💰 Prämie: **{row['bid']:.2f}$**") 
                 st.write(f"📈 Yield: **{row['yield']:.1f}% p.a.**")
                 st.write(f"🎯 Strike: **{row['strike']:.1f}$**")
-                st.caption(f"Delta: {row['delta']:.2f} | {row['days']} T.")
-    else:
-        st.warning("Keine Treffer mit diesen Einstellungen.")
+                st.caption(f"Delta: {row['delta']:.2f}")
 
 st.write("---") 
 
@@ -115,7 +137,7 @@ depot_data = [
 ]
 p_cols = st.columns(4)
 for i, item in enumerate(depot_data):
-    price, _ = get_stock_basics(item['Ticker'])
+    price, _, _ = get_stock_basics(item['Ticker'])
     if price:
         diff = (price / item['Einstand'] - 1) * 100
         icon = "🟢" if diff >= 0 else "🟡" if diff > -20 else "🔵"
@@ -124,18 +146,20 @@ for i, item in enumerate(depot_data):
 
 st.write("---") 
 
-# SEKTION 3: EINZEL-CHECK (JETZT KORRIGIERT)
+# SEKTION 3: EINZEL-CHECK
 st.subheader("🔍 Einzel-Check")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
 with c2: t_in = st.text_input("Ticker", value="HOOD").upper()
 
 if t_in:
-    price, dates = get_stock_basics(t_in)
+    price, dates, tk = get_stock_basics(t_in)
     if price and dates:
+        has_e, e_d = check_earnings_risk(tk)
+        if has_e: st.warning(f"⚠️ Achtung: Earnings am {e_d}! Hohe Vola erwartet.")
+        
         st.write(f"Aktueller Kurs: **{price:.2f}$**")
         d_sel = st.selectbox("Laufzeit wählen", dates)
-        tk = yf.Ticker(t_in)
         chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
         T = (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days / 365
         df = chain[chain['strike'] < price].sort_values('strike', ascending=False) if mode == "put" else chain[chain['strike'] > price].sort_values('strike', ascending=True)
@@ -143,15 +167,13 @@ if t_in:
         for _, opt in df.head(6).iterrows():
             delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode)
             risk = "🟢" if abs(delta) < 0.16 else "🟡" if abs(delta) < 0.31 else "🔴"
-            
-            # Anzeige-Update: Prämie direkt in den Titel und ins Detail
             with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$"):
                 col_a, col_b = st.columns(2)
                 with col_a:
                     st.write(f"💰 **Optionspreis:** {opt['bid']:.2f}$")
-                    st.write(f"💵 **Cash-Einnahme:** {opt['bid']*100:.0f}$ (pro Kontrakt)")
-                    st.write(f"📊 **Wahrscheinlichkeit OTM:** {(1-abs(delta))*100:.1f}%")
+                    st.write(f"💵 **Einnahme:** {opt['bid']*100:.0f}$")
+                    st.write(f"📊 **Prob. OTM:** {(1-abs(delta))*100:.1f}%")
                 with col_b:
-                    st.write(f"🎯 **Kurs-Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
+                    st.write(f"🎯 **Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
                     st.write(f"📉 **Delta:** {abs(delta):.2f}")
-                    st.write(f"🌊 **Implizite Vola:** {opt['impliedVolatility']*100:.1f}%")
+                    st.write(f"🌊 **IV:** {opt['impliedVolatility']*100:.1f}%")
