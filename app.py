@@ -10,7 +10,7 @@ st.set_page_config(page_title="Pro Stillhalter Dashboard", layout="wide")
 MD_KEY = st.secrets.get("MARKETDATA_KEY")
 FINNHUB_KEY = st.secrets.get("FINNHUB_KEY")
 
-# --- 1. DATEN-FUNKTIONEN MIT STRENGEM CACHING (1 STUNDE) ---
+# --- 1. DATEN-FUNKTIONEN MIT CACHING (1 STUNDE) ---
 @st.cache_data(ttl=3600)
 def get_cached_expirations(symbol):
     try:
@@ -35,14 +35,12 @@ def get_cached_chain(symbol, date_str, side):
             return df.dropna(subset=['delta'])
     except: return None
 
-# --- 2. DER SAFE-SCAN (SPART API CALLS) ---
-@st.cache_data(ttl=3600) # Speichert das gesamte Scanner-Ergebnis für 1 Stunde
+@st.cache_data(ttl=3600)
 def run_cached_market_scan(watchlist):
     results = []
     for t in watchlist:
         dates = get_cached_expirations(t)
         if dates:
-            # Suche Datum zwischen 20 und 50 Tagen
             target_date = next((d for d in dates if 20 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.today()).days <= 50), dates[0])
             df = get_cached_chain(t, target_date, "put")
             if df is not None and not df.empty:
@@ -66,14 +64,14 @@ def get_live_price(symbol):
 # --- UI START ---
 st.title("🛡️ CapTrader Pro Stillhalter Dashboard")
 
-# 1. SCANNER SEKTION
-st.subheader("💎 Top 10 High-IV Put Gelegenheiten")
-st.info("💡 Scan-Ergebnisse werden 1 Std. gespeichert, um API-Limits zu sparen.")
+# --- SEKTION 1: MARKT-SCANNER ---
+st.subheader("💎 Top 10 High-IV Put Gelegenheiten (Delta 0.15)")
+st.info("💡 Scan-Ergebnisse werden 1 Std. gespeichert, um API-Limits zu schonen.")
 
 if st.button("🚀 Markt-Scan jetzt starten"):
     watchlist = ["TSLA", "NVDA", "AMD", "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", "UPST", "HOOD", "SOFI"]
-    with st.spinner("Scanne Märkte... (Dies nutzt ca. 24 API-Anfragen)"):
-        opps = run_cached_market_scan(watchlist) # Nutzt das 1-Stunden-Caching
+    with st.spinner("Scanne Märkte..."):
+        opps = run_cached_market_scan(watchlist)
     
     if opps:
         opp_df = pd.DataFrame(opps).sort_values('yield', ascending=False).head(10)
@@ -85,15 +83,15 @@ if st.button("🚀 Markt-Scan jetzt starten"):
                     st.metric("Yield p.a.", f"{row['yield']:.1f}%")
                     st.caption(f"Strike: {row['strike']:.1f}$ | {row['days']} T.")
     else:
-        st.error("Keine Daten empfangen. Eventuell API-Limit erreicht?")
+        st.error("Keine Daten empfangen. Bitte API-Limit prüfen.")
 
 st.divider()
 
-# 2. DEPOT & STRATEGIE
-st.subheader("💼 Mein Depot & Strategie")
+# --- SEKTION 2: DEPOT & REPAIR-AMPEL ---
+st.subheader("💼 Mein Depot & Repair-Strategie")
+
 col_depot, col_legende = st.columns([2, 1])
 
-# Volle Liste deiner 12 Ticker
 full_portfolio = [
     {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0}, 
     {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
@@ -116,7 +114,7 @@ with col_legende:
         st.markdown("🟡 **REPAIR:** Kurs bis -20%. Call **Delta 0.10**.")
         st.markdown("🔵 **DEEP:** Kurs < -20%. Call **Delta 0.05**.")
 
-# Ampel-Anzeige mit aktuellem Kurs
+# Ampel-Statusanzeige mit Preisen
 st.write("---")
 p_cols = st.columns(4)
 for i, (_, row) in enumerate(st.session_state.portfolio.iterrows()):
@@ -129,28 +127,44 @@ for i, (_, row) in enumerate(st.session_state.portfolio.iterrows()):
 
 st.divider()
 
-# 3. OPTIONS FINDER (CACHED)
+# --- SEKTION 3: OPTIONS-FINDER MIT REFRESH ---
 st.subheader("🔍 Options-Finder")
-c1, c2 = st.columns([1, 2])
-with c1:
+c_f1, c_f2, c_f3 = st.columns([1, 2, 1])
+
+with c_f1:
     option_mode = st.radio("Strategie", ["put", "call"], horizontal=True)
-with c2:
+with c_f2:
     find_ticker = st.text_input("Ticker-Symbol", value="HOOD").upper()
+with c_f3:
+    st.write(" ") # Spacer
+    refresh_options = st.button("🔄 Strikes aktualisieren")
 
 if find_ticker:
+    if refresh_options:
+        get_cached_expirations.clear(find_ticker)
+        st.toast(f"Daten für {find_ticker} werden neu geladen...")
+
     live_p = get_live_price(find_ticker)
     if live_p:
-        st.write(f"Kurs: **{live_p:.2f}$**")
+        st.write(f"Aktueller Kurs: **{live_p:.2f}$**")
         all_dates = get_cached_expirations(find_ticker)
+        
         if all_dates:
-            chosen_date = st.selectbox("Laufzeit", all_dates)
+            chosen_date = st.selectbox("Laufzeit wählen", all_dates)
+            
+            if refresh_options:
+                get_cached_chain.clear(find_ticker, chosen_date, option_mode)
+                
             chain_df = get_cached_chain(find_ticker, chosen_date, option_mode)
+            
             if chain_df is not None:
+                # OTM Filterung
                 if option_mode == "put":
                     chain_df = chain_df[chain_df['strike'] < live_p].sort_values('strike', ascending=False)
                 else:
                     chain_df = chain_df[chain_df['strike'] > live_p].sort_values('strike', ascending=True)
                 
+                # Top 6 Ergebnisse anzeigen
                 for _, opt in chain_df.head(6).iterrows():
                     d_val = abs(opt['delta'])
                     risk = "🟢" if d_val < 0.16 else "🟡" if d_val < 0.31 else "🔴"
