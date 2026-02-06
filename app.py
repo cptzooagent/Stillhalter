@@ -6,104 +6,91 @@ from scipy.stats import norm
 from datetime import datetime
 import random
 
-# --- 1. MATHE ---
-def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
+def calc_delta(S, K, T, sigma, opt='put'):
     if T <= 0 or sigma <= 0: return 0
-    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
+    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T)) if 'r' in locals() else (np.log(S / K) + (0.04 + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    return norm.cdf(d1) if opt == 'call' else norm.cdf(d1) - 1
 
-# --- 2. DATA ENGINE (OPTIMIERT GEGEN CACHE-FEHLER) ---
 @st.cache_data(ttl=86400)
-def get_auto_watchlist():
-    base = ["TSLA", "NVDA", "AMD", "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", "UPST", "HOOD", "SOFI"]
+def get_wl():
+    b = ["TSLA", "NVDA", "AMD", "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", "UPST", "HOOD", "SOFI"]
     try:
-        url = "https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/nasdaq/nasdaq_tickers.txt"
-        df = pd.read_csv(url, header=None, names=['T'])
-        return list(set(base + df['T'].head(80).tolist()))
-    except: return base
+        df = pd.read_csv("https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/nasdaq/nasdaq_tickers.txt", header=None)
+        return list(set(b + df[0].head(80).tolist()))
+    except: return b
 
 @st.cache_data(ttl=900)
-def get_stock_data(symbol):
+def get_data(s):
     try:
-        tk = yf.Ticker(symbol)
-        price = tk.fast_info['last_price']
-        dates = list(tk.options)
+        tk = yf.Ticker(s)
+        inf = tk.fast_info
         earn, ed = False, None
         if tk.calendar is not None and 'Earnings Date' in tk.calendar:
             edt = tk.calendar['Earnings Date'][0].replace(tzinfo=None)
             if 0 <= (edt - datetime.now()).days <= 14: earn, ed = True, edt.strftime('%d.%m.')
-        return {"price": price, "dates": dates, "earn": earn, "ed": ed}
+        return {"p": inf['last_price'], "d": list(tk.options), "e": earn, "ed": ed}
     except: return None
 
-# --- 3. UI CONFIG ---
-st.set_page_config(page_title="CapTrader Scanner", layout="wide")
-st.sidebar.header("🛡️ Filter")
-target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 85)
-max_delta, min_y = (100 - target_prob) / 100, st.sidebar.number_input("Mindestrendite p.a. (%)", value=10)
+st.set_page_config(layout="wide")
+st.sidebar.header("Filter")
+prob = st.sidebar.slider("OTM %", 70, 98, 85)
+m_delta, m_y = (100-prob)/100, st.sidebar.number_input("Min Yield %", value=10)
+
 st.title("🛡️ CapTrader AI Market Scanner")
 
-# --- 4. SCANNER ---
-if st.button("🚀 Markt-Scan starten"):
-    results = []
-    watchlist = random.sample(get_auto_watchlist(), 50)
-    prog = st.progress(0)
-    for i, t in enumerate(watchlist):
-        prog.progress((i + 1) / len(watchlist))
-        d = get_stock_data(t)
-        if d and d['dates']:
+if st.button("🚀 Scan starten"):
+    res = []
+    wl = random.sample(get_wl(), 40)
+    p_bar = st.progress(0)
+    for i, t in enumerate(wl):
+        p_bar.progress((i+1)/len(wl))
+        d = get_data(t)
+        if d and d['d']:
             try:
                 tk = yf.Ticker(t)
-                target_date = min(d['dates'], key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
-                chain = tk.option_chain(target_date).puts
-                T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
-                chain['dv'] = chain.apply(lambda r: calculate_bsm_delta(d['price'], r['strike'], T, r['impliedVolatility'] or 0.5), axis=1)
-                safe = chain[chain['dv'].abs() <= max_delta].copy()
-                if not safe.empty:
-                    best = safe.sort_values('dv', ascending=False).iloc[0]
-                    y_pa = (best['bid'] / best['strike']) * (365 / max(1, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days)) * 100
-                    if y_pa >= min_y:
-                        results.append({'t': t, 'y': y_pa, 's': best['strike'], 'b': best['bid'], 'p': (abs(best['strike'] - d['price']) / d['price']) * 100, 'earn': d['earn'], 'ed': d['ed']})
+                td = min(d['d'], key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d')-datetime.now()).days-30))
+                ch = tk.option_chain(td).puts
+                T = (datetime.strptime(td, '%Y-%m-%d')-datetime.now()).days/365
+                ch['dv'] = ch.apply(lambda r: calc_delta(d['p'], r['strike'], T, r['impliedVolatility'] or 0.5), axis=1)
+                s_o = ch[ch['dv'].abs() <= m_delta].copy()
+                if not s_o.empty:
+                    b = s_o.sort_values('dv', ascending=False).iloc[0]
+                    days = max(1, (datetime.strptime(td, '%Y-%m-%d')-datetime.now()).days)
+                    y = (b['bid']/b['strike'])*(365/days)*100
+                    if y >= m_y: res.append({'t':t,'y':y,'s':b['strike'],'b':b['bid'],'p':(abs(b['strike']-d['p'])/d['p'])*100,'e':d['e'],'ed':d['ed']})
             except: continue
-    if results:
-        opp_df = pd.DataFrame(results).sort_values('p', ascending=False).head(10)
+    if res:
         cols = st.columns(5)
-        for idx, (_, r) in enumerate(opp_df.iterrows()):
-            with cols[idx % 5]:
-                st.markdown(f"### {r['t']}")
-                if r['earn']: st.caption(f"⚠️ Earnings: {r['ed']}")
+        for i, r in enumerate(pd.DataFrame(res).sort_values('p', ascending=False).head(10).to_dict('records')):
+            with cols[i%5]:
+                st.write(f"### {r['t']}")
+                if r['e']: st.caption(f"⚠️ Earnings: {r['ed']}")
                 st.metric("Puffer", f"{r['p']:.1f}%")
-                st.write(f"💰 Bid: **{r['b']:.2f}$** | Yield: **{r['y']:.1f}%**")
-                st.write(f"🎯 Strike: **{r['s']:.1f}$**")
+                st.write(f"**Bid: {r['b']:.2f}$ | Yield: {r['y']:.1f}%**")
+                st.write(f"Strike: {r['s']:.1f}$")
 
 st.write("---")
-
-# --- 5. DEPOT ---
-st.subheader("💼 Depot-Status")
-depot_list = ["AFRM", "ELF", "ETSY", "GTLB", "HOOD", "NVO", "SE", "TTD"]
-d_cols = st.columns(4)
-for i, t in enumerate(depot_list):
-    data = get_stock_data(t)
-    if data:
-        with d_cols[i % 4]: st.write(f"**{t}**: {data['price']:.2f}$")
+st.subheader("💼 Depot")
+for i, t in enumerate(["AFRM", "ELF", "ETSY", "GTLB", "HOOD", "NVO", "SE", "TTD"]):
+    d = get_data(t)
+    if d: st.sidebar.write(f"{t}: {d['p']:.2f}$") # Depot in Sidebar für Platzersparnis
 
 st.write("---")
-
-# --- 6. EINZEL-CHECK ---
-st.subheader("🔍 Einzel-Check")
-c1, c2 = st.columns([1, 2])
-with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
-with c2: t_in = st.text_input("Ticker", value="HOOD").upper()
-if t_in:
-    d = get_stock_data(t_in)
-    if d and d['dates']:
-        if d['earn']: st.warning(f"⚠️ Earnings am {d['ed']}!")
-        d_sel = st.selectbox("Laufzeit", d['dates'])
-        tk = yf.Ticker(t_in)
-        chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
-        T = (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days / 365
-        df = chain[chain['strike'] < d['price']].sort_values('strike', ascending=False).head(6) if mode == "put" else chain[chain['strike'] > d['price']].sort_values('strike', ascending=True).head(6)
-        for _, opt in df.iterrows():
-            delta = calculate_bsm_delta(d['price'], opt['strike'], T, opt['impliedVolatility'] or 0.4, mode)
-            with st.expander(f"Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$"):
-                st.write(f"💰 **Einnahme: {opt['bid']*100:.0f}$** | OTM: **{(1-abs(delta))*100:.1f}%**")
-                st.write(f"🎯 Puffer: {(abs(opt['strike']-d['price'])/d['price'])*100:.1f}% | Delta: {abs(delta):.2f}")
+st.subheader("🔍 Check")
+c1, c2 = st.columns([1,2])
+with c1: m = st.radio("Typ", ["put", "call"])
+with c2: ti = st.text_input("Ticker", "HOOD").upper()
+if ti:
+    d = get_data(ti)
+    if d and d['d']:
+        if d['e']: st.warning(f"⚠️ Earnings: {d['ed']}")
+        sel_d = st.selectbox("Datum", d['d'])
+        tk = yf.Ticker(ti)
+        ch = tk.option_chain(sel_d).puts if m=="put" else tk.option_chain(sel_d).calls
+        T = (datetime.strptime(sel_d, '%Y-%m-%d')-datetime.now()).days/365
+        df = ch[ch['strike']<d['p']].sort_values('strike', ascending=False).head(6) if m=="put" else ch[ch['strike']>d['p']].sort_values('strike', ascending=True).head(6)
+        for _, o in df.iterrows():
+            dl = calc_delta(d['p'], o['strike'], T, o['impliedVolatility'] or 0.4, m)
+            with st.expander(f"Strike {o['strike']} | Bid: {o['bid']}$"):
+                st.write(f"💰 **Einnahme: {o['bid']*100:.0f}$** | OTM: **{(1-abs(dl))*100:.1f}%**")
+                st.write(f"Puffer: {(abs(o['strike']-d['p'])/d['p'])*100:.1f}% | Delta: {abs(dl):.2f}")
