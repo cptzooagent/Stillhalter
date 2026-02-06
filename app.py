@@ -50,7 +50,7 @@ min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=10)
 
 # --- HAUPTBEREICH ---
 st.title("🛡️ CapTrader AI Market Scanner")
-st.write(f"Suche nach Puts mit Delta ≤ **{max_delta:.2f}** (Sicherheits-Fokus).")
+st.write(f"Suche nach Puts mit Delta ≤ **{max_delta:.2f}**.")
 
 # SEKTION 1: AUTOMATISCHER SCANNER
 if st.button("🚀 Markt-Scan mit Sicherheits-Filter starten"):
@@ -97,7 +97,9 @@ if st.button("🚀 Markt-Scan mit Sicherheits-Filter starten"):
                 st.write(f"💰 Prämie: **{row['bid']:.2f}$**") 
                 st.write(f"📈 Yield: **{row['yield']:.1f}% p.a.**")
                 st.write(f"🎯 Strike: **{row['strike']:.1f}$**")
-                st.caption(f"Delta: {row['delta']:.2f}")
+                st.caption(f"Delta: {row['delta']:.2f} | {row['days']} T.")
+    else:
+        st.warning("Keine Treffer mit diesen Einstellungen.")
 
 st.write("---") 
 
@@ -122,11 +124,12 @@ for i, item in enumerate(depot_data):
 
 st.write("---") 
 
-# SEKTION 3: EINZEL-CHECK (JETZT MIT PRÄMIE)
+# SEKTION 3: EINZEL-CHECK (JETZT KORRIGIERT)
 st.subheader("🔍 Einzel-Check")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
 with c2: t_in = st.text_input("Ticker", value="HOOD").upper()
+
 if t_in:
     price, dates = get_stock_basics(t_in)
     if price and dates:
@@ -137,13 +140,18 @@ if t_in:
         T = (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days / 365
         df = chain[chain['strike'] < price].sort_values('strike', ascending=False) if mode == "put" else chain[chain['strike'] > price].sort_values('strike', ascending=True)
         
-        for _, opt in df.head(5).iterrows():
+        for _, opt in df.head(6).iterrows():
             delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode)
             risk = "🟢" if abs(delta) < 0.16 else "🟡" if abs(delta) < 0.31 else "🔴"
-            # HIER DIE KORREKTUR: Prämie direkt in den Titel des Expanders
+            
+            # Anzeige-Update: Prämie direkt in den Titel und ins Detail
             with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$"):
                 col_a, col_b = st.columns(2)
-                col_a.write(f"**Wahrscheinlichkeit OTM:** {(1-abs(delta))*100:.1f}%")
-                col_a.write(f"**Kurs-Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
-                col_b.write(f"**Delta:** {abs(delta):.2f}")
-                col_b.write(f"**Implizite Vola:** {opt['impliedVolatility']*100:.1f}%")
+                with col_a:
+                    st.write(f"💰 **Optionspreis:** {opt['bid']:.2f}$")
+                    st.write(f"💵 **Cash-Einnahme:** {opt['bid']*100:.0f}$ (pro Kontrakt)")
+                    st.write(f"📊 **Wahrscheinlichkeit OTM:** {(1-abs(delta))*100:.1f}%")
+                with col_b:
+                    st.write(f"🎯 **Kurs-Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
+                    st.write(f"📉 **Delta:** {abs(delta):.2f}")
+                    st.write(f"🌊 **Implizite Vola:** {opt['impliedVolatility']*100:.1f}%")
