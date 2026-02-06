@@ -74,16 +74,11 @@ if st.button("🚀 Markt-Scan jetzt starten"):
 
 st.divider()
 
-# 2. MEIN DEPOT & AMPEL-LEGENDE
-st.subheader("💼 Mein Depot & Repair-Ampel")
+# 2. MEIN DEPOT & AMPEL-LEGENDE (Nebeneinander)
+st.subheader("💼 Mein Depot & Strategie")
 
-# Legende hinzufügen
-with st.expander("ℹ️ Ampel-Legende anzeigen"):
-    st.markdown("""
-    - 🟢 **PROFIT:** Aktueller Kurs liegt über dem Einstandskurs. Alles im grünen Bereich.
-    - 🟡 **REPAIR:** Kurs liegt bis zu 20% unter Einstand. Empfehlung: Call mit **Delta 0.10** verkaufen.
-    - 🔵 **DEEP REPAIR:** Kurs liegt mehr als 20% unter Einstand. Empfehlung: Call mit **Delta 0.05** verkaufen.
-    """)
+# Layout: Depot links (Spalte 1), Legende rechts (Spalte 2)
+col_depot, col_legende = st.columns([2, 1])
 
 full_portfolio = [
     {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0}, 
@@ -97,47 +92,49 @@ full_portfolio = [
 if 'portfolio' not in st.session_state or len(st.session_state.portfolio) < 12:
     st.session_state.portfolio = pd.DataFrame(full_portfolio)
 
-# Kompakte Breite für den Editor
-col_edit, _ = st.columns([1, 1])
-with col_edit:
-    st.session_state.portfolio = st.data_editor(st.session_state.portfolio, num_rows="dynamic", use_container_width=True)
+with col_depot:
+    st.session_state.portfolio = st.data_editor(
+        st.session_state.portfolio, 
+        num_rows="dynamic", 
+        use_container_width=True
+    )
 
-# Ampel-Anzeige in 3 Spalten
-p_cols = st.columns(3)
+with col_legende:
+    with st.container(border=True):
+        st.markdown("**ℹ️ Ampel-Legende**")
+        st.markdown("🟢 **PROFIT:** Kurs > Einstand. Alles OK.")
+        st.markdown("🟡 **REPAIR:** Kurs bis -20%. Call **Delta 0.10**.")
+        st.markdown("🔵 **DEEP:** Kurs < -20%. Call **Delta 0.05**.")
+
+# Ampel-Anzeige unter der Tabelle
+st.write("---")
+p_cols = st.columns(4)
 for i, (_, row) in enumerate(st.session_state.portfolio.iterrows()):
     curr = get_live_price(row['Ticker'])
-    with p_cols[i % 3]:
+    with p_cols[i % 4]:
         if curr:
             diff = (curr / row['Einstand'] - 1) * 100
-            if diff >= 0:
-                icon, label = "🟢", "PROFIT"
-            elif diff > -20:
-                icon, label = "🟡", "REPAIR"
-            else:
-                icon, label = "🔵", "DEEP"
-            st.write(f"{icon} **{row['Ticker']}**: {diff:.1f}% ({label})")
+            icon = "🟢" if diff >= 0 else "🟡" if diff > -20 else "🔵"
+            st.write(f"{icon} **{row['Ticker']}**: {diff:.1f}%")
 
 st.divider()
 
-# 3. OPTIONS FINDER (JETZT AUCH MIT 1-STUNDEN CACHE)
+# 3. OPTIONS FINDER (CACHED)
 st.subheader("🔍 Options-Finder")
 c1, c2 = st.columns([1, 2])
 with c1:
-    option_mode = st.radio("Strategie wählen", ["put", "call"], horizontal=True)
+    option_mode = st.radio("Strategie", ["put", "call"], horizontal=True)
 with c2:
-    find_ticker = st.text_input("Ticker eingeben", value="HOOD").upper()
+    find_ticker = st.text_input("Ticker-Symbol", value="HOOD").upper()
 
 if find_ticker:
     live_p = get_live_price(find_ticker)
     if live_p:
-        st.write(f"Aktueller Kurs: **{live_p:.2f}$**")
-        # Nutzt get_cached_expirations (1 Std. TTL)
+        st.write(f"Kurs: **{live_p:.2f}$**")
         all_dates = get_cached_expirations(find_ticker)
         if all_dates:
-            chosen_date = st.selectbox("Laufzeit wählen", all_dates)
-            # Nutzt get_cached_chain (1 Std. TTL)
+            chosen_date = st.selectbox("Laufzeit", all_dates)
             chain_df = get_cached_chain(find_ticker, chosen_date, option_mode)
-            
             if chain_df is not None:
                 if option_mode == "put":
                     chain_df = chain_df[chain_df['strike'] < live_p].sort_values('strike', ascending=False)
@@ -146,6 +143,6 @@ if find_ticker:
                 
                 for _, opt in chain_df.head(6).iterrows():
                     d_val = abs(opt['delta'])
-                    risk_c = "🟢" if d_val < 0.16 else "🟡" if d_val < 0.31 else "🔴"
-                    with st.expander(f"{risk_c} Strike {opt['strike']:.1f}$ | Bid: {opt['bid']:.2f}$"):
+                    risk = "🟢" if d_val < 0.16 else "🟡" if d_val < 0.31 else "🔴"
+                    with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Bid: {opt['bid']:.2f}$"):
                         st.write(f"Delta: {d_val:.2f} | Wahrscheinlichkeit: {(1-d_val)*100:.0f}%")
