@@ -9,7 +9,7 @@ import random
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
-# --- 1. MATHE: DELTA-BERECHNUNG ---
+# --- 1. MATHE: DELTA-BERECHNUNG (Original) ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     if T <= 0 or sigma <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
@@ -38,9 +38,19 @@ def get_stock_basics(symbol):
         tk = yf.Ticker(symbol)
         price = tk.fast_info['last_price']
         dates = list(tk.options)
-        return price, dates
+        
+        # Minimale Earnings-Abfrage (nur als Info-String)
+        earn_info = None
+        try:
+            cal = tk.calendar
+            if cal is not None and 'Earnings Date' in cal:
+                earn_info = cal['Earnings Date'][0].strftime('%d.%m.')
+        except:
+            pass
+            
+        return price, dates, earn_info
     except:
-        return None, []
+        return None, [], None
 
 # --- UI: SEITENLEISTE ---
 st.sidebar.header("🛡️ Strategie-Einstellungen")
@@ -65,7 +75,8 @@ if st.button("🚀 Markt-Scan mit Sicherheits-Filter starten"):
         status_text.text(f"Analysiere {t}...")
         progress_bar.progress((i + 1) / len(scan_list))
         
-        price, dates = get_stock_basics(t)
+        # Rückgabe von 3 Werten (Preis, Daten, Earnings)
+        price, dates, earn_date = get_stock_basics(t)
         if price and dates:
             try:
                 tk = yf.Ticker(t)
@@ -73,6 +84,7 @@ if st.button("🚀 Markt-Scan mit Sicherheits-Filter starten"):
                 chain = tk.option_chain(target_date).puts
                 T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
                 
+                # Exakt die alte Delta-Logik
                 chain['delta_val'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.5), axis=1)
                 safe_opts = chain[chain['delta_val'].abs() <= max_delta].copy()
                 
@@ -83,7 +95,12 @@ if st.button("🚀 Markt-Scan mit Sicherheits-Filter starten"):
                     puffer = (abs(best['strike'] - price) / price) * 100
                     
                     if y_pa >= min_yield_pa:
-                        results.append({'ticker': t, 'yield': y_pa, 'strike': best['strike'], 'bid': best['bid'], 'puffer': puffer, 'delta': abs(best['delta_val']), 'days': days})
+                        results.append({
+                            'ticker': t, 'yield': y_pa, 'strike': best['strike'], 
+                            'bid': best['bid'], 'puffer': puffer, 
+                            'delta': abs(best['delta_val']), 'days': days,
+                            'earn': earn_date
+                        })
             except: continue
 
     status_text.text("Scan abgeschlossen!")
@@ -93,6 +110,7 @@ if st.button("🚀 Markt-Scan mit Sicherheits-Filter starten"):
         for idx, (_, row) in enumerate(opp_df.iterrows()):
             with cols[idx % 5]:
                 st.markdown(f"### {row['ticker']}")
+                if row['earn']: st.warning(f"⚠️ ER: {row['earn']}")
                 st.metric("Puffer", f"{row['puffer']:.1f}%")
                 st.write(f"💰 Prämie: **{row['bid']:.2f}$**") 
                 st.write(f"📈 Yield: **{row['yield']:.1f}% p.a.**")
@@ -115,24 +133,26 @@ depot_data = [
 ]
 p_cols = st.columns(4)
 for i, item in enumerate(depot_data):
-    price, _ = get_stock_basics(item['Ticker'])
+    price, _, earn_date = get_stock_basics(item['Ticker'])
     if price:
         diff = (price / item['Einstand'] - 1) * 100
         icon = "🟢" if diff >= 0 else "🟡" if diff > -20 else "🔵"
         with p_cols[i % 4]:
             st.write(f"{icon} **{item['Ticker']}**: {price:.2f}$ ({diff:.1f}%)")
+            if earn_date: st.caption(f"Earnings: {earn_date}")
 
 st.write("---") 
 
-# SEKTION 3: EINZEL-CHECK (JETZT KORRIGIERT)
+# SEKTION 3: EINZEL-CHECK
 st.subheader("🔍 Einzel-Check")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
 with c2: t_in = st.text_input("Ticker", value="HOOD").upper()
 
 if t_in:
-    price, dates = get_stock_basics(t_in)
+    price, dates, earn_date = get_stock_basics(t_in)
     if price and dates:
+        if earn_date: st.info(f"📅 Nächste Earnings: {earn_date}")
         st.write(f"Aktueller Kurs: **{price:.2f}$**")
         d_sel = st.selectbox("Laufzeit wählen", dates)
         tk = yf.Ticker(t_in)
@@ -144,14 +164,12 @@ if t_in:
             delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode)
             risk = "🟢" if abs(delta) < 0.16 else "🟡" if abs(delta) < 0.31 else "🔴"
             
-            # Anzeige-Update: Prämie direkt in den Titel und ins Detail
             with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$"):
                 col_a, col_b = st.columns(2)
                 with col_a:
                     st.write(f"💰 **Optionspreis:** {opt['bid']:.2f}$")
-                    st.write(f"💵 **Cash-Einnahme:** {opt['bid']*100:.0f}$ (pro Kontrakt)")
-                    st.write(f"📊 **Wahrscheinlichkeit OTM:** {(1-abs(delta))*100:.1f}%")
+                    st.write(f"💵 **Cash-Einnahme:** {opt['bid']*100:.0f}$")
+                    st.write(f"📊 **OTM-Wahrsch.:** {(1-abs(delta))*100:.1f}%")
                 with col_b:
                     st.write(f"🎯 **Kurs-Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
                     st.write(f"📉 **Delta:** {abs(delta):.2f}")
-                    st.write(f"🌊 **Implizite Vola:** {opt['impliedVolatility']*100:.1f}%")
