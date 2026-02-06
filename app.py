@@ -8,7 +8,7 @@ from datetime import datetime
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader Pro Dashboard", layout="wide")
 
-# --- 1. MATHE: DELTA-BERECHNUNG ---
+# --- 1. MATHE: DELTA-BERECHNUNG (BLACK-SCHOLES) ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     if T <= 0 or sigma <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
@@ -16,51 +16,57 @@ def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
         return norm.cdf(d1)
     return norm.cdf(d1) - 1
 
-# --- 2. DATEN-FUNKTIONEN ---
+# --- 2. DATEN-FUNKTIONEN (OPTIMIERT FÜR CLOUD-CACHE) ---
 @st.cache_data(ttl=900)
-def get_yf_data(symbol):
+def get_quick_price(symbol):
+    """Holt nur den Preis und die Daten, keine komplexen Objekte."""
     try:
         tk = yf.Ticker(symbol)
         price = tk.fast_info['last_price']
-        return tk, price, tk.options
+        options = tk.options
+        return price, options
     except:
-        return None, None, []
+        return None, []
 
-# --- UI ---
+# --- UI START ---
 st.title("🛡️ CapTrader Pro Dashboard")
-st.caption("Status: 15m Delay (Yahoo) | Delta: BSM Live-Berechnung")
+st.caption("Status: 15m Delay (Yahoo Finance) | Delta: Live BSM")
 
-# SEKTION 1: SCANNER
+# SEKTION 1: MARKT-SCANNER
 st.subheader("💎 Top Gelegenheiten (Delta 0.15)")
 if st.button("🚀 Markt-Scan jetzt starten"):
     watchlist = ["TSLA", "NVDA", "AMD", "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", "UPST", "HOOD", "SOFI"]
     results = []
+    
     with st.spinner("Scanne Märkte..."):
         for t in watchlist:
-            tk, price, dates = get_yf_data(t)
-            if dates and price:
+            price, dates = get_quick_price(t)
+            if price and dates:
+                tk = yf.Ticker(t)
                 target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
                 chain = tk.option_chain(target_date).puts
                 T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
+                
                 chain['delta'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.5), axis=1)
                 chain['diff'] = (chain['delta'].abs() - 0.15).abs()
                 best = chain.sort_values('diff').iloc[0]
+                
                 days = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
                 y_pa = (best['bid'] / best['strike']) * (365 / max(1, days)) * 100
                 results.append({'ticker': t, 'yield': y_pa, 'strike': best['strike'], 'days': days})
-    
+
     if results:
         opp_df = pd.DataFrame(results).sort_values('yield', ascending=False).head(10)
         cols = st.columns(5)
         for idx, (_, row) in enumerate(opp_df.iterrows()):
             with cols[idx % 5]:
-                st.markdown(f"### {row['ticker']}")
+                st.markdown(f"**{row['ticker']}**")
                 st.metric("Yield p.a.", f"{row['yield']:.1f}%")
-                st.write(f"Strike: {row['strike']:.1f}$ | {row['days']} T.")
+                st.caption(f"Strike: {row['strike']:.1f}$ | {row['days']} T.")
 
-st.write("---")
+st.write("---") # Ersatz für st.divider()
 
-# SEKTION 2: DEPOT
+# SEKTION 2: DEPOT & AMPEL
 st.subheader("💼 Depot & Repair-Status")
 depot_data = [
     {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
@@ -70,34 +76,41 @@ depot_data = [
     {"Ticker": "NVO", "Einstand": 97.0}, {"Ticker": "RBRK", "Einstand": 70.0},
     {"Ticker": "SE", "Einstand": 170.0}, {"Ticker": "TTD", "Einstand": 102.0}
 ]
+
 p_cols = st.columns(4)
 for i, item in enumerate(depot_data):
-    _, curr, _ = get_yf_data(item['Ticker'])
-    if curr:
-        diff = (curr / item['Einstand'] - 1) * 100
+    price, _ = get_quick_price(item['Ticker'])
+    if price:
+        diff = (price / item['Einstand'] - 1) * 100
         icon = "🟢" if diff >= 0 else "🟡" if diff > -20 else "🔵"
         with p_cols[i % 4]:
-            st.write(f"{icon} **{item['Ticker']}**: {curr:.2f}$ ({diff:.1f}%)")
+            st.write(f"{icon} **{item['Ticker']}**: {price:.2f}$ ({diff:.1f}%)")
 
 st.write("---")
 
-# SEKTION 3: FINDER
+# SEKTION 3: OPTIONS-FINDER
 st.subheader("🔍 Options-Finder")
 c1, c2 = st.columns([1, 2])
-with c1: opt_mode = st.radio("Typ", ["put", "call"], horizontal=True)
-with c2: search_t = st.text_input("Ticker", value="HOOD").upper()
+with c1:
+    mode = st.radio("Typ", ["put", "call"], horizontal=True)
+with c2:
+    ticker = st.text_input("Ticker eingeben", value="HOOD").upper()
 
-if search_t:
-    tk, price, dates = get_yf_data(search_t)
-    if tk and price:
-        st.write(f"Kurs: **{price:.2f}$**")
-        chosen_date = st.selectbox("Datum", dates)
-        chain = tk.option_chain(chosen_date).puts if opt_mode == "put" else tk.option_chain(chosen_date).calls
-        T = (datetime.strptime(chosen_date, '%Y-%m-%d') - datetime.now()).days / 365
-        df = chain[chain['strike'] < price].sort_values('strike', ascending=False) if opt_mode == "put" else chain[chain['strike'] > price].sort_values('strike', ascending=True)
+if ticker:
+    price, dates = get_quick_price(ticker)
+    if price and dates:
+        st.write(f"Aktueller Kurs: **{price:.2f}$**")
+        date = st.selectbox("Laufzeit", dates)
+        tk = yf.Ticker(ticker)
+        chain = tk.option_chain(date).puts if mode == "put" else tk.option_chain(date).calls
+        T = (datetime.strptime(date, '%Y-%m-%d') - datetime.now()).days / 365
+        
+        df = chain[chain['strike'] < price].sort_values('strike', ascending=False) if mode == "put" else chain[chain['strike'] > price].sort_values('strike', ascending=True)
         
         for _, opt in df.head(6).iterrows():
-            delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=opt_mode)
+            iv = opt['impliedVolatility'] or 0.4
+            delta = calculate_bsm_delta(price, opt['strike'], T, iv, option_type=mode)
             risk = "🟢" if abs(delta) < 0.16 else "🟡" if abs(delta) < 0.31 else "🔴"
+            
             with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Bid: {opt['bid']:.2f}$"):
                 st.write(f"Delta: {abs(delta):.2f} | Puffer: {(abs(opt['strike']-price)/price)*100:.1f}%")
