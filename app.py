@@ -13,14 +13,19 @@ st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     if T <= 0 or sigma <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    if option_type == 'call':
-        return norm.cdf(d1)
-    return norm.cdf(d1) - 1
+    return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
 # --- 2. DATEN-FUNKTIONEN ---
-@st.cache_data(ttl=86400)
-def get_auto_watchlist():
-    return ["TSLA", "NVDA", "AMD", "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", "UPST", "HOOD", "SOFI", "MSTR", "AI", "SNOW", "SHOP", "PYPL", "ABNB", "GME", "AMC"]
+@st.cache_data(ttl=3600)
+def get_sp500_tickers():
+    # Top 50 S&P 500 Aktien nach Marktkapitalisierung/Liquidität
+    return [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "BRK-B", "LLY", "AVGO", "V", "JPM",
+        "TSLA", "WMT", "XOM", "MA", "UNH", "PG", "ORCL", "COST", "JNJ", "HD",
+        "ABBV", "BAC", "NFLX", "KO", "AMD", "PEP", "ADBE", "TMO", "CRM", "WFC",
+        "CVX", "NKE", "INTC", "DIS", "PM", "CAT", "AXP", "MS", "IBM", "TXN",
+        "GE", "AMAT", "QCOM", "ISRG", "LOW", "PFE", "GS", "HON", "COP", "NOW"
+    ]
 
 @st.cache_data(ttl=900)
 def get_stock_basics(symbol):
@@ -42,20 +47,21 @@ def get_stock_basics(symbol):
 st.sidebar.header("🛡️ Strategie-Einstellungen")
 target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 83)
 max_delta = (100 - target_prob) / 100
-min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=40)
+min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=15) # 15-20% sind bei S&P 500 realistischer
 
 # --- HAUPTBEREICH ---
 st.title("🛡️ CapTrader AI Market Scanner")
+st.subheader("Fokus: S&P 500 Blue Chips")
 
 # SEKTION 1: SCANNER
-if st.button("🚀 Markt-Scan starten"):
-    watchlist = get_auto_watchlist()
+if st.button("🚀 S&P 500 Markt-Scan starten"):
+    watchlist = get_sp500_tickers()
     results = []
     prog = st.progress(0)
     status = st.empty()
     
     for i, t in enumerate(watchlist):
-        status.text(f"Analysiere {t}...")
+        status.text(f"Scanne S&P 500: {t}...")
         prog.progress((i + 1) / len(watchlist))
         price, dates, earn = get_stock_basics(t)
         
@@ -66,7 +72,7 @@ if st.button("🚀 Markt-Scan starten"):
                 chain = tk.option_chain(target_date).puts
                 T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
                 
-                chain['delta_val'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.5), axis=1)
+                chain['delta_val'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.4), axis=1)
                 safe_opts = chain[chain['delta_val'].abs() <= max_delta].copy()
                 
                 if not safe_opts.empty:
@@ -83,7 +89,7 @@ if st.button("🚀 Markt-Scan starten"):
                         })
             except: continue
 
-    status.text("Scan abgeschlossen!")
+    status.text("S&P 500 Scan abgeschlossen!")
     if results:
         opp_df = pd.DataFrame(results).sort_values('yield', ascending=False).head(12)
         cols = st.columns(4)
@@ -95,7 +101,7 @@ if st.button("🚀 Markt-Scan starten"):
                 st.write(f"💰 Bid: **{row['bid']:.2f}$** | Puffer: **{row['puffer']:.1f}%**")
                 st.write(f"🎯 Strike: **{row['strike']:.1f}$** (Δ {row['delta']:.2f})")
     else:
-        st.warning(f"Keine Treffer für {min_yield_pa}% Rendite bei {target_prob}% Sicherheit.")
+        st.warning(f"Keine S&P 500 Treffer für {min_yield_pa}% Rendite.")
 
 st.write("---") 
 
@@ -125,7 +131,7 @@ st.write("---")
 st.subheader("🔍 Einzel-Check")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
-with c2: t_in = st.text_input("Ticker", value="HOOD").upper()
+with c2: t_in = st.text_input("Ticker", value="AAPL").upper()
 
 if t_in:
     price, dates, earn = get_stock_basics(t_in)
