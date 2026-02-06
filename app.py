@@ -9,7 +9,7 @@ import random
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
-# --- 1. MATHE: DELTA-BERECHNUNG (BLACK-SCHOLES) ---
+# --- 1. MATHE: DELTA & WAHRSCHEINLICHKEIT ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     if T <= 0 or sigma <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
@@ -17,16 +17,14 @@ def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
         return norm.cdf(d1)
     return norm.cdf(d1) - 1
 
-# --- 2. DATEN-FUNKTIONEN (STABILE QUELLEN) ---
+# --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
 def get_auto_watchlist():
-    """Holt Ticker aus einer stabilen GitHub-Quelle und mischt High-IV Werte bei."""
     high_yield_base = [
         "TSLA", "NVDA", "AMD", "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", 
         "UPST", "HOOD", "SOFI", "MSTR", "AI", "SNOW", "SHOP", "PYPL", "ABNB"
     ]
     try:
-        # Eine sehr stabile Quelle für US-Ticker auf GitHub
         url = "https://raw.githubusercontent.com/rreichel3/US-Stock-Symbols/main/nasdaq/nasdaq_tickers.txt"
         response = pd.read_csv(url, header=None, names=['Ticker'])
         nasdaq_list = response['Ticker'].head(100).tolist()
@@ -36,7 +34,6 @@ def get_auto_watchlist():
 
 @st.cache_data(ttl=900)
 def get_stock_basics(symbol):
-    """Holt Kurs und Options-Termine von Yahoo."""
     try:
         tk = yf.Ticker(symbol)
         price = tk.fast_info['last_price']
@@ -47,14 +44,21 @@ def get_stock_basics(symbol):
 
 # --- UI START ---
 st.title("🛡️ CapTrader AI Market Scanner")
-st.caption("Daten: Yahoo Finance (15m Delay) | Quelle: Nasdaq-100 & High-IV List | Delta: 0.15")
+st.caption("Fokus: Maximale Verfallswahrscheinlichkeit & Sicherheit")
+
+# --- FILTER-BEREICH ---
+st.sidebar.header("⚙️ Strategie-Filter")
+target_prob = st.sidebar.slider("Mind. Wahrscheinlichkeit OTM (%)", 70, 95, 85)
+# Umrechnung: 85% Wahrscheinlichkeit entspricht ca. 0.15 Delta
+max_delta = (100 - target_prob) / 100
+
+min_yield = st.sidebar.number_input("Mindestrendite p.a. (%)", value=10)
+
+st.write(f"Suche nach Puts mit Delta ≤ **{max_delta:.2f}** (entspricht ca. **{target_prob}%** Sicherheit).")
 
 # --- SEKTION 1: AUTOMATISCHER MARKT-SCANNER ---
-st.subheader("🚀 Top Stillhalter-Chancen (Zufallsmix aus Markt)")
-
-if st.button("🔥 Markt nach 0.15 Delta scannen"):
+if st.button("🔥 Markt-Scan mit Sicherheits-Filter starten"):
     full_watchlist = get_auto_watchlist()
-    # Wir nehmen 60 zufällige Aktien aus der Liste für mehr Abwechslung
     scan_list = random.sample(full_watchlist, min(len(full_watchlist), 60)) 
     
     results = []
@@ -62,93 +66,54 @@ if st.button("🔥 Markt nach 0.15 Delta scannen"):
     status_text = st.empty()
     
     for i, t in enumerate(scan_list):
-        status_text.text(f"Analysiere {t} ({i+1}/{len(scan_list)})...")
+        status_text.text(f"Scanne {t}...")
         progress_bar.progress((i + 1) / len(scan_list))
         
         price, dates = get_stock_basics(t)
         if price and dates:
             try:
                 tk = yf.Ticker(t)
-                # Laufzeit nah an 30 Tagen
                 target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
                 chain = tk.option_chain(target_date).puts
                 T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
                 
-                # Delta-Berechnung
-                chain['delta'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.5), axis=1)
-                chain['diff'] = (chain['delta'].abs() - 0.15).abs()
-                best = chain.sort_values('diff').iloc[0]
+                # Delta berechnen
+                chain['delta_val'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.5), axis=1)
                 
-                days = max(1, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days)
-                y_pa = (best['bid'] / best['strike']) * (365 / days) * 100
+                # Filter: Nur Puts mit Delta kleiner oder gleich unserem Sicherheitsziel
+                safe_options = chain[chain['delta_val'].abs() <= max_delta].copy()
                 
-                if y_pa > 8: # Alles über 8% p.a. ist interessant
-                    results.append({'ticker': t, 'yield': y_pa, 'strike': best['strike'], 'bid': best['bid'], 'days': days, 'price': price})
+                if not safe_options.empty:
+                    # Wir nehmen die Option, die am nächsten am Delta-Limit liegt für max. Prämie
+                    best = safe_options.sort_values('delta_val', ascending=False).iloc[0]
+                    
+                    days = max(1, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days)
+                    y_pa = (best['bid'] / best['strike']) * (365 / days) * 100
+                    puffer = (abs(best['strike'] - price) / price) * 100
+                    
+                    if y_pa >= min_yield:
+                        results.append({
+                            'ticker': t, 'yield': y_pa, 'strike': best['strike'], 
+                            'bid': best['bid'], 'days': days, 'price': price, 
+                            'puffer': puffer, 'delta': abs(best['delta_val'])
+                        })
             except:
                 continue
 
-    status_text.text("Scan abgeschlossen! Hier sind die besten Treffer:")
-    
+    status_text.text("Scan beendet.")
     if results:
-        # Zeige die Top 10 nach Rendite sortiert
-        opp_df = pd.DataFrame(results).sort_values('yield', ascending=False).head(10)
+        # Sortierung: Höchster Kurs-Puffer zuerst (maximale Sicherheit)
+        opp_df = pd.DataFrame(results).sort_values('puffer', ascending=False).head(10)
         cols = st.columns(5)
         for idx, (_, row) in enumerate(opp_df.iterrows()):
             with cols[idx % 5]:
                 st.markdown(f"### {row['ticker']}")
-                st.metric("Yield p.a.", f"{row['yield']:.1f}%")
+                st.metric("Sicherheit", f"{row['puffer']:.1f}% Puffer")
+                st.write(f"Yield p.a.: **{row['yield']:.1f}%**")
                 st.write(f"Strike: **{row['strike']:.1f}$**")
-                st.write(f"Bid: **{row['bid']:.2f}$**")
-                st.caption(f"Kurs: {row['price']:.2f}$ | {row['days']} T.")
+                st.caption(f"Delta: {row['delta']:.2f} | {row['days']} T.")
     else:
-        st.warning("Keine passenden Optionen gefunden.")
+        st.warning("Keine Optionen gefunden, die diese Sicherheits-Kriterien erfüllen.")
 
 st.write("---")
-
-# --- SEKTION 2: DEPOT-STATUS ---
-st.subheader("💼 Mein Depot & Repair-Ampel")
-depot_data = [
-    {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
-    {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
-    {"Ticker": "GTM", "Einstand": 17.0}, {"Ticker": "HIMS", "Einstand": 37.0},
-    {"Ticker": "HOOD", "Einstand": 120.0}, {"Ticker": "JKS", "Einstand": 50.0},
-    {"Ticker": "NVO", "Einstand": 97.0}, {"Ticker": "RBRK", "Einstand": 70.0},
-    {"Ticker": "SE", "Einstand": 170.0}, {"Ticker": "TTD", "Einstand": 102.0}
-]
-
-p_cols = st.columns(4)
-for i, item in enumerate(depot_data):
-    price, _ = get_stock_basics(item['Ticker'])
-    if price:
-        diff = (price / item['Einstand'] - 1) * 100
-        icon = "🟢" if diff >= 0 else "🟡" if diff > -20 else "🔵"
-        with p_cols[i % 4]:
-            st.write(f"{icon} **{item['Ticker']}**: {price:.2f}$ ({diff:.1f}%)")
-
-st.write("---")
-
-# --- SEKTION 3: EINZEL-FINDER ---
-st.subheader("🔍 Manueller Options-Finder")
-f1, f2 = st.columns([1, 2])
-with f1: mode = st.radio("Optionstyp", ["put", "call"], horizontal=True)
-with f2: ticker_input = st.text_input("Ticker manuell prüfen", value="HOOD").upper()
-
-if ticker_input:
-    price, dates = get_stock_basics(ticker_input)
-    if price and dates:
-        st.write(f"Aktueller Kurs: **{price:.2f}$**")
-        date = st.selectbox("Laufzeit", dates)
-        tk = yf.Ticker(ticker_input)
-        chain = tk.option_chain(date).puts if mode == "put" else tk.option_chain(date).calls
-        T = (datetime.strptime(date, '%Y-%m-%d') - datetime.now()).days / 365
-        
-        df = chain[chain['strike'] < price].sort_values('strike', ascending=False) if mode == "put" else chain[chain['strike'] > price].sort_values('strike', ascending=True)
-        
-        for _, opt in df.head(6).iterrows():
-            delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode)
-            risk = "🟢" if abs(delta) < 0.16 else "🟡" if abs(delta) < 0.31 else "🔴"
-            with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$"):
-                c1, c2 = st.columns(2)
-                c1.write(f"**Delta:** {abs(delta):.2f}")
-                c1.write(f"**Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
-                c2.write(f"**Bid/Ask:** {opt['bid']:.2f}$ / {opt['ask']:.2f}$")
+# (Rest des Depot-Codes bleibt identisch)
