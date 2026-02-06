@@ -19,7 +19,6 @@ def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=900)
 def get_stock_basics(symbol):
-    """Holt Kurs und verfügbare Daten ohne komplexe Objekte zu cachen."""
     try:
         tk = yf.Ticker(symbol)
         price = tk.fast_info['last_price']
@@ -32,42 +31,50 @@ def get_stock_basics(symbol):
 st.title("🛡️ CapTrader Pro Dashboard")
 st.caption("Daten: Yahoo Finance (15m Delay) | Delta: BSM Berechnung")
 
-# SEKTION 1: SCANNER
+# SEKTION 1: SCANNER MIT ANPASSBARER WATCHLIST
 st.subheader("💎 Top Gelegenheiten (Delta 0.15)")
+
+# Neues Eingabefeld für die Watchlist
+default_tickers = "TSLA, NVDA, AMD, COIN, MARA, PLTR, AFRM, SQ, RIVN, UPST, HOOD, SOFI"
+user_tickers = st.text_input("Watchlist bearbeiten (Ticker mit Komma trennen):", value=default_tickers)
+watchlist = [t.strip().upper() for t in user_tickers.split(",")]
+
 if st.button("🚀 Markt-Scan jetzt starten"):
-    watchlist = ["TSLA", "NVDA", "AMD", "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", "UPST", "HOOD", "SOFI"]
     results = []
-    
-    with st.spinner("Scanne Märkte & Prämien..."):
+    with st.spinner(f"Scanne {len(watchlist)} Märkte & Prämien..."):
         for t in watchlist:
             price, dates = get_stock_basics(t)
             if price and dates:
-                tk = yf.Ticker(t)
-                target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
-                chain = tk.option_chain(target_date).puts
-                T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
-                
-                # Delta & Rendite p.a. berechnen
-                chain['delta'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.5), axis=1)
-                chain['diff'] = (chain['delta'].abs() - 0.15).abs()
-                best = chain.sort_values('diff').iloc[0]
-                
-                days = max(1, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days)
-                # Rendite p.a. basierend auf BID
-                y_pa = (best['bid'] / best['strike']) * (365 / days) * 100
-                results.append({'ticker': t, 'yield': y_pa, 'strike': best['strike'], 'bid': best['bid'], 'days': days})
+                try:
+                    tk = yf.Ticker(t)
+                    # Suche Laufzeit nah an 30 Tagen
+                    target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
+                    chain = tk.option_chain(target_date).puts
+                    T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
+                    
+                    # Delta-Berechnung
+                    chain['delta'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.5), axis=1)
+                    chain['diff'] = (chain['delta'].abs() - 0.15).abs()
+                    best = chain.sort_values('diff').iloc[0]
+                    
+                    days = max(1, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days)
+                    y_pa = (best['bid'] / best['strike']) * (365 / days) * 100
+                    results.append({'ticker': t, 'yield': y_pa, 'strike': best['strike'], 'bid': best['bid'], 'days': days})
+                except:
+                    continue
 
     if results:
         opp_df = pd.DataFrame(results).sort_values('yield', ascending=False).head(10)
         cols = st.columns(5)
         for idx, (_, row) in enumerate(opp_df.iterrows()):
             with cols[idx % 5]:
-                with st.container():
-                    st.markdown(f"### {row['ticker']}")
-                    st.metric("Yield p.a.", f"{row['yield']:.1f}%")
-                    st.write(f"**Strike: {row['strike']:.1f}$**")
-                    st.write(f"Prämie (Bid): **{row['bid']:.2f}$**")
-                    st.caption(f"Laufzeit: {row['days']} Tage")
+                st.markdown(f"### {row['ticker']}")
+                st.metric("Yield p.a.", f"{row['yield']:.1f}%")
+                st.write(f"Strike: **{row['strike']:.1f}$**")
+                st.write(f"Bid: **{row['bid']:.2f}$**")
+                st.caption(f"{row['days']} Tage")
+    else:
+        st.warning("Keine Daten gefunden. Bitte Ticker-Symbole prüfen.")
 
 st.write("---")
 
@@ -93,34 +100,29 @@ for i, item in enumerate(depot_data):
 
 st.write("---")
 
-# SEKTION 3: FINDER (JETZT MIT PRÄMIEN)
+# SEKTION 3: OPTIONS-FINDER
 st.subheader("🔍 Options-Finder")
-c1, c2 = st.columns([1, 2])
-with c1:
-    mode = st.radio("Typ", ["put", "call"], horizontal=True)
-with c2:
-    ticker = st.text_input("Ticker", value="HOOD").upper()
+f1, f2 = st.columns([1, 2])
+with f1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
+with f2: ticker_input = st.text_input("Ticker", value="HOOD").upper()
 
-if ticker:
-    price, dates = get_stock_basics(ticker)
+if ticker_input:
+    price, dates = get_stock_basics(ticker_input)
     if price and dates:
         st.write(f"Aktueller Kurs: **{price:.2f}$**")
         date = st.selectbox("Laufzeit", dates)
-        tk = yf.Ticker(ticker)
+        tk = yf.Ticker(ticker_input)
         chain = tk.option_chain(date).puts if mode == "put" else tk.option_chain(date).calls
         T = (datetime.strptime(date, '%Y-%m-%d') - datetime.now()).days / 365
         
-        # Filter OTM & Berechnung
         df = chain[chain['strike'] < price].sort_values('strike', ascending=False) if mode == "put" else chain[chain['strike'] > price].sort_values('strike', ascending=True)
         
         for _, opt in df.head(8).iterrows():
             delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode)
             risk = "🟢" if abs(delta) < 0.16 else "🟡" if abs(delta) < 0.31 else "🔴"
-            
             with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$"):
-                col1, col2 = st.columns(2)
-                col1.write(f"**Delta:** {abs(delta):.2f}")
-                col1.write(f"**Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
-                col2.write(f"**Bid:** {opt['bid']:.2f}$")
-                col2.write(f"**Ask:** {opt['ask']:.2f}$")
-                st.caption(f"Implizite Vola: {opt['impliedVolatility']*100:.1f}%")
+                c1, c2 = st.columns(2)
+                c1.write(f"**Delta:** {abs(delta):.2f}")
+                c1.write(f"**Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
+                c2.write(f"**Bid:** {opt['bid']:.2f}$")
+                c2.write(f"**Ask:** {opt['ask']:.2f}$")
