@@ -38,9 +38,20 @@ def get_stock_basics(symbol):
         tk = yf.Ticker(symbol)
         price = tk.fast_info['last_price']
         dates = list(tk.options)
-        return price, dates
+        
+        # Earnings Logik
+        has_earnings = False
+        e_date = None
+        if tk.calendar is not None and 'Earnings Date' in tk.calendar:
+            next_e = tk.calendar['Earnings Date'][0].replace(tzinfo=None)
+            days_to = (next_e - datetime.now()).days
+            if 0 <= days_to <= 14:
+                has_earnings = True
+                e_date = next_e.strftime('%d.%m.')
+                
+        return price, dates, has_earnings, e_date
     except:
-        return None, []
+        return None, [], False, None
 
 # --- UI: SEITENLEISTE ---
 st.sidebar.header("🛡️ Strategie-Einstellungen")
@@ -65,7 +76,7 @@ if st.button("🚀 Markt-Scan mit Sicherheits-Filter starten"):
         status_text.text(f"Analysiere {t}...")
         progress_bar.progress((i + 1) / len(scan_list))
         
-        price, dates = get_stock_basics(t)
+        price, dates, has_e, e_dt = get_stock_basics(t)
         if price and dates:
             try:
                 tk = yf.Ticker(t)
@@ -83,7 +94,12 @@ if st.button("🚀 Markt-Scan mit Sicherheits-Filter starten"):
                     puffer = (abs(best['strike'] - price) / price) * 100
                     
                     if y_pa >= min_yield_pa:
-                        results.append({'ticker': t, 'yield': y_pa, 'strike': best['strike'], 'bid': best['bid'], 'puffer': puffer, 'delta': abs(best['delta_val']), 'days': days})
+                        results.append({
+                            'ticker': t, 'yield': y_pa, 'strike': best['strike'], 
+                            'bid': best['bid'], 'puffer': puffer, 
+                            'delta': abs(best['delta_val']), 'days': days,
+                            'has_e': has_e, 'e_dt': e_dt
+                        })
             except: continue
 
     status_text.text("Scan abgeschlossen!")
@@ -93,11 +109,11 @@ if st.button("🚀 Markt-Scan mit Sicherheits-Filter starten"):
         for idx, (_, row) in enumerate(opp_df.iterrows()):
             with cols[idx % 5]:
                 st.markdown(f"### {row['ticker']}")
+                if row['has_e']: st.warning(f"⚠️ Earnings: {row['e_dt']}")
                 st.metric("Puffer", f"{row['puffer']:.1f}%")
                 st.write(f"💰 Prämie: **{row['bid']:.2f}$**") 
                 st.write(f"📈 Yield: **{row['yield']:.1f}% p.a.**")
                 st.write(f"🎯 Strike: **{row['strike']:.1f}$**")
-                st.caption(f"Delta: {row['delta']:.2f} | {row['days']} T.")
     else:
         st.warning("Keine Treffer mit diesen Einstellungen.")
 
@@ -115,24 +131,26 @@ depot_data = [
 ]
 p_cols = st.columns(4)
 for i, item in enumerate(depot_data):
-    price, _ = get_stock_basics(item['Ticker'])
+    price, _, has_e, e_dt = get_stock_basics(item['Ticker'])
     if price:
         diff = (price / item['Einstand'] - 1) * 100
         icon = "🟢" if diff >= 0 else "🟡" if diff > -20 else "🔵"
         with p_cols[i % 4]:
             st.write(f"{icon} **{item['Ticker']}**: {price:.2f}$ ({diff:.1f}%)")
+            if has_e: st.caption(f"⚠️ Earnings am {e_dt}")
 
 st.write("---") 
 
-# SEKTION 3: EINZEL-CHECK (JETZT KORRIGIERT)
+# SEKTION 3: EINZEL-CHECK
 st.subheader("🔍 Einzel-Check")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
 with c2: t_in = st.text_input("Ticker", value="HOOD").upper()
 
 if t_in:
-    price, dates = get_stock_basics(t_in)
+    price, dates, has_e, e_dt = get_stock_basics(t_in)
     if price and dates:
+        if has_e: st.error(f"⚠️ ACHTUNG: Earnings am {e_dt}!")
         st.write(f"Aktueller Kurs: **{price:.2f}$**")
         d_sel = st.selectbox("Laufzeit wählen", dates)
         tk = yf.Ticker(t_in)
@@ -144,12 +162,11 @@ if t_in:
             delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode)
             risk = "🟢" if abs(delta) < 0.16 else "🟡" if abs(delta) < 0.31 else "🔴"
             
-            # Anzeige-Update: Prämie direkt in den Titel und ins Detail
             with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$"):
                 col_a, col_b = st.columns(2)
                 with col_a:
                     st.write(f"💰 **Optionspreis:** {opt['bid']:.2f}$")
-                    st.write(f"💵 **Cash-Einnahme:** {opt['bid']*100:.0f}$ (pro Kontrakt)")
+                    st.write(f"💵 **Cash-Einnahme:** {opt['bid']*100:.0f}$")
                     st.write(f"📊 **Wahrscheinlichkeit OTM:** {(1-abs(delta))*100:.1f}%")
                 with col_b:
                     st.write(f"🎯 **Kurs-Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
