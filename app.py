@@ -45,7 +45,7 @@ def get_live_price(symbol):
 
 # --- UI START ---
 st.title("🛡️ CapTrader Pro Stillhalter Dashboard")
-st.info("💡 **Sparmodus:** Daten werden 1 Std. gespeichert. Bei Abweichungen zu CapTrader: API nutzt 15 Min. Verzögerung.")
+st.info("💡 **Sparmodus aktiv:** Daten werden 1 Std. gespeichert, um dein API-Limit zu schonen.")
 
 # --- TOP 10 SCANNER ---
 st.subheader("💎 Top 10 High-IV Put Gelegenheiten")
@@ -83,7 +83,7 @@ st.divider()
 # --- PORTFOLIO REPAIR LISTE ---
 st.subheader("💼 Mein Depot & Repair-Ampel")
 if 'portfolio' not in st.session_state:
-    # Hier sind jetzt ALLE deine Werte enthalten
+    # Jetzt mit ALLEN 12 Werten (inkl. GTM, HIMS, NVO, JKS, RBRK, SE)
     st.session_state.portfolio = pd.DataFrame([
         {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0}, 
         {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
@@ -101,18 +101,18 @@ for i, (_, row) in enumerate(st.session_state.portfolio.iterrows()):
     with (p_cols[0] if i % 2 == 0 else p_cols[1]):
         if curr:
             diff = (curr / row['Einstand'] - 1) * 100
-            # Ampel-Logik
+            # Ampel-Logik: Grün (Profit), Gelb (Repair < 20%), Blau (Deep Repair > 20%)
             icon, label, note = ("🟢", "PROFIT", "OK") if diff >= 0 else ("🟡", "REPAIR", "Call Delta 0.10") if diff > -20 else ("🔵", "DEEP REPAIR", "Call Delta 0.05")
             st.write(f"{icon} **{row['Ticker']}**: {curr:.2f}$ ({diff:.1f}%) → `{label}: {note}`")
 
 st.divider()
 
 # --- OPTIONS FINDER ---
-st.subheader("🔍 Detail-Analyse (Put oder Call wählen)")
+st.subheader("🔍 Detail-Analyse (Optionstyp wählen)")
 c1, c2 = st.columns([1, 2])
 with c1:
-    # Hier ist die Auswahl zum Anklicken
-    option_mode = st.radio("Was möchtest du verkaufen?", ["put", "call"], horizontal=True)
+    # Auswahl Put oder Call zum Anklicken
+    option_mode = st.radio("Strategie wählen", ["put", "call"], horizontal=True)
 with c2:
     find_ticker = st.text_input("Symbol eingeben", value="HOOD").upper()
 
@@ -125,7 +125,7 @@ if find_ticker:
             chosen_date = st.selectbox("Ablaufdatum", all_dates)
             chain_df = get_cached_chain(find_ticker, chosen_date, option_mode)
             if chain_df is not None:
-                # OTM-Logik
+                # Nur OTM Optionen filtern
                 if option_mode == "put":
                     chain_df = chain_df[chain_df['strike'] < live_p].sort_values('strike', ascending=False)
                 else:
@@ -135,4 +135,4 @@ if find_ticker:
                     d_val = abs(opt['delta'])
                     risk_c = "🟢" if d_val < 0.16 else "🟡" if d_val < 0.31 else "🔴"
                     with st.expander(f"{risk_c} Strike {opt['strike']:.1f}$ | Bid: {opt['bid']:.2f}$ | Delta: {d_val:.2f}"):
-                        st.write(f"Chance auf Profit: **{(1-d_val)*100:.1f}%**")
+                        st.write(f"Wahrscheinlichkeit für Profit: **{(1-d_val)*100:.1f}%**")
