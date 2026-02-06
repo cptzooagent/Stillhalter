@@ -10,7 +10,7 @@ st.set_page_config(page_title="Pro Stillhalter Dashboard", layout="wide")
 MD_KEY = st.secrets.get("MARKETDATA_KEY")
 FINNHUB_KEY = st.secrets.get("FINNHUB_KEY")
 
-# --- 1. DATEN-FUNKTIONEN MIT CACHING (1 STUNDE) ---
+# --- 1. DATEN-FUNKTIONEN MIT CACHING ---
 @st.cache_data(ttl=3600)
 def get_cached_expirations(symbol):
     try:
@@ -66,7 +66,7 @@ st.title("🛡️ CapTrader Pro Stillhalter Dashboard")
 
 # --- SEKTION 1: MARKT-SCANNER ---
 st.subheader("💎 Top 10 High-IV Put Gelegenheiten (Delta 0.15)")
-st.info("💡 Scan-Ergebnisse werden 1 Std. gespeichert, um API-Limits zu schonen.")
+st.info("💡 Scan-Ergebnisse werden 1 Std. gespeichert.")
 
 if st.button("🚀 Markt-Scan jetzt starten"):
     watchlist = ["TSLA", "NVDA", "AMD", "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", "UPST", "HOOD", "SOFI"]
@@ -83,13 +83,12 @@ if st.button("🚀 Markt-Scan jetzt starten"):
                     st.metric("Yield p.a.", f"{row['yield']:.1f}%")
                     st.caption(f"Strike: {row['strike']:.1f}$ | {row['days']} T.")
     else:
-        st.error("Keine Daten empfangen. Bitte API-Limit prüfen.")
+        st.error("Keine Daten. API-Limit prüfen.")
 
 st.divider()
 
 # --- SEKTION 2: DEPOT & REPAIR-AMPEL ---
-st.subheader("💼 Mein Depot & Repair-Strategie")
-
+st.subheader("💼 Mein Depot & Strategie")
 col_depot, col_legende = st.columns([2, 1])
 
 full_portfolio = [
@@ -114,7 +113,6 @@ with col_legende:
         st.markdown("🟡 **REPAIR:** Kurs bis -20%. Call **Delta 0.10**.")
         st.markdown("🔵 **DEEP:** Kurs < -20%. Call **Delta 0.05**.")
 
-# Ampel-Statusanzeige mit Preisen
 st.write("---")
 p_cols = st.columns(4)
 for i, (_, row) in enumerate(st.session_state.portfolio.iterrows()):
@@ -127,7 +125,7 @@ for i, (_, row) in enumerate(st.session_state.portfolio.iterrows()):
 
 st.divider()
 
-# --- SEKTION 3: OPTIONS-FINDER MIT REFRESH ---
+# --- SEKTION 3: OPTIONS-FINDER MIT MANUELLEM REFRESH ---
 st.subheader("🔍 Options-Finder")
 c_f1, c_f2, c_f3 = st.columns([1, 2, 1])
 
@@ -136,7 +134,7 @@ with c_f1:
 with c_f2:
     find_ticker = st.text_input("Ticker-Symbol", value="HOOD").upper()
 with c_f3:
-    st.write(" ") # Spacer
+    st.write(" ") 
     refresh_options = st.button("🔄 Strikes aktualisieren")
 
 if find_ticker:
@@ -158,15 +156,18 @@ if find_ticker:
             chain_df = get_cached_chain(find_ticker, chosen_date, option_mode)
             
             if chain_df is not None:
-                # OTM Filterung
+                # OTM-Logik & Puffer-Berechnung
                 if option_mode == "put":
                     chain_df = chain_df[chain_df['strike'] < live_p].sort_values('strike', ascending=False)
                 else:
                     chain_df = chain_df[chain_df['strike'] > live_p].sort_values('strike', ascending=True)
                 
-                # Top 6 Ergebnisse anzeigen
                 for _, opt in chain_df.head(6).iterrows():
                     d_val = abs(opt['delta'])
+                    puffer = (abs(opt['strike'] - live_p) / live_p) * 100
                     risk = "🟢" if d_val < 0.16 else "🟡" if d_val < 0.31 else "🔴"
+                    
                     with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Bid: {opt['bid']:.2f}$"):
-                        st.write(f"Delta: {d_val:.2f} | Wahrscheinlichkeit: {(1-d_val)*100:.0f}%")
+                        st.write(f"**Delta:** {d_val:.2f}")
+                        st.write(f"**Sicherheitspuffer:** {puffer:.1f}% vom aktuellen Kurs")
+                        st.write(f"**Wahrscheinlichkeit (OTM):** {(1-d_val)*100:.0f}%")
