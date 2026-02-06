@@ -12,20 +12,24 @@ def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
-# --- 2. DATEN-ENGINE (ZENTRAL FÜR ALLE SEKTIONEN) ---
+# --- 2. DATEN-ENGINE (FIXED CACHING) ---
 @st.cache_data(ttl=900)
-def get_full_stock_info(symbol):
+def get_clean_data(symbol):
+    """Speichert nur einfache Datentypen im Cache, um Fehler zu vermeiden."""
     try:
         tk = yf.Ticker(symbol)
-        # Earnings Check: Prüft auf Termine in den nächsten 14 Tagen
+        inf = tk.fast_info
+        
+        # Earnings Check
         has_e, e_dt = False, None
         if tk.calendar is not None and 'Earnings Date' in tk.calendar:
             edt = tk.calendar['Earnings Date'][0].replace(tzinfo=None)
-            if 0 <= (edt - datetime.now()).days <= 14:
+            days_to = (edt - datetime.now()).days
+            if 0 <= days_to <= 14:
                 has_e, e_dt = True, edt.strftime('%d.%m.')
         
         return {
-            "p": tk.fast_info['last_price'], 
+            "p": inf['last_price'], 
             "d": list(tk.options), 
             "has_e": has_e, 
             "e_dt": e_dt
@@ -42,12 +46,12 @@ st.title("🛡️ CapTrader AI Market Scanner")
 
 # --- 4. SEKTION: SCANNER ---
 if st.button("🚀 Markt-Scan mit Earnings-Check starten"):
-    watchlist = ["TSLA", "NVDA", "AMD", "COIN", "MARA", "PLTR", "AFRM", "SQ", "HOOD", "SOFI", "MSTR"]
+    watchlist = ["TSLA", "NVDA", "AMD", "COIN", "MARA", "PLTR", "AFRM", "SQ", "HOOD", "SOFI", "MSTR", "AI"]
     res = []
     prog = st.progress(0)
     for i, t in enumerate(watchlist):
         prog.progress((i + 1) / len(watchlist))
-        data = get_full_stock_info(t)
+        data = get_clean_data(t)
         if data and data['d']:
             try:
                 tk = yf.Ticker(t)
@@ -79,11 +83,12 @@ st.subheader("💼 Depot-Status")
 depot_list = ["AFRM", "ELF", "ETSY", "GTLB", "HOOD", "NVO", "SE", "TTD"]
 d_cols = st.columns(4)
 for i, t in enumerate(depot_list):
-    d = get_full_stock_info(t)
-    if d:
+    data = get_clean_data(t)
+    if data:
         with d_cols[i % 4]:
-            color = "🔴" if d['has_e'] else "🟢"
-            st.write(f"{color} **{t}**: {d['p']:.2f}$" + (f" (Earnings: {d['e_dt']})" if d['has_e'] else ""))
+            icon = "🔴" if data['has_e'] else "🟢"
+            st.write(f"{icon} **{t}**: {data['p']:.2f}$")
+            if data['has_e']: st.caption(f"Earnings am {data['e_dt']}")
 
 st.write("---") 
 
@@ -94,17 +99,17 @@ with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
 with c2: t_in = st.text_input("Ticker", value="HOOD").upper()
 
 if t_in:
-    d = get_full_stock_info(t_in)
-    if d and d['d']:
-        if d['has_e']: st.error(f"⚠️ ACHTUNG: Earnings am {d['e_dt']}!")
-        st.write(f"Kurs: **{d['p']:.2f}$**")
-        sel_date = st.selectbox("Laufzeit", d['d'])
+    data = get_clean_data(t_in)
+    if data and data['d']:
+        if data['has_e']: st.error(f"⚠️ ACHTUNG: Earnings am {data['e_dt']}!")
+        st.write(f"Aktueller Kurs: **{data['p']:.2f}$**")
+        sel_date = st.selectbox("Laufzeit", data['d'])
         tk = yf.Ticker(t_in)
         ch = tk.option_chain(sel_date).puts if mode == "put" else tk.option_chain(sel_date).calls
         T = (datetime.strptime(sel_date, '%Y-%m-%d') - datetime.now()).days / 365
-        df = ch[ch['strike'] < d['p']].sort_values('strike', ascending=False).head(6) if mode == "put" else ch[ch['strike'] > d['p']].sort_values('strike', ascending=True).head(6)
+        df = ch[ch['strike'] < data['p']].sort_values('strike', ascending=False).head(6) if mode == "put" else ch[ch['strike'] > data['p']].sort_values('strike', ascending=True).head(6)
         for _, o in df.iterrows():
-            dl = calculate_bsm_delta(d['p'], o['strike'], T, o['impliedVolatility'] or 0.4, mode)
+            dl = calculate_bsm_delta(data['p'], o['strike'], T, o['impliedVolatility'] or 0.4, mode)
             with st.expander(f"Strike {o['strike']:.1f}$ | Prämie: {o['bid']:.2f}$"):
                 st.write(f"💰 **Einnahme: {o['bid']*100:.0f}$** | OTM: **{(1-abs(dl))*100:.1f}%**")
-                st.write(f"🎯 Puffer: {(abs(o['strike']-d['p'])/d['p'])*100:.1f}% | Delta: {abs(dl):.2f}")
+                st.write(f"🎯 Puffer: {(abs(o['strike']-data['p'])/data['p'])*100:.1f}% | Delta: {abs(dl):.2f}")
