@@ -15,10 +15,9 @@ def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     if option_type == 'call':
         return norm.cdf(d1)
-    else:
-        return norm.cdf(d1) - 1
+    return norm.cdf(d1) - 1
 
-# --- 2. SICHERHEITS-LOGIK ---
+# --- 2. SICHERHEITS-LOGIK (KEIN CACHING VON OBJEKTEN) ---
 def get_safety_metrics(symbol):
     try:
         tk = yf.Ticker(symbol)
@@ -34,20 +33,17 @@ def get_safety_metrics(symbol):
         return round(float(rsi), 1), bool(trend_ok)
     except: return 50.0, True
 
-@st.cache_data(ttl=900)
-def get_stock_data(symbol):
+@st.cache_data(ttl=600)
+def get_stock_basics(symbol):
+    """Gibt NUR einfache Datentypen zurück, um Caching-Fehler zu vermeiden."""
     try:
         tk = yf.Ticker(symbol)
+        # fast_info ist stabiler für den aktuellen Preis
         price = tk.fast_info['last_price']
         dates = list(tk.options)
-        earn = ""
-        try:
-            cal = tk.calendar
-            if cal is not None and 'Earnings Date' in cal:
-                earn = cal['Earnings Date'][0].strftime('%d.%m.')
-        except: pass
-        return price, dates, earn
-    except: return None, [], ""
+        return float(price), dates
+    except:
+        return None, []
 
 # --- 3. SIDEBAR ---
 st.sidebar.header("🛡️ Strategie-Filter")
@@ -64,7 +60,7 @@ if st.button("🚀 High-Safety Scan starten"):
     prog = st.progress(0)
     for i, t in enumerate(watchlist):
         prog.progress((i + 1) / len(watchlist))
-        price, dates, earn = get_stock_data(t)
+        price, dates = get_stock_basics(t)
         if price and dates:
             rsi, trend_ok = get_safety_metrics(t)
             if rsi >= rsi_min and trend_ok:
@@ -72,47 +68,54 @@ if st.button("🚀 High-Safety Scan starten"):
                     tk = yf.Ticker(t)
                     target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
                     chain = tk.option_chain(target_date).puts
-                    T = max((datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days, 1) / 365
+                    T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
                     chain['delta_val'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.4, 'put'), axis=1)
                     matches = chain[(chain['delta_val'].abs() <= (100-target_prob)/100) & (chain['bid'] > 0)]
                     if not matches.empty:
                         best = matches.sort_values('bid', ascending=False).iloc[0]
-                        y_pa = (best['bid'] / best['strike']) * (365 / (T*365)) * 100
+                        y_pa = (best['bid'] / best['strike']) * (1/T if T > 0 else 1) * 100
                         if y_pa >= min_yield_pa:
-                            results.append({'ticker': t, 'yield': y_pa, 'strike': best['strike'], 'rsi': rsi, 'price': price})
+                            results.append({'Ticker': t, 'Rendite p.a.': f"{y_pa:.1f}%", 'Strike': best['strike'], 'RSI': rsi, 'Kurs': f"{price:.2f}$"})
                 except: continue
     if results:
-        st.write(pd.DataFrame(results))
-    else: st.warning("Keine Treffer.")
+        st.table(pd.DataFrame(results))
+    else: st.warning("Keine Treffer unter diesen Einstellungen.")
 
-st.write("---")
+st.markdown("---")
 
-# --- 5. DEPOT-ÜBERWACHUNG ---
+# --- 5. DEPOT-ÜBERWACHUNG (VOLLSTÄNDIG) ---
 st.subheader("💼 Depot-Überwachung")
-depot_data = [{"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0}, {"Ticker": "HOOD", "Einstand": 120.0}] # Gekürzt für Übersicht
+depot_list = [
+    {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
+    {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
+    {"Ticker": "HOOD", "Einstand": 120.0}, {"Ticker": "NVO", "Einstand": 97.0},
+    {"Ticker": "RBRK", "Einstand": 70.0}, {"Ticker": "SE", "Einstand": 170.0},
+    {"Ticker": "TTD", "Einstand": 102.0}
+]
+
 d_cols = st.columns(3)
-for i, item in enumerate(depot_data):
-    price, _, _ = get_stock_data(item['Ticker'])
+for i, item in enumerate(depot_list):
+    price, _ = get_stock_basics(item['Ticker'])
     if price:
         perf = (price / item['Einstand'] - 1) * 100
         with d_cols[i % 3]:
             if perf < -15:
                 st.error(f"🚨 **{item['Ticker']}**: {price:.2f}$ ({perf:.1f}%)")
                 if st.button(f"Reparatur {item['Ticker']}", key=f"rep_{item['Ticker']}"):
-                    st.session_state['ticker_to_check'] = item['Ticker']
+                    st.session_state['active_ticker'] = item['Ticker']
             else:
                 st.success(f"✅ **{item['Ticker']}**: {price:.2f}$ ({perf:.1f}%)")
 
-st.write("---")
+st.markdown("---")
 
-# --- 6. EINZEL-CHECK & ROLL-LOGIK (DER FIX) ---
-st.subheader("🔍 Experten Einzel-Check & Roll-Management")
+# --- 6. EINZEL-CHECK (STRIKE-LOGIK FIX) ---
+st.subheader("🔍 Experten Einzel-Check")
 c1, c2 = st.columns([1, 2])
-with c1: opt_type = st.radio("Optionstyp", ["put", "call"], horizontal=True)
-with c2: t_input = st.text_input("Ticker Symbol", value=st.session_state.get('ticker_to_check', 'ELF')).upper()
+with c1: opt_type = st.radio("Typ", ["put", "call"], horizontal=True)
+with c2: t_input = st.text_input("Ticker Symbol", value=st.session_state.get('active_ticker', 'ELF')).upper()
 
 if t_input:
-    price, dates, earn = get_stock_data(t_input)
+    price, dates = get_stock_basics(t_input)
     if price and dates:
         rsi, trend_ok = get_safety_metrics(t_input)
         m1, m2, m3 = st.columns(3)
@@ -120,35 +123,31 @@ if t_input:
         m2.metric("RSI", rsi)
         m3.metric("Trend", "Stabil" if trend_ok else "Schwach")
         
-        d_sel = st.selectbox("Laufzeit wählen", dates, index=1 if len(dates)>1 else 0)
+        d_sel = st.selectbox("Laufzeit", dates)
         tk = yf.Ticker(t_input)
         try:
             chain = tk.option_chain(d_sel).puts if opt_type == "put" else tk.option_chain(d_sel).calls
-            T = max((datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days, 1) / 365
+            T = (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days / 365
             
-            # --- DER LOGIK-FIX ---
+            # --- DER LOGIK-FIX FÜR SINNVOLLE STRIKES ---
             if opt_type == "put":
-                # Zeige Puts vom aktuellen Kurs abwärts (OTM)
-                df_filtered = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
+                # Wir wollen Puts sehen, die UNTER oder knapp über dem Kurs liegen
+                df = chain[chain['strike'] <= price * 1.1].sort_values('strike', ascending=False)
             else:
-                # Zeige Calls vom aktuellen Kurs aufwärts (OTM)
-                df_filtered = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
+                # Wir wollen Calls sehen, die ÜBER oder knapp unter dem Kurs liegen
+                df = chain[chain['strike'] >= price * 0.9].sort_values('strike', ascending=True)
             
-            # Nur Zeilen mit Kursen
-            df_filtered = df_filtered[df_filtered['bid'] > 0].head(10)
+            df = df[df['bid'] > 0].head(10)
             
-            for _, opt in df_filtered.iterrows():
+            for _, opt in df.iterrows():
                 delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, opt_type)
                 abs_delta = abs(delta)
-                # Wahrscheinlichkeit OTM: 1 - Delta (bei Puts), Delta (bei Calls)
-                # Vereinfacht für die Anzeige:
-                prob = (1 - abs_delta) * 100
-                ampel = "🟢" if abs_delta <= 0.15 else "🟡" if abs_delta <= 0.35 else "🔴"
+                prob_otm = (1 - abs_delta) * 100
+                ampel = "🟢" if abs_delta <= 0.20 else "🟡" if abs_delta <= 0.40 else "🔴"
                 
-                with st.expander(f"{ampel} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$ | OTM-Wahrsch: {prob:.1f}%"):
+                with st.expander(f"{ampel} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$ | OTM: {prob_otm:.1f}%"):
                     ca, cb = st.columns(2)
-                    ca.write(f"💰 Cash-Einnahme: **{opt['bid']*100:.0f}$**")
-                    ca.write(f"🛡️ Abstand: **{(abs(opt['strike']-price)/price)*100:.1f}%**")
+                    ca.write(f"💰 Cash: **{opt['bid']*100:.0f}$**")
                     cb.write(f"📉 Delta: **{delta:.2f}**")
-                    cb.write(f"💼 Kapital: **{opt['strike']*100:,.0f}$**")
-        except: st.error("Daten konnten für diesen Typ nicht geladen werden.")
+        except:
+            st.warning("Keine passenden Optionsdaten gefunden.")
