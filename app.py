@@ -33,7 +33,6 @@ def get_safety_metrics(symbol):
 
 @st.cache_data(ttl=900)
 def get_stock_data(symbol):
-    """Extrahiert Preise ohne das Ticker-Objekt zu cachen (verhindert Fehler)."""
     try:
         tk = yf.Ticker(symbol)
         price = tk.fast_info['last_price']
@@ -53,7 +52,7 @@ target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 85)
 min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
 rsi_min = st.sidebar.slider("Minimum RSI", 20, 45, 30)
 
-# --- 4. HAUPTBEREICH: SCANNER ---
+# --- 4. SCANNER ---
 st.title("🛡️ CapTrader AI Market Guard Pro")
 
 if st.button("🚀 High-Safety Scan starten"):
@@ -93,7 +92,7 @@ if st.button("🚀 High-Safety Scan starten"):
 
 st.write("---")
 
-# --- 5. DEPOT-STATUS & REPARATUR-ALARM ---
+# --- 5. DEPOT-STATUS ---
 st.subheader("💼 Depot-Überwachung")
 depot_data = [
     {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
@@ -118,9 +117,9 @@ for i, item in enumerate(depot_data):
 
 st.write("---")
 
-# --- 6. EINZEL-CHECK & ROLL-LOGIK ---
+# --- 6. EINZEL-CHECK & REPARATUR-LOGIK (FIX FÜR ZU HOHE STRIKES) ---
 st.subheader("🔍 Experten Einzel-Check & Roll-Management")
-t_input = st.text_input("Ticker Symbol", value=st.session_state.get('ticker_to_check', 'HOOD')).upper()
+t_input = st.text_input("Ticker Symbol", value=st.session_state.get('ticker_to_check', 'ELF')).upper()
 
 if t_input:
     price, dates, earn = get_stock_data(t_input)
@@ -136,16 +135,19 @@ if t_input:
         try:
             chain = tk.option_chain(d_sel).puts
             T = max((datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days, 1) / 365
-            df = chain[chain['bid'] > 0].copy()
-            df = df.sort_values('strike', ascending=False)
             
-            for _, opt in df.head(8).iterrows():
+            # --- WICHTIGER FIX: Nur Strikes anzeigen, die relevant sind ---
+            # Wir filtern: Alle Strikes unter dem Kurs + die 3 nächsten Strikes über dem Kurs
+            df = chain[chain['bid'] > 0].copy()
+            df_relevant = df[df['strike'] <= price * 1.2].sort_values('strike', ascending=False)
+            
+            st.write(f"### Strategie-Check für {t_input}")
+            for _, opt in df_relevant.head(10).iterrows():
                 delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4)
                 abs_delta = abs(delta)
                 prob = (1 - abs_delta) * 100
                 ampel = "🟢" if abs_delta <= 0.15 else "🟡" if abs_delta <= 0.30 else "🔴"
                 
-                # Hier sind die Prämien wieder fest im Titel verbaut!
                 with st.expander(f"{ampel} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$ | OTM: {prob:.1f}%"):
                     ca, cb = st.columns(2)
                     ca.write(f"💰 Cash-Einnahme: **{opt['bid']*100:.0f}$**")
@@ -153,6 +155,6 @@ if t_input:
                     cb.write(f"📉 Delta: **{abs_delta:.2f}**")
                     cb.write(f"💼 Kapital: **{opt['strike']*100:,.0f}$**")
                     
-                    if abs_delta > 0.5:
-                        st.warning("⚠️ Position tief im Geld. Rollen auf eine spätere Laufzeit empfohlen.")
-        except: st.error("Optionsdaten konnten nicht geladen werden.")
+                    if opt['strike'] > price:
+                        st.warning("⚠️ Strike liegt über dem Kurs (ITM). Nur zum Rollen geeignet, um Zeitwert zu gewinnen.")
+        except: st.error("Fehler beim Laden der Optionskette.")
