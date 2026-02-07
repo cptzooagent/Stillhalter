@@ -47,7 +47,7 @@ def get_stock_data(symbol):
     except: return None, [], ""
 
 # --- 3. SIDEBAR ---
-st.sidebar.header("🛡️ Strategie & Sicherheit")
+st.sidebar.header("🛡️ Strategie-Filter")
 target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 85)
 min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
 rsi_min = st.sidebar.slider("Minimum RSI", 20, 45, 30)
@@ -70,8 +70,8 @@ if st.button("🚀 High-Safety Scan starten"):
                     target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
                     chain = tk.option_chain(target_date).puts
                     T = max((datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days, 1) / 365
-                    chain['delta'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.4), axis=1)
-                    matches = chain[(chain['delta'].abs() <= (100-target_prob)/100) & (chain['bid'] > 0)]
+                    chain['delta_val'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.4), axis=1)
+                    matches = chain[(chain['delta_val'].abs() <= (100-target_prob)/100) & (chain['bid'] > 0)]
                     if not matches.empty:
                         best = matches.sort_values('bid', ascending=False).iloc[0]
                         y_pa = (best['bid'] / best['strike']) * (365 / (T*365)) * 100
@@ -87,12 +87,11 @@ if st.button("🚀 High-Safety Scan starten"):
                 st.metric("Rendite p.a.", f"{row['yield']:.1f}%")
                 st.write(f"Strike: **{row['strike']:.1f}$**")
                 st.caption(f"Kurs: {row['price']:.2f}$ | RSI: {row['rsi']}")
-                if row['earn']: st.warning(f"📅 ER: {row['earn']}")
-    else: st.warning("Keine Treffer unter diesen Sicherheits-Vorgaben.")
+    else: st.warning("Keine Treffer unter diesen Einstellungen.")
 
 st.write("---")
 
-# --- 5. DEPOT-STATUS ---
+# --- 5. DEPOT-ÜBERWACHUNG ---
 st.subheader("💼 Depot-Überwachung")
 depot_data = [
     {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
@@ -110,16 +109,18 @@ for i, item in enumerate(depot_data):
         with d_cols[i % 3]:
             if perf < -15:
                 st.error(f"🚨 **{item['Ticker']}**: {price:.2f}$ ({perf:.1f}%)")
-                if st.button(f"Reparatur-Check {item['Ticker']}", key=f"btn_{item['Ticker']}"):
+                if st.button(f"Reparatur {item['Ticker']}", key=f"rep_{item['Ticker']}"):
                     st.session_state['ticker_to_check'] = item['Ticker']
             else:
                 st.success(f"✅ **{item['Ticker']}**: {price:.2f}$ ({perf:.1f}%)")
 
 st.write("---")
 
-# --- 6. EINZEL-CHECK & REPARATUR-LOGIK (FIX FÜR ZU HOHE STRIKES) ---
+# --- 6. EINZEL-CHECK & REPARATUR-LOGIK (FINALER FIX) ---
 st.subheader("🔍 Experten Einzel-Check & Roll-Management")
-t_input = st.text_input("Ticker Symbol", value=st.session_state.get('ticker_to_check', 'ELF')).upper()
+c1, c2 = st.columns([1, 2])
+with c1: opt_type = st.radio("Optionstyp", ["put", "call"], horizontal=True)
+with c2: t_input = st.text_input("Ticker Symbol", value=st.session_state.get('ticker_to_check', 'ELF')).upper()
 
 if t_input:
     price, dates, earn = get_stock_data(t_input)
@@ -127,23 +128,23 @@ if t_input:
         rsi, trend_ok = get_safety_metrics(t_input)
         m1, m2, m3 = st.columns(3)
         m1.metric("Kurs", f"{price:.2f}$")
-        m2.metric("RSI (14d)", rsi)
+        m2.metric("RSI", rsi)
         m3.metric("Trend", "Stabil" if trend_ok else "Schwach")
         
         d_sel = st.selectbox("Laufzeit wählen", dates, index=1 if len(dates)>1 else 0)
         tk = yf.Ticker(t_input)
         try:
-            chain = tk.option_chain(d_sel).puts
+            chain = tk.option_chain(d_sel).puts if opt_type == "put" else tk.option_chain(d_sel).calls
             T = max((datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days, 1) / 365
             
-            # --- WICHTIGER FIX: Nur Strikes anzeigen, die relevant sind ---
-            # Wir filtern: Alle Strikes unter dem Kurs + die 3 nächsten Strikes über dem Kurs
-            df = chain[chain['bid'] > 0].copy()
-            df_relevant = df[df['strike'] <= price * 1.2].sort_values('strike', ascending=False)
+            # Filterung: Nur Strikes im Umkreis von 30% des Kurses (verhindert 175$ Strikes bei 82$ Kurs)
+            df = chain[(chain['bid'] > 0) & (chain['strike'] > price * 0.5) & (chain['strike'] < price * 1.5)].copy()
             
-            st.write(f"### Strategie-Check für {t_input}")
-            for _, opt in df_relevant.head(10).iterrows():
-                delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4)
+            # Sortierung: Puts absteigend, Calls aufsteigend
+            df = df.sort_values('strike', ascending=(opt_type == "call"))
+            
+            for _, opt in df.head(8).iterrows():
+                delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=opt_type)
                 abs_delta = abs(delta)
                 prob = (1 - abs_delta) * 100
                 ampel = "🟢" if abs_delta <= 0.15 else "🟡" if abs_delta <= 0.30 else "🔴"
@@ -151,10 +152,7 @@ if t_input:
                 with st.expander(f"{ampel} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$ | OTM: {prob:.1f}%"):
                     ca, cb = st.columns(2)
                     ca.write(f"💰 Cash-Einnahme: **{opt['bid']*100:.0f}$**")
-                    ca.write(f"🛡️ Puffer: **{(abs(opt['strike']-price)/price)*100:.1f}%**")
+                    ca.write(f"🛡️ Abstand: **{(abs(opt['strike']-price)/price)*100:.1f}%**")
                     cb.write(f"📉 Delta: **{abs_delta:.2f}**")
-                    cb.write(f"💼 Kapital: **{opt['strike']*100:,.0f}$**")
-                    
-                    if opt['strike'] > price:
-                        st.warning("⚠️ Strike liegt über dem Kurs (ITM). Nur zum Rollen geeignet, um Zeitwert zu gewinnen.")
-        except: st.error("Fehler beim Laden der Optionskette.")
+                    cb.write(f"💼 Kapitalbedarf: **{opt['strike']*100:,.0f}$**")
+        except: st.error("Datenfehler bei der Auswahl.")
