@@ -14,6 +14,13 @@ def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
+def calculate_rsi(data, window=14):
+    delta = data.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=3600)
 def get_combined_watchlist():
@@ -27,20 +34,28 @@ def get_combined_watchlist():
     return list(set(sp500_nasdaq_mix))
 
 @st.cache_data(ttl=900)
-def get_stock_basics(symbol):
+def get_stock_data_full(symbol):
     try:
         tk = yf.Ticker(symbol)
+        # Basis-Info
         price = tk.fast_info['last_price']
         dates = list(tk.options)
+        
+        # RSI Berechnung
+        hist = tk.history(period="1mo")
+        rsi = calculate_rsi(hist['Close']).iloc[-1] if len(hist) > 14 else 50
+        
+        # Earnings
         earn_info = ""
         try:
             cal = tk.calendar
             if cal is not None and 'Earnings Date' in cal:
                 earn_info = cal['Earnings Date'][0].strftime('%d.%m.')
         except: pass
-        return price, dates, earn_info
+        
+        return price, dates, earn_info, rsi
     except:
-        return None, [], ""
+        return None, [], "", 50
 
 # --- UI: SEITENLEISTE ---
 st.sidebar.header("🛡️ Strategie-Einstellungen")
@@ -50,7 +65,6 @@ min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
 
 # --- HAUPTBEREICH ---
 st.title("🛡️ CapTrader AI Market Scanner")
-st.subheader("Fokus: S&P 500 & Nasdaq-100 Quality Stocks")
 
 # SEKTION 1: SCANNER
 if st.button("🚀 Kombi-Scan starten"):
@@ -62,7 +76,7 @@ if st.button("🚀 Kombi-Scan starten"):
     for i, t in enumerate(watchlist):
         status.text(f"Analysiere {t}...")
         prog.progress((i + 1) / len(watchlist))
-        price, dates, earn = get_stock_basics(t)
+        price, dates, earn, rsi = get_stock_data_full(t)
         
         if price and dates:
             try:
@@ -84,7 +98,7 @@ if st.button("🚀 Kombi-Scan starten"):
                         results.append({
                             'ticker': t, 'yield': best['y_pa'], 'strike': best['strike'], 
                             'bid': best['bid'], 'puffer': (abs(best['strike'] - price) / price) * 100, 
-                            'delta': abs(best['delta_val']), 'earn': earn
+                            'delta': abs(best['delta_val']), 'earn': earn, 'rsi': rsi
                         })
             except: continue
 
@@ -95,6 +109,7 @@ if st.button("🚀 Kombi-Scan starten"):
         for idx, row in enumerate(opp_df.to_dict('records')):
             with cols[idx % 4]:
                 st.markdown(f"### {row['ticker']}")
+                st.caption(f"RSI: {row['rsi']:.0f}")
                 if row['earn']: st.warning(f"⚠️ ER: {row['earn']}")
                 st.metric("Rendite p.a.", f"{row['yield']:.1f}%")
                 st.write(f"💰 Bid: **{row['bid']:.2f}$** | Puffer: **{row['puffer']:.1f}%**")
@@ -104,64 +119,74 @@ if st.button("🚀 Kombi-Scan starten"):
 
 st.write("---") 
 
-# SEKTION 2: DEPOT
-st.subheader("💼 Depot-Status")
+# SEKTION 2: DEPOT STATUS (SMART CALL VERBESSERUNG)
+st.subheader("💼 Smart Depot-Manager")
 depot_data = [
     {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
     {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
     {"Ticker": "GTM", "Einstand": 17.0}, {"Ticker": "HIMS", "Einstand": 37.0},
-    {"Ticker": "HOOD", "Einstand": 120.0}, {"Ticker": "JKS", "Einstand": 50.0},
+    {"Ticker": "HOOD", "Einstand": 82.82}, {"Ticker": "JKS", "Einstand": 50.0},
     {"Ticker": "NVO", "Einstand": 97.0}, {"Ticker": "RBRK", "Einstand": 70.0},
     {"Ticker": "SE", "Einstand": 170.0}, {"Ticker": "TTD", "Einstand": 102.0}
 ]
-p_cols = st.columns(4)
+
+p_cols = st.columns(3) # Breitere Spalten für mehr Infos
 for i, item in enumerate(depot_data):
-    price, _, earn = get_stock_basics(item['Ticker'])
+    price, _, earn, rsi = get_stock_data_full(item['Ticker'])
     if price:
         diff = (price / item['Einstand'] - 1) * 100
-        icon = "🟢" if diff >= 0 else "🟡" if diff > -20 else "🔵"
-        with p_cols[i % 4]:
-            st.write(f"{icon} **{item['Ticker']}**: {price:.2f}$ ({diff:.1f}%)")
-            if earn: st.caption(f"Earnings: {earn}")
+        with p_cols[i % 3]:
+            with st.container(border=True):
+                # Header mit Status-Farbe
+                color = "green" if diff >= 0 else "red"
+                st.markdown(f"#### {item['Ticker']} <span style='color:{color}'>({diff:.1f}%)</span>", unsafe_allow_html=True)
+                
+                # Indikatoren
+                c1, c2 = st.columns(2)
+                c1.metric("Kurs", f"{price:.2f}$")
+                c2.metric("RSI (14d)", f"{rsi:.0f}")
+                
+                # Call-Verkauf Logik
+                if diff > -5 and rsi > 65:
+                    st.success("✅ **Call-Verkauf empfohlen**")
+                    st.caption("Aktie stabil & RSI zeigt Überkauf.")
+                elif rsi < 35:
+                    st.info("💎 **Hold - RSI überverkauft**")
+                else:
+                    st.write("⏳ Keine Aktion (Neutral)")
+                
+                if earn: st.caption(f"📅 Earnings am: {earn}")
 
 st.write("---") 
 
-# SEKTION 3: EINZEL-CHECK (FIX: DELTA ANZEIGE)
+# SEKTION 3: EINZEL-CHECK
 st.subheader("🔍 Einzel-Check")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
 with c2: t_in = st.text_input("Ticker", value="NVDA").upper()
 
 if t_in:
-    price, dates, earn = get_stock_basics(t_in)
+    price, dates, earn, rsi = get_stock_data_full(t_in)
     if price and dates:
-        if earn: st.info(f"📅 Nächste Earnings: {earn}")
-        st.write(f"Aktueller Kurs: **{price:.2f}$**")
+        st.write(f"Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}**")
         d_sel = st.selectbox("Laufzeit wählen", dates)
         tk = yf.Ticker(t_in)
         
         try:
             chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
             T = (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days / 365
-            
-            # Delta für die gesamte Kette berechnen
             chain['delta_calc'] = chain.apply(lambda opt: calculate_bsm_delta(
                 price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode
             ), axis=1)
 
-            # Filter: Alles bis Delta 0.1
             if mode == "put":
                 filtered_df = chain[(chain['delta_calc'] <= -0.10) & (chain['strike'] < price)].sort_values('strike', ascending=False)
             else:
                 filtered_df = chain[(chain['delta_calc'] >= 0.10) & (chain['strike'] > price)].sort_values('strike', ascending=True)
             
-            st.caption(f"Zeige verfügbare Strikes bis Delta 0.10")
-            
             for _, opt in filtered_df.iterrows():
                 d_abs = abs(opt['delta_calc'])
                 risk = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.31 else "🔴"
-                
-                # Delta direkt im Titel des Expanders hinzugefügt
                 with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Delta: {d_abs:.2f} | Prämie: {opt['bid']:.2f}$"):
                     col_a, col_b = st.columns(2)
                     with col_a:
@@ -170,7 +195,6 @@ if t_in:
                         st.write(f"📊 **OTM-Wahrsch.:** {(1-d_abs)*100:.1f}%")
                     with col_b:
                         st.write(f"🎯 **Kurs-Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
-                        st.write(f"📉 **Delta:** {d_abs:.2f}") # Hier auch nochmal explizit
                         st.write(f"🌊 **Implizite Vola:** {int((opt['impliedVolatility'] or 0)*100)}%")
         except Exception as e:
-            st.error(f"Fehler beim Laden der Optionskette: {e}")
+            st.error(f"Fehler: {e}")
