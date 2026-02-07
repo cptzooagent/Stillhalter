@@ -6,28 +6,25 @@ from scipy.stats import norm
 from datetime import datetime
 import time
 
-# --- 1. SETUP ---
+# --- 1. SETUP & MATHEMATIK ---
 st.set_page_config(page_title="CapTrader AI Market Guard Pro", layout="wide")
 
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
-    """Präzise Delta-Berechnung nach Black-Scholes."""
+    """Präzise Delta-Berechnung für Stillhalter-Strategien."""
     if T <= 0 or sigma <= 0 or S <= 0: return 0.0
     try:
-        # Standard Black-Scholes Formel für d1
         d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
         if option_type == 'call':
             return float(norm.cdf(d1))
-        else: # Put Delta ist immer negativ
-            return float(norm.cdf(d1) - 1)
-    except Exception:
-        return 0.0
+        return float(norm.cdf(d1) - 1)
+    except: return 0.0
 
 @st.cache_data(ttl=600)
 def get_stock_basics(symbol):
+    """Holt Kursdaten, RSI und verfügbare Verfallstage."""
     try:
         tk = yf.Ticker(symbol)
-        inf = tk.fast_info
-        price = inf['last_price']
+        price = tk.fast_info['last_price']
         dates = []
         for _ in range(3):
             dates = tk.options
@@ -36,31 +33,30 @@ def get_stock_basics(symbol):
         hist = tk.history(period="3mo")
         rsi = 50.0
         if len(hist) >= 14:
-            delta_p = hist['Close'].diff()
-            up = delta_p.clip(lower=0).rolling(window=14).mean()
-            down = -delta_p.clip(upper=0).rolling(window=14).mean()
+            delta = hist['Close'].diff()
+            up = delta.clip(lower=0).rolling(window=14).mean()
+            down = -delta.clip(upper=0).rolling(window=14).mean()
             rsi = 100 - (100 / (1 + up/down)).iloc[-1]
-        trend = "Stabil" if price > hist['Close'].tail(50).mean() * 0.95 else "Schwach"
-        return float(price), list(dates), round(float(rsi), 1), trend
-    except:
-        return None, [], 50.0, "Fehler"
+        return float(price), list(dates), round(float(rsi), 1)
+    except: return None, [], 50.0
 
-# --- 2. SIDEBAR ---
+# --- 2. SIDEBAR (STEUERUNG) ---
 st.sidebar.header("🛡️ Strategie-Filter")
 target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 85)
 min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
-rsi_min = st.sidebar.slider("Minimum RSI", 20, 45, 30)
+rsi_min = st.sidebar.slider("Minimum RSI für Puts", 20, 45, 30)
 
 st.title("🛡️ CapTrader AI Market Guard Pro")
 
-# --- 3. SCANNER ---
-if st.button("🚀 Markt-Scan starten"):
+# --- 3. MARKT-SCANNER ---
+st.subheader("🚀 Markt-Chancen Scanner")
+if st.button("Markt-Scan jetzt starten"):
     watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AMD", "NFLX", "COIN", "PLTR", "HOOD", "MSTR", "UBER", "DIS", "PYPL"]
     results = []
     prog = st.progress(0)
     for i, t in enumerate(watchlist):
         prog.progress((i + 1) / len(watchlist))
-        price, dates, rsi, trend = get_stock_basics(t)
+        price, dates, rsi = get_stock_basics(t)
         if price and dates and rsi >= rsi_min:
             try:
                 tk = yf.Ticker(t)
@@ -76,67 +72,67 @@ if st.button("🚀 Markt-Scan starten"):
                         results.append({'Ticker': t, 'Rendite p.a.': f"{y_pa:.1f}%", 'Strike': best['strike'], 'RSI': rsi, 'Kurs': f"{price:.2f}$"})
             except: continue
     if results: st.table(pd.DataFrame(results))
-    else: st.warning("Keine Treffer im Scan.")
+    else: st.warning("Keine Treffer mit aktuellen Filtern.")
 
 st.markdown("---")
 
-# --- 4. DEPOT ---
-st.subheader("💼 Depot-Status")
-depot_data = [{"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0}, {"Ticker": "HOOD", "Einstand": 120.0}, {"Ticker": "SE", "Einstand": 170.0}]
-d_cols = st.columns(len(depot_data))
+# --- 4. DEPOT-ÜBERWACHUNG ---
+st.subheader("💼 Depot-Überwachung")
+depot_data = [
+    {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
+    {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
+    {"Ticker": "HOOD", "Einstand": 120.0}, {"Ticker": "NVO", "Einstand": 97.0},
+    {"Ticker": "RBRK", "Einstand": 70.0}, {"Ticker": "SE", "Einstand": 170.0},
+    {"Ticker": "TTD", "Einstand": 102.0}
+]
+
+d_cols = st.columns(3)
 for i, item in enumerate(depot_data):
-    price, _, _, _ = get_stock_basics(item['Ticker'])
+    price, _, _ = get_stock_basics(item['Ticker'])
     if price:
         perf = (price / item['Einstand'] - 1) * 100
-        with d_cols[i]:
-            if perf < -15: st.error(f"🚨 {item['Ticker']}: {perf:.1f}%")
-            else: st.success(f"✅ {item['Ticker']}: {perf:.1f}%")
+        with d_cols[i % 3]:
+            if perf < -15:
+                st.error(f"🚨 **{item['Ticker']}**: {price:.2f}$ ({perf:.1f}%)")
+                if st.button(f"Reparieren: {item['Ticker']}", key=f"btn_{item['Ticker']}"):
+                    st.session_state['active_ticker'] = item['Ticker']
+            else:
+                st.success(f"✅ **{item['Ticker']}**: {price:.2f}$ ({perf:.1f}%)")
 
 st.markdown("---")
 
-# --- 5. EINZEL-CHECK (KORRIGIERT) ---
+# --- 5. EXPERTEN EINZEL-CHECK (STRIKE-KORREKTUR) ---
 st.subheader("🔍 Experten Einzel-Check")
 c1, c2 = st.columns([1, 2])
-with c1: opt_type = st.radio("Optionstyp", ["put", "call"], horizontal=True)
-with c2: t_input = st.text_input("Ticker Symbol", value="ELF").upper()
+with c1: opt_type = st.radio("Typ", ["put", "call"], horizontal=True)
+with c2: t_input = st.text_input("Ticker Symbol", value=st.session_state.get('active_ticker', 'ELF')).upper()
 
 if t_input:
-    price, dates, rsi, trend = get_stock_basics(t_input)
+    price, dates, rsi = get_stock_basics(t_input)
     if price and dates:
-        st.write(f"**Kurs:** {price:.2f}$ | **RSI:** {rsi}")
-        d_sel = st.selectbox("Laufzeit wählen", dates)
+        st.info(f"Kurs: **{price:.2f}$** | RSI: **{rsi}**")
+        d_sel = st.selectbox("Laufzeit", dates)
         try:
             tk = yf.Ticker(t_input)
-            chain = tk.option_chain(d_sel).puts if opt_type == "put" else tk.option_chain(d_sel).calls
+            chain = tk.option_chain(d_sel)
+            df = chain.puts if opt_type == "put" else chain.calls
             T = (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days / 365
             
-            # Sortierung: Puts abwärts vom Kurs, Calls aufwärts
+            # --- STRIKE LOGIK ---
             if opt_type == "put":
-                df = chain[chain['strike'] <= price * 1.1].sort_values('strike', ascending=False)
+                # Puts: Strikes von Kurs abwärts (OTM)
+                display_df = df[df['strike'] <= price * 1.05].sort_values('strike', ascending=False)
             else:
-                df = chain[chain['strike'] >= price * 0.9].sort_values('strike', ascending=True)
+                # Calls: Strikes von Kurs aufwärts (OTM)
+                display_df = df[df['strike'] >= price * 0.95].sort_values('strike', ascending=True)
             
-            for _, opt in df.head(10).iterrows():
-                # Berechnung des Deltas mit realer Volatilität
-                iv = opt['impliedVolatility'] if opt['impliedVolatility'] > 0 else 0.4
-                delta = calculate_bsm_delta(price, opt['strike'], T, iv, opt_type)
+            for _, opt in display_df.head(10).iterrows():
+                delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, opt_type)
+                otm = (1 - abs(delta)) * 100
+                is_itm = (opt_type == "put" and opt['strike'] > price) or (opt_type == "call" and opt['strike'] < price)
+                label = "🔴 ITM" if is_itm else "🟢 OTM"
                 
-                # OTM Wahrscheinlichkeit basierend auf Delta
-                prob_otm = (1 - abs(delta)) * 100
-                
-                # Dynamische Ampel-Logik
-                if opt_type == "put":
-                    is_itm = opt['strike'] > price
-                else:
-                    is_itm = opt['strike'] < price
-                
-                if is_itm:
-                    ampel = "🔴 (ITM)"
-                elif abs(delta) > 0.35:
-                    ampel = "🟡"
-                else:
-                    ampel = "🟢"
-                
-                with st.expander(f"{ampel} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$ | OTM: {prob_otm:.1f}%"):
-                    st.write(f"**Delta:** {delta:.2f} | **Einnahme:** {opt['bid']*100:.0f}$ | **Vola (IV):** {iv:.1%}")
-        except: st.error("Fehler beim Laden.")
+                with st.expander(f"{label} Strike {opt['strike']:.1f}$ | Bid: {opt['bid']}$ | Delta: {delta:.2f}"):
+                    st.write(f"OTM-Wahrscheinlichkeit: **{otm:.1f}%**")
+                    st.write(f"Kapitalbedarf: **{opt['strike']*100:,.0f}$**")
+        except: st.error("Datenfehler
