@@ -123,7 +123,7 @@ if st.button("🚀 Kombi-Scan starten"):
 
 st.write("---") 
 
-# SEKTION 2: DEPOT STATUS (ROBUST GEGEN FEHLER)
+# SEKTION 2: DEPOT STATUS
 st.subheader("💼 Smart Depot-Manager")
 depot_data = [
     {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
@@ -140,7 +140,6 @@ for i, item in enumerate(depot_data):
     if price:
         diff = (price / item['Einstand'] - 1) * 100
         with p_cols[i % 3]:
-            # Expander statt Container(border=True) für maximale Kompatibilität
             with st.expander(f"{item['Ticker']} ({diff:.1f}%)", expanded=True):
                 if earn_dt is not None:
                     try:
@@ -162,7 +161,7 @@ for i, item in enumerate(depot_data):
 
 st.write("---") 
 
-# SEKTION 3: EINZEL-CHECK
+# SEKTION 3: EINZEL-CHECK (FIX: DELTA WIEDER DA)
 st.subheader("🔍 Einzel-Check")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
@@ -178,6 +177,8 @@ if t_in:
         try:
             chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
             T = (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days / 365
+            
+            # Delta für die Filterung und Anzeige berechnen
             chain['delta_calc'] = chain.apply(lambda opt: calculate_bsm_delta(
                 price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode
             ), axis=1)
@@ -190,6 +191,8 @@ if t_in:
             for _, opt in filtered_df.iterrows():
                 d_abs = abs(opt['delta_calc'])
                 risk = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.31 else "🔴"
+                
+                # Delta im Titel des Expanders hinzugefügt
                 with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Delta: {d_abs:.2f} | Bid: {opt['bid']:.2f}$"):
                     col_a, col_b = st.columns(2)
                     with col_a:
@@ -197,6 +200,7 @@ if t_in:
                         st.write(f"📊 **OTM:** {(1-d_abs)*100:.1f}%")
                     with col_b:
                         st.write(f"🎯 **Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
+                        st.write(f"📉 **Delta:** {d_abs:.2f}")
                         st.write(f"🌊 **IV:** {int((opt['impliedVolatility'] or 0)*100)}%")
         except Exception as e:
             st.error(f"Fehler: {e}")
