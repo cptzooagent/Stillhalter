@@ -33,10 +33,10 @@ def get_safety_metrics(symbol):
 
 @st.cache_data(ttl=900)
 def get_stock_data(symbol):
+    """Extrahiert Preise ohne das Ticker-Objekt zu cachen (verhindert Fehler)."""
     try:
         tk = yf.Ticker(symbol)
-        info = tk.fast_info
-        price = info['last_price']
+        price = tk.fast_info['last_price']
         dates = list(tk.options)
         earn = ""
         try:
@@ -110,17 +110,17 @@ for i, item in enumerate(depot_data):
         perf = (price / item['Einstand'] - 1) * 100
         with d_cols[i % 3]:
             if perf < -15:
-                st.error(f"🚨 **{item['Ticker']}**: {price:.2f}$ ({perf:.1f}%) - REPARATUR!")
-                if st.button(f"Roll-Check {item['Ticker']}", key=f"roll_{item['Ticker']}"):
-                    st.session_state['repair_ticker'] = item['Ticker']
+                st.error(f"🚨 **{item['Ticker']}**: {price:.2f}$ ({perf:.1f}%)")
+                if st.button(f"Reparatur-Check {item['Ticker']}", key=f"btn_{item['Ticker']}"):
+                    st.session_state['ticker_to_check'] = item['Ticker']
             else:
                 st.success(f"✅ **{item['Ticker']}**: {price:.2f}$ ({perf:.1f}%)")
 
 st.write("---")
 
-# --- 6. EINZEL-CHECK & REPARATUR-LOGIK ---
+# --- 6. EINZEL-CHECK & ROLL-LOGIK ---
 st.subheader("🔍 Experten Einzel-Check & Roll-Management")
-t_input = st.text_input("Ticker Symbol", value=st.session_state.get('repair_ticker', 'HOOD')).upper()
+t_input = st.text_input("Ticker Symbol", value=st.session_state.get('ticker_to_check', 'HOOD')).upper()
 
 if t_input:
     price, dates, earn = get_stock_data(t_input)
@@ -131,11 +131,6 @@ if t_input:
         m2.metric("RSI (14d)", rsi)
         m3.metric("Trend", "Stabil" if trend_ok else "Schwach")
         
-        
-
-[Image of a relative strength index chart]
-
-
         d_sel = st.selectbox("Laufzeit wählen", dates, index=1 if len(dates)>1 else 0)
         tk = yf.Ticker(t_input)
         try:
@@ -144,13 +139,13 @@ if t_input:
             df = chain[chain['bid'] > 0].copy()
             df = df.sort_values('strike', ascending=False)
             
-            st.write("### Verfügbare Strikes & Sicherheits-Ampel")
             for _, opt in df.head(8).iterrows():
                 delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4)
                 abs_delta = abs(delta)
                 prob = (1 - abs_delta) * 100
                 ampel = "🟢" if abs_delta <= 0.15 else "🟡" if abs_delta <= 0.30 else "🔴"
                 
+                # Hier sind die Prämien wieder fest im Titel verbaut!
                 with st.expander(f"{ampel} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$ | OTM: {prob:.1f}%"):
                     ca, cb = st.columns(2)
                     ca.write(f"💰 Cash-Einnahme: **{opt['bid']*100:.0f}$**")
@@ -158,7 +153,6 @@ if t_input:
                     cb.write(f"📉 Delta: **{abs_delta:.2f}**")
                     cb.write(f"💼 Kapital: **{opt['strike']*100:,.0f}$**")
                     
-                    # Spezial-Logik für Reparatur (Rollen)
                     if abs_delta > 0.5:
-                        st.warning("⚠️ Diese Option ist 'In-the-Money'. Ein Rollen auf eine spätere Laufzeit mit niedrigerem Strike wird empfohlen.")
+                        st.warning("⚠️ Position tief im Geld. Rollen auf eine spätere Laufzeit empfohlen.")
         except: st.error("Optionsdaten konnten nicht geladen werden.")
