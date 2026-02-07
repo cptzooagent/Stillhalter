@@ -12,15 +12,17 @@ st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     T = max(T, 0.0001) 
     sigma = max(sigma, 0.0001)
-    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    if option_type == 'call':
-        return norm.cdf(d1)
-    return norm.cdf(d1) - 1
+    try:
+        d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+        if option_type == 'call':
+            return float(norm.cdf(d1))
+        return float(norm.cdf(d1) - 1)
+    except:
+        return 0.0
 
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=3600)
 def get_combined_watchlist():
-    # Saubere Mischung aus S&P 500 & Nasdaq Quality Stocks
     return [
         "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AVGO", "ADBE", "NFLX", 
         "AMD", "INTC", "QCOM", "AMAT", "TXN", "MU", "ISRG", "LRCX", "PANW", "SNPS",
@@ -46,7 +48,7 @@ def get_stock_basics(symbol):
     except:
         return None, [], ""
 
-# --- UI: SEITENLEISTE (Preis-Korridor & Strategie) ---
+# --- UI: SEITENLEISTE ---
 st.sidebar.header("🛡️ Strategie-Einstellungen")
 target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 85)
 max_delta = (100 - target_prob) / 100
@@ -61,7 +63,7 @@ st.title("🛡️ CapTrader AI Market Scanner")
 st.write(f"Suche im Korridor **{min_stock_p}$ - {max_stock_p}$** | Delta ≤ **{max_delta:.2f}**")
 
 # SEKTION 1: SCANNER
-if st.button("🚀 Markt-Scan (S&P 500 & Nasdaq) starten"):
+if st.button("🚀 Markt-Scan starten"):
     watchlist = get_combined_watchlist()
     results = []
     prog = st.progress(0)
@@ -72,20 +74,19 @@ if st.button("🚀 Markt-Scan (S&P 500 & Nasdaq) starten"):
         prog.progress((i + 1) / len(watchlist))
         price, dates, earn = get_stock_basics(t)
         
-        # PREIS-FILTER GREIFT HIER
         if price and min_stock_p <= price <= max_stock_p and dates:
             try:
                 tk = yf.Ticker(t)
                 target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
                 chain = tk.option_chain(target_date).puts
-                T = max((datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days, 1) / 365
+                days_to_expiry = max((datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days, 1)
+                T = days_to_expiry / 365
                 
                 chain['delta_val'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.4), axis=1)
                 safe_opts = chain[chain['delta_val'].abs() <= max_delta].copy()
                 
                 if not safe_opts.empty:
-                    days = max(1, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days)
-                    safe_opts['y_pa'] = (safe_opts['bid'] / safe_opts['strike']) * (365 / days) * 100
+                    safe_opts['y_pa'] = (safe_opts['bid'] / safe_opts['strike']) * (365 / days_to_expiry) * 100
                     matches = safe_opts[safe_opts['y_pa'] >= min_yield_pa]
                     
                     if not matches.empty:
@@ -110,9 +111,9 @@ if st.button("🚀 Markt-Scan (S&P 500 & Nasdaq) starten"):
                 st.metric("Rendite p.a.", f"{row['yield']:.1f}%")
                 st.write(f"💰 Bid: **{row['bid']:.2f}$** | Strike: **{row['strike']:.1f}$**")
                 st.write(f"🛡️ Puffer: **{row['puffer']:.1f}%** (Δ {row['delta']:.2f})")
-                st.info(f"💼 Kapitalbedarf: **{row['capital']:,.0f}$**")
+                st.info(f"💼 Kapital: **{row['capital']:,.0f}$**")
     else:
-        st.warning("Keine Treffer im Preis-Korridor gefunden.")
+        st.warning("Keine Treffer gefunden.")
 
 st.write("---") 
 
@@ -142,15 +143,14 @@ st.write("---")
 st.subheader("🔍 Einzel-Check")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
-with c2: t_in = st.text_input("Ticker", value="NVDA").upper()
+with c2: t_in = st.text_input("Ticker Symbol", value="NVDA").upper()
 
 if t_in:
     price, dates, earn = get_stock_basics(t_in)
     if price and dates:
         if earn: st.info(f"📅 Nächste Earnings: {earn}")
-        st.write(f"Aktueller Kurs: **{price:.2f}$**")
-        default_idx = 1 if len(dates) > 1 else 0
-        d_sel = st.selectbox("Laufzeit wählen", dates, index=default_idx)
+        st.write(f"Kurs: **{price:.2f}$**")
+        d_sel = st.selectbox("Laufzeit wählen", dates, index=min(1, len(dates)-1))
         tk = yf.Ticker(t_in)
         chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
         T = max((datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days, 1) / 365
@@ -167,10 +167,8 @@ if t_in:
             with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$"):
                 col_a, col_b = st.columns(2)
                 with col_a:
-                    st.write(f"💰 **Optionspreis:** {opt['bid']:.2f}$")
-                    st.write(f"💵 **Cash-Einnahme:** {opt['bid']*100:.0f}$")
+                    st.write(f"💵 **Einnahme:** {opt['bid']*100:.0f}$")
                     st.write(f"📊 **OTM-Wahrsch.:** {(1-abs(delta))*100:.1f}%")
                 with col_b:
-                    st.write(f"🎯 **Kurs-Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
+                    st.write(f"🎯 **Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
                     st.write(f"📉 **Delta:** {abs(delta):.2f}")
-                    st.write(f"💼 **Kapitalbedarf:** {opt['strike']*100:,.0f}$")
