@@ -74,7 +74,7 @@ if st.button("🚀 High-Safety Scan starten"):
         st.table(pd.DataFrame(results))
     else: st.warning("Keine Treffer im Scan gefunden.")
 
-st.divider()
+st.markdown("---")
 
 # --- 4. DEPOT-ÜBERWACHUNG ---
 st.subheader("💼 Depot-Status")
@@ -99,12 +99,12 @@ for i, item in enumerate(depot_data):
             else:
                 st.success(f"✅ **{item['Ticker']}**: {price:.2f}$ ({perf:.1f}%)")
 
-st.divider()
+st.markdown("---")
 
-# --- 5. EINZEL-CHECK ---
+# --- 5. EXPERTEN EINZEL-CHECK ---
 st.subheader("🔍 Experten Einzel-Check")
 c1, c2 = st.columns([1, 2])
-with c1: opt_type = st.radio("Typ", ["put", "call"], horizontal=True)
+with c1: opt_type = st.radio("Optionstyp", ["put", "call"], horizontal=True)
 with c2: t_input = st.text_input("Ticker Symbol", value=st.session_state.get('active_ticker', 'ELF')).upper()
 
 if t_input:
@@ -121,7 +121,7 @@ if t_input:
             chain = tk.option_chain(d_sel).puts if opt_type == "put" else tk.option_chain(d_sel).calls
             T = (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days / 365
             
-            # Strike-Sortierung: Puts abwärts, Calls aufwärts
+            # Strike-Filter für Puts (abwärts) und Calls (aufwärts)
             if opt_type == "put":
                 df = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
             else:
@@ -130,7 +130,7 @@ if t_input:
             df = df[df['bid'] > 0].head(10)
             
             if df.empty:
-                st.warning("Keine passenden Optionsdaten gefunden.")
+                st.warning("Keine passenden Optionsdaten für diesen Bereich gefunden.")
             else:
                 for _, opt in df.iterrows():
                     delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, opt_type)
@@ -144,4 +144,4 @@ if t_input:
                         col_b.write(f"📉 Delta: **{delta:.2f}**")
                         col_b.write(f"💼 Kapital: **{opt['strike']*100:,.0f}$**")
         except:
-            st.error("Optionsdaten konnten nicht geladen werden.")
+            st.error("Fehler beim Laden der Optionskette.")
