@@ -104,7 +104,7 @@ st.divider()
 # --- 5. EINZEL-CHECK (ROBUST & KORREKT) ---
 st.subheader("🔍 Experten Einzel-Check")
 c1, c2 = st.columns([1, 2])
-with c1: opt_type = st.radio("Typ", ["put", "call"], horizontal=True)
+with c1: opt_type = st.radio("Optionstyp", ["put", "call"], horizontal=True)
 with c2: t_input = st.text_input("Ticker Symbol", value=st.session_state.get('active_ticker', 'ELF')).upper()
 
 if t_input:
@@ -121,10 +121,12 @@ if t_input:
             chain = tk.option_chain(d_sel).puts if opt_type == "put" else tk.option_chain(d_sel).calls
             T = (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days / 365
             
-            # STRIKE-FILTER LOGIK FÜR SINNVOLLE ANZEIGE
+            # --- DER LOGIK-FIX FÜR DIE STRIKES ---
             if opt_type == "put":
+                # Puts: Zeige Strikes vom aktuellen Kurs ABWÄRTS
                 df = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
             else:
+                # Calls: Zeige Strikes vom aktuellen Kurs AUFWÄRTS
                 df = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
             
             df = df[df['bid'] > 0].head(10)
@@ -139,7 +141,8 @@ if t_input:
                     
                     with st.expander(f"{ampel} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$ | OTM: {prob_otm:.1f}%"):
                         col_a, col_b = st.columns(2)
-                        col_a.write(f"💰 Cash-Einnahme: **{opt['bid']*100:.0f}$**")
+                        col_a.write(f"💰 Einnahme: **{opt['bid']*100:.0f}$**")
+                        col_a.write(f"🛡️ Puffer: **{(abs(opt['strike']-price)/price)*100:.1f}%**")
                         col_b.write(f"📉 Delta: **{delta:.2f}**")
                         col_b.write(f"💼 Kapital: **{opt['strike']*100:,.0f}$**")
         except:
