@@ -4,122 +4,156 @@ import yfinance as yf
 import numpy as np
 from scipy.stats import norm
 from datetime import datetime
+import random
 
-# --- 1. SETUP & MATHE ---
-st.set_page_config(page_title="Market Guard Pro", layout="wide")
+# --- SETUP ---
+st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
+# --- 1. MATHE: DELTA-BERECHNUNG ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
-    """Präzise Delta-Berechnung mit Schutz vor Nullwerten."""
-    T = max(T, 0.0001)
-    sig = sigma if (sigma and sigma > 0.05) else 0.45
-    try:
-        d1 = (np.log(S / K) + (r + 0.5 * sig**2) * T) / (sig * np.sqrt(T))
-        val = norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
-        return round(float(val), 2)
-    except:
-        return -0.35 if option_type == 'put' else 0.35
+    if T <= 0 or sigma <= 0: return 0
+    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
-@st.cache_data(ttl=300)
-def get_full_data(symbol):
-    """Holt Kurs, Optionen und Earnings."""
+# --- 2. DATEN-FUNKTIONEN ---
+@st.cache_data(ttl=3600)
+def get_combined_watchlist():
+    # Kombination aus S&P 500 Blue Chips und Nasdaq-100 Tech-Favoriten
+    sp500_nasdaq_mix = [
+        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AVGO", "ADBE", "NFLX", 
+        "AMD", "INTC", "QCOM", "AMAT", "TXN", "MU", "ISRG", "LRCX", "PANW", "SNPS",
+        "LLY", "V", "MA", "JPM", "WMT", "XOM", "UNH", "PG", "ORCL", "COST", 
+        "ABBV", "BAC", "KO", "PEP", "CRM", "WFC", "DIS", "CAT", "AXP", "IBM",
+        "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", "UPST", "HOOD", "SOFI", "MSTR"
+    ]
+    return list(set(sp500_nasdaq_mix)) # Duplikate entfernen
+
+@st.cache_data(ttl=900)
+def get_stock_basics(symbol):
     try:
         tk = yf.Ticker(symbol)
         price = tk.fast_info['last_price']
         dates = list(tk.options)
-        earn_date = "N/A"
+        earn_info = ""
         try:
             cal = tk.calendar
             if cal is not None and 'Earnings Date' in cal:
-                earn_date = cal['Earnings Date'][0].strftime('%d.%m.')
+                earn_info = cal['Earnings Date'][0].strftime('%d.%m.')
         except: pass
-        return price, dates, earn_date
+        return price, dates, earn_info
     except:
-        return None, [], "N/A"
+        return None, [], ""
 
-# --- 2. SIDEBAR ---
-st.sidebar.header("🛡️ Strategie-Filter")
-target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 85)
+# --- UI: SEITENLEISTE ---
+st.sidebar.header("🛡️ Strategie-Einstellungen")
+target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 83)
+max_delta = (100 - target_prob) / 100
 min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
 
-st.title("🛡️ CapTrader AI Market Guard Pro")
+# --- HAUPTBEREICH ---
+st.title("🛡️ CapTrader AI Market Scanner")
+st.subheader("Fokus: S&P 500 & Nasdaq-100 Quality Stocks")
 
-# --- 3. MARKT-SCANNER ---
-if st.button("🚀 Markt-Scan starten"):
-    watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AMD", "NFLX", "COIN", "PLTR", "HOOD", "AFRM", "SQ", "RIVN"]
+# SEKTION 1: SCANNER
+if st.button("🚀 Kombi-Scan starten"):
+    watchlist = get_combined_watchlist()
     results = []
     prog = st.progress(0)
+    status = st.empty()
+    
     for i, t in enumerate(watchlist):
+        status.text(f"Analysiere {t}...")
         prog.progress((i + 1) / len(watchlist))
-        p, dates, earn = get_full_data(t)
-        if p and dates:
+        price, dates, earn = get_stock_basics(t)
+        
+        if price and dates:
             try:
                 tk = yf.Ticker(t)
-                d_target = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
-                chain = tk.option_chain(d_target).puts
-                days = max((datetime.strptime(d_target, '%Y-%m-%d') - datetime.now()).days, 1)
-                chain['delta'] = chain.apply(lambda r: calculate_bsm_delta(p, r['strike'], days/365, r['impliedVolatility']), axis=1)
-                m = chain[(chain['delta'].abs() <= (100-target_prob)/100) & (chain['bid'] > 0)].copy()
-                if not m.empty:
-                    m['y'] = (m['bid'] / m['strike']) * (365 / days) * 100
-                    best = m.sort_values('y', ascending=False).iloc[0]
-                    if best['y'] >= min_yield_pa:
-                        results.append({"Ticker": t, "Rendite": f"{best['y']:.1f}%", "Strike": best['strike'], "Kurs": f"{p:.2f}$", "Earnings": earn})
+                target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
+                chain = tk.option_chain(target_date).puts
+                T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
+                
+                chain['delta_val'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.4), axis=1)
+                safe_opts = chain[chain['delta_val'].abs() <= max_delta].copy()
+                
+                if not safe_opts.empty:
+                    days = max(1, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days)
+                    safe_opts['y_pa'] = (safe_opts['bid'] / safe_opts['strike']) * (365 / days) * 100
+                    matches = safe_opts[safe_opts['y_pa'] >= min_yield_pa]
+                    
+                    if not matches.empty:
+                        best = matches.sort_values('y_pa', ascending=False).iloc[0]
+                        results.append({
+                            'ticker': t, 'yield': best['y_pa'], 'strike': best['strike'], 
+                            'bid': best['bid'], 'puffer': (abs(best['strike'] - price) / price) * 100, 
+                            'delta': abs(best['delta_val']), 'earn': earn
+                        })
             except: continue
-    if results: st.dataframe(pd.DataFrame(results), use_container_width=True)
-    else: st.warning("Keine Treffer.")
 
-st.markdown("---")
+    status.text("Kombinations-Scan abgeschlossen!")
+    if results:
+        opp_df = pd.DataFrame(results).sort_values('yield', ascending=False).head(12)
+        cols = st.columns(4)
+        for idx, row in enumerate(opp_df.to_dict('records')):
+            with cols[idx % 4]:
+                st.markdown(f"### {row['ticker']}")
+                if row['earn']: st.warning(f"⚠️ ER: {row['earn']}")
+                st.metric("Rendite p.a.", f"{row['yield']:.1f}%")
+                st.write(f"💰 Bid: **{row['bid']:.2f}$** | Puffer: **{row['puffer']:.1f}%**")
+                st.write(f"🎯 Strike: **{row['strike']:.1f}$** (Δ {row['delta']:.2f})")
+    else:
+        st.warning(f"Keine Treffer für {min_yield_pa}% Rendite.")
 
-# --- 4. DEPOT-STATUS ---
+st.write("---") 
+
+# SEKTION 2: DEPOT
 st.subheader("💼 Depot-Status")
-depot = ["AFRM", "ELF", "ETSY", "GTLB", "GTM", "HIMS", "HOOD", "JKS", "NVO", "RBRK", "SE", "TTD"]
-d_cols = st.columns(4)
-for i, t in enumerate(depot):
-    p, _, earn = get_full_data(t)
-    if p:
-        with d_cols[i % 4]:
-            st.metric(t, f"{p:.2f}$")
-            st.caption(f"Earnings: {earn}")
+depot_data = [
+    {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
+    {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
+    {"Ticker": "GTM", "Einstand": 17.0}, {"Ticker": "HIMS", "Einstand": 37.0},
+    {"Ticker": "HOOD", "Einstand": 120.0}, {"Ticker": "JKS", "Einstand": 50.0},
+    {"Ticker": "NVO", "Einstand": 97.0}, {"Ticker": "RBRK", "Einstand": 70.0},
+    {"Ticker": "SE", "Einstand": 170.0}, {"Ticker": "TTD", "Einstand": 102.0}
+]
+p_cols = st.columns(4)
+for i, item in enumerate(depot_data):
+    price, _, earn = get_stock_basics(item['Ticker'])
+    if price:
+        diff = (price / item['Einstand'] - 1) * 100
+        icon = "🟢" if diff >= 0 else "🟡" if diff > -20 else "🔵"
+        with p_cols[i % 4]:
+            st.write(f"{icon} **{item['Ticker']}**: {price:.2f}$ ({diff:.1f}%)")
+            if earn: st.caption(f"Earnings: {earn}")
 
-st.markdown("---")
+st.write("---") 
 
-# --- 5. EINZEL-CHECK ---
-st.subheader("🔍 Experten Einzel-Check")
-
+# SEKTION 3: EINZEL-CHECK
+st.subheader("🔍 Einzel-Check")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
-with c2: t_input = st.text_input("Ticker Symbol", value="ELF").upper().strip()
+with c2: t_in = st.text_input("Ticker", value="NVDA").upper()
 
-if t_input:
-    price, dates, earn = get_full_data(t_input)
+if t_in:
+    price, dates, earn = get_stock_basics(t_in)
     if price and dates:
-        st.info(f"📅 Nächste Earnings: {earn}")
+        if earn: st.info(f"📅 Nächste Earnings: {earn}")
         st.write(f"Aktueller Kurs: **{price:.2f}$**")
-        d_sel = st.selectbox("Laufzeit wählen", dates, key=f"sb_{t_input}")
+        d_sel = st.selectbox("Laufzeit wählen", dates)
+        tk = yf.Ticker(t_in)
+        chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
+        T = (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days / 365
+        df = chain[chain['strike'] < price].sort_values('strike', ascending=False) if mode == "put" else chain[chain['strike'] > price].sort_values('strike', ascending=True)
         
-        try:
-            tk = yf.Ticker(t_input)
-            chain = tk.option_chain(d_sel)
-            df = chain.puts if mode == "put" else chain.calls
-            T = max((datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days, 1) / 365
-            
-            if mode == "put":
-                df = df[df['strike'] <= price * 1.03].sort_values('strike', ascending=False)
-            else:
-                df = df[df['strike'] >= price * 0.97].sort_values('strike', ascending=True)
-            
-            for _, opt in df.head(8).iterrows():
-                delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'], mode)
-                d_abs = abs(delta)
-                is_itm = (mode == "put" and opt['strike'] > price) or (mode == "call" and opt['strike'] < price)
-                status = "🔴 ITM" if is_itm else "🟢 OTM" if d_abs < 0.25 else "🟡 RISK"
-                
-                with st.expander(f"{status} | Strike {opt['strike']:.1f}$ | Bid: {opt['bid']:.2f}$ | Delta: {d_abs:.2f}"):
-                    la, lb = st.columns(2)
-                    with la:
-                        st.write(f"📊 **OTM-Chance:** {(1-d_abs)*100:.1f}%")
-                        st.write(f"💰 **Einnahme:** {opt['bid']*100:.0f}$")
-                    with lb:
-                        st.write(f"🎯 **Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
-                        st.write(f"💼 **Kapital:** {opt['strike']*100:,.0f}$")
-    else: st.error("Ticker nicht gefunden oder keine Optionsdaten verfügbar.")
+        for _, opt in df.head(6).iterrows():
+            delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode)
+            risk = "🟢" if abs(delta) < 0.16 else "🟡" if abs(delta) < 0.31 else "🔴"
+            with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$"):
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.write(f"💰 **Optionspreis:** {opt['bid']:.2f}$")
+                    st.write(f"💵 **Cash-Einnahme:** {opt['bid']*100:.0f}$")
+                    st.write(f"📊 **OTM-Wahrsch.:** {(1-abs(delta))*100:.1f}%")
+                with col_b:
+                    st.write(f"🎯 **Kurs-Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
+                    st.write(f"📉 **Delta:** {abs(delta):.2f}")
