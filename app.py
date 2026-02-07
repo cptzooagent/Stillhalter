@@ -3,7 +3,7 @@ import pandas as pd
 import yfinance as yf
 import numpy as np
 from scipy.stats import norm
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
@@ -15,6 +15,7 @@ def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
 def calculate_rsi(data, window=14):
+    if len(data) < window: return 50
     delta = data.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
@@ -37,25 +38,24 @@ def get_combined_watchlist():
 def get_stock_data_full(symbol):
     try:
         tk = yf.Ticker(symbol)
-        # Basis-Info
         price = tk.fast_info['last_price']
         dates = list(tk.options)
         
-        # RSI Berechnung
         hist = tk.history(period="1mo")
         rsi = calculate_rsi(hist['Close']).iloc[-1] if len(hist) > 14 else 50
         
-        # Earnings
-        earn_info = ""
+        earn_date = None
+        earn_str = ""
         try:
             cal = tk.calendar
             if cal is not None and 'Earnings Date' in cal:
-                earn_info = cal['Earnings Date'][0].strftime('%d.%m.')
+                earn_date = cal['Earnings Date'][0]
+                earn_str = earn_date.strftime('%d.%m.')
         except: pass
         
-        return price, dates, earn_info, rsi
+        return price, dates, earn_str, rsi, earn_date
     except:
-        return None, [], "", 50
+        return None, [], "", 50, None
 
 # --- UI: SEITENLEISTE ---
 st.sidebar.header("🛡️ Strategie-Einstellungen")
@@ -76,7 +76,7 @@ if st.button("🚀 Kombi-Scan starten"):
     for i, t in enumerate(watchlist):
         status.text(f"Analysiere {t}...")
         prog.progress((i + 1) / len(watchlist))
-        price, dates, earn, rsi = get_stock_data_full(t)
+        price, dates, earn, rsi, _ = get_stock_data_full(t)
         
         if price and dates:
             try:
@@ -114,12 +114,10 @@ if st.button("🚀 Kombi-Scan starten"):
                 st.metric("Rendite p.a.", f"{row['yield']:.1f}%")
                 st.write(f"💰 Bid: **{row['bid']:.2f}$** | Puffer: **{row['puffer']:.1f}%**")
                 st.write(f"🎯 Strike: **{row['strike']:.1f}$** (Δ {row['delta']:.2f})")
-    else:
-        st.warning(f"Keine Treffer für {min_yield_pa}% Rendite.")
 
 st.write("---") 
 
-# SEKTION 2: DEPOT STATUS (SMART CALL VERBESSERUNG)
+# SEKTION 2: DEPOT STATUS (FIX: VERSION-COMPATIBILITY & EARNINGS ALERT)
 st.subheader("💼 Smart Depot-Manager")
 depot_data = [
     {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
@@ -130,32 +128,35 @@ depot_data = [
     {"Ticker": "SE", "Einstand": 170.0}, {"Ticker": "TTD", "Einstand": 102.0}
 ]
 
-p_cols = st.columns(3) # Breitere Spalten für mehr Infos
+p_cols = st.columns(3)
 for i, item in enumerate(depot_data):
-    price, _, earn, rsi = get_stock_data_full(item['Ticker'])
+    price, _, earn, rsi, earn_dt = get_stock_data_full(item['Ticker'])
     if price:
         diff = (price / item['Einstand'] - 1) * 100
         with p_cols[i % 3]:
-            with st.container(border=True):
-                # Header mit Status-Farbe
-                color = "green" if diff >= 0 else "red"
-                st.markdown(f"#### {item['Ticker']} <span style='color:{color}'>({diff:.1f}%)</span>", unsafe_allow_html=True)
-                
+            # Kompatibler Rahmen mittels st.expander oder st.info als Container-Ersatz
+            with st.expander(f"{item['Ticker']} ({diff:.1f}%)", expanded=True):
+                # Earnings Alert Logik
+                is_danger = False
+                if earn_dt:
+                    days_to_earn = (earn_dt.replace(tzinfo=None) - datetime.now().replace(tzinfo=None)).days
+                    if 0 <= days_to_earn <= 3:
+                        st.error(f"🚨 EARNINGS IN {days_to_earn} TAGEN!")
+                        is_danger = True
+
                 # Indikatoren
                 c1, c2 = st.columns(2)
                 c1.metric("Kurs", f"{price:.2f}$")
-                c2.metric("RSI (14d)", f"{rsi:.0f}")
+                c2.metric("RSI", f"{rsi:.0f}")
                 
-                # Call-Verkauf Logik
+                # Smart Call Logik
                 if diff > -5 and rsi > 65:
-                    st.success("✅ **Call-Verkauf empfohlen**")
-                    st.caption("Aktie stabil & RSI zeigt Überkauf.")
+                    st.success("✅ Call-Verkauf prüfen")
                 elif rsi < 35:
-                    st.info("💎 **Hold - RSI überverkauft**")
-                else:
-                    st.write("⏳ Keine Aktion (Neutral)")
+                    st.info("💎 Oversold - Hold")
                 
-                if earn: st.caption(f"📅 Earnings am: {earn}")
+                if earn and not is_danger:
+                    st.caption(f"📅 Earnings: {earn}")
 
 st.write("---") 
 
@@ -166,7 +167,7 @@ with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
 with c2: t_in = st.text_input("Ticker", value="NVDA").upper()
 
 if t_in:
-    price, dates, earn, rsi = get_stock_data_full(t_in)
+    price, dates, earn, rsi, _ = get_stock_data_full(t_in)
     if price and dates:
         st.write(f"Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}**")
         d_sel = st.selectbox("Laufzeit wählen", dates)
@@ -187,14 +188,13 @@ if t_in:
             for _, opt in filtered_df.iterrows():
                 d_abs = abs(opt['delta_calc'])
                 risk = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.31 else "🔴"
-                with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Delta: {d_abs:.2f} | Prämie: {opt['bid']:.2f}$"):
+                with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Delta: {d_abs:.2f} | Bid: {opt['bid']:.2f}$"):
                     col_a, col_b = st.columns(2)
                     with col_a:
-                        st.write(f"💰 **Optionspreis:** {opt['bid']:.2f}$")
-                        st.write(f"💵 **Cash-Einnahme:** {opt['bid']*100:.0f}$")
-                        st.write(f"📊 **OTM-Wahrsch.:** {(1-d_abs)*100:.1f}%")
+                        st.write(f"💰 **Preis:** {opt['bid']:.2f}$")
+                        st.write(f"📊 **OTM:** {(1-d_abs)*100:.1f}%")
                     with col_b:
-                        st.write(f"🎯 **Kurs-Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
-                        st.write(f"🌊 **Implizite Vola:** {int((opt['impliedVolatility'] or 0)*100)}%")
+                        st.write(f"🎯 **Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
+                        st.write(f"🌊 **IV:** {int((opt['impliedVolatility'] or 0)*100)}%")
         except Exception as e:
             st.error(f"Fehler: {e}")
