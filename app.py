@@ -15,7 +15,7 @@ def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
 def calculate_rsi(data, window=14):
-    if len(data) < window: return 50
+    if len(data) < window + 1: return 50
     delta = data.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
@@ -42,7 +42,7 @@ def get_stock_data_full(symbol):
         dates = list(tk.options)
         
         hist = tk.history(period="1mo")
-        rsi = calculate_rsi(hist['Close']).iloc[-1] if len(hist) > 14 else 50
+        rsi_val = calculate_rsi(hist['Close']).iloc[-1] if not hist.empty else 50
         
         earn_date = None
         earn_str = ""
@@ -53,7 +53,7 @@ def get_stock_data_full(symbol):
                 earn_str = earn_date.strftime('%d.%m.')
         except: pass
         
-        return price, dates, earn_str, rsi, earn_date
+        return price, dates, earn_str, rsi_val, earn_date
     except:
         return None, [], "", 50, None
 
@@ -62,6 +62,7 @@ st.sidebar.header("🛡️ Strategie-Einstellungen")
 target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 83)
 max_delta = (100 - target_prob) / 100
 min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
+sort_by_rsi = st.sidebar.checkbox("Nach RSI sortieren (Hoch -> Tief)")
 
 # --- HAUPTBEREICH ---
 st.title("🛡️ CapTrader AI Market Scanner")
@@ -104,7 +105,10 @@ if st.button("🚀 Kombi-Scan starten"):
 
     status.text("Kombinations-Scan abgeschlossen!")
     if results:
-        opp_df = pd.DataFrame(results).sort_values('yield', ascending=False).head(12)
+        df_res = pd.DataFrame(results)
+        sort_col = 'rsi' if sort_by_rsi else 'yield'
+        opp_df = df_res.sort_values(sort_col, ascending=False).head(12)
+        
         cols = st.columns(4)
         for idx, row in enumerate(opp_df.to_dict('records')):
             with cols[idx % 4]:
@@ -114,10 +118,12 @@ if st.button("🚀 Kombi-Scan starten"):
                 st.metric("Rendite p.a.", f"{row['yield']:.1f}%")
                 st.write(f"💰 Bid: **{row['bid']:.2f}$** | Puffer: **{row['puffer']:.1f}%**")
                 st.write(f"🎯 Strike: **{row['strike']:.1f}$** (Δ {row['delta']:.2f})")
+    else:
+        st.warning(f"Keine Treffer.")
 
 st.write("---") 
 
-# SEKTION 2: DEPOT STATUS (FIX: VERSION-COMPATIBILITY & EARNINGS ALERT)
+# SEKTION 2: DEPOT STATUS (ROBUST GEGEN FEHLER)
 st.subheader("💼 Smart Depot-Manager")
 depot_data = [
     {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
@@ -134,29 +140,25 @@ for i, item in enumerate(depot_data):
     if price:
         diff = (price / item['Einstand'] - 1) * 100
         with p_cols[i % 3]:
-            # Kompatibler Rahmen mittels st.expander oder st.info als Container-Ersatz
+            # Expander statt Container(border=True) für maximale Kompatibilität
             with st.expander(f"{item['Ticker']} ({diff:.1f}%)", expanded=True):
-                # Earnings Alert Logik
-                is_danger = False
-                if earn_dt:
-                    days_to_earn = (earn_dt.replace(tzinfo=None) - datetime.now().replace(tzinfo=None)).days
-                    if 0 <= days_to_earn <= 3:
-                        st.error(f"🚨 EARNINGS IN {days_to_earn} TAGEN!")
-                        is_danger = True
+                if earn_dt is not None:
+                    try:
+                        days_to_earn = (earn_dt.replace(tzinfo=None) - datetime.now().replace(tzinfo=None)).days
+                        if 0 <= days_to_earn <= 3:
+                            st.error(f"🚨 EARNINGS IN {days_to_earn} TAGEN!")
+                    except: pass
 
-                # Indikatoren
                 c1, c2 = st.columns(2)
                 c1.metric("Kurs", f"{price:.2f}$")
                 c2.metric("RSI", f"{rsi:.0f}")
                 
-                # Smart Call Logik
                 if diff > -5 and rsi > 65:
                     st.success("✅ Call-Verkauf prüfen")
                 elif rsi < 35:
                     st.info("💎 Oversold - Hold")
                 
-                if earn and not is_danger:
-                    st.caption(f"📅 Earnings: {earn}")
+                if earn: st.caption(f"📅 Earnings: {earn}")
 
 st.write("---") 
 
