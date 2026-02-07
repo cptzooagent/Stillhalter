@@ -20,17 +20,18 @@ def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
 
 @st.cache_data(ttl=600)
 def get_stock_basics(symbol):
+    """Holt Preis, Optionen und RSI mit Retry-Logik gegen Datenfehler."""
     try:
         tk = yf.Ticker(symbol)
-        inf = tk.fast_info
-        price = inf['last_price']
-        # Retry-Logik für Optionsdaten
+        price = tk.fast_info['last_price']
+        
+        # Retry-Logik für stabilere Daten (behebt Fehler aus Bild 13.png)
         dates = []
         for _ in range(3):
             dates = tk.options
             if dates: break
-            time.sleep(0.2)
-        
+            time.sleep(0.3)
+            
         hist = tk.history(period="3mo")
         rsi = 50.0
         if len(hist) >= 14:
@@ -50,10 +51,11 @@ target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 85)
 min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
 rsi_min = st.sidebar.slider("Minimum RSI", 20, 45, 30)
 
-# --- 3. SCANNER (DEIN FEHLENDER TEIL) ---
 st.title("🛡️ CapTrader AI Market Guard Pro")
 
-if st.button("🚀 Markt-Scan starten"):
+# --- 3. SCANNER ---
+st.subheader("🚀 Markt-Chancen Scanner")
+if st.button("Markt-Scan starten"):
     watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AMD", "NFLX", "COIN", "PLTR", "HOOD", "MSTR", "UBER", "DIS", "PYPL"]
     results = []
     prog = st.progress(0)
@@ -65,35 +67,22 @@ if st.button("🚀 Markt-Scan starten"):
         if price and dates and rsi >= rsi_min:
             try:
                 tk = yf.Ticker(t)
-                # Wähle die Laufzeit, die am nächsten an 30 Tagen liegt
                 target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
                 chain = tk.option_chain(target_date).puts
                 T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
                 
-                # Berechne Delta für alle Strikes
                 chain['delta_val'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.4, 'put'), axis=1)
-                
-                # Filter nach deiner gewünschten Sicherheit (OTM)
                 matches = chain[(chain['delta_val'].abs() <= (100-target_prob)/100) & (chain['bid'] > 0)]
                 
                 if not matches.empty:
                     best = matches.sort_values('bid', ascending=False).iloc[0]
                     y_pa = (best['bid'] / best['strike']) * (1/T if T > 0 else 1) * 100
                     if y_pa >= min_yield_pa:
-                        results.append({
-                            'Ticker': t, 
-                            'Rendite p.a.': f"{y_pa:.1f}%", 
-                            'Strike': best['strike'], 
-                            'RSI': rsi, 
-                            'Kurs': f"{price:.2f}$"
-                        })
+                        results.append({'Ticker': t, 'Rendite p.a.': f"{y_pa:.1f}%", 'Strike': best['strike'], 'RSI': rsi, 'Kurs': f"{price:.2f}$"})
             except: continue
-            
     if results:
-        st.subheader("✅ Scan-Ergebnisse")
         st.table(pd.DataFrame(results))
-    else: 
-        st.warning("Keine Treffer gefunden. Versuche die Sicherheit oder Mindestrendite zu senken.")
+    else: st.warning("Keine Treffer im Scan. Versuche die Filter anzupassen.")
 
 st.markdown("---")
 
@@ -139,17 +128,17 @@ if t_input:
         d_sel = st.selectbox("Laufzeit wählen", dates)
         try:
             tk = yf.Ticker(t_input)
-            chain = tk.option_chain(d_sel).puts if opt_type == "put" else tk.option_chain(d_sel).calls
+            # Umschalten zwischen Puts und Calls
+            df = tk.option_chain(d_sel).puts if opt_type == "put" else tk.option_chain(d_sel).calls
             T = (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days / 365
             
+            # Strike-Sortierung (Wichtig für ELF!)
             if opt_type == "put":
-                df = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
+                df = df[df['strike'] <= price * 1.05].sort_values('strike', ascending=False)
             else:
-                df = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
+                df = df[df['strike'] >= price * 0.95].sort_values('strike', ascending=True)
             
-            df = df[df['bid'] > 0].head(10)
-            
-            for _, opt in df.iterrows():
+            for _, opt in df.head(10).iterrows():
                 delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, opt_type)
                 prob_otm = (1 - abs(delta)) * 100
                 ampel = "🟢" if abs(delta) <= 0.20 else "🟡" if abs(delta) <= 0.40 else "🔴"
@@ -157,4 +146,4 @@ if t_input:
                 with st.expander(f"{ampel} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$ | OTM: {prob_otm:.1f}%"):
                     st.write(f"💰 Einnahme: **{opt['bid']*100:.0f}$** | Delta: **{delta:.2f}**")
         except:
-            st.error("Fehler beim Laden der Optionsdaten.")
+            st.error("Optionskette konnte nicht geladen werden.")
