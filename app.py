@@ -6,7 +6,7 @@ from scipy.stats import norm
 from datetime import datetime
 
 # --- SETUP ---
-st.set_page_config(page_title="CapTrader AI Market Guard", layout="wide")
+st.set_page_config(page_title="CapTrader AI Market Guard Pro", layout="wide")
 
 # --- 1. MATHE: DELTA-BERECHNUNG ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
@@ -47,7 +47,7 @@ def get_stock_data(symbol):
         return price, dates, earn
     except: return None, [], ""
 
-# --- 3. UI: SIDEBAR ---
+# --- 3. SIDEBAR ---
 st.sidebar.header("🛡️ Strategie & Sicherheit")
 target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 85)
 min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
@@ -89,57 +89,76 @@ if st.button("🚀 High-Safety Scan starten"):
                 st.write(f"Strike: **{row['strike']:.1f}$**")
                 st.caption(f"Kurs: {row['price']:.2f}$ | RSI: {row['rsi']}")
                 if row['earn']: st.warning(f"📅 ER: {row['earn']}")
-    else: st.warning("Keine Treffer gefunden.")
+    else: st.warning("Keine Treffer unter diesen Sicherheits-Vorgaben.")
 
 st.write("---")
 
-# --- 5. DEPOT-STATUS ---
-st.subheader("💼 Depot-Status")
-depot_list = ["AFRM", "ELF", "ETSY", "GTLB", "HOOD", "NVO", "RBRK", "SE", "TTD"]
+# --- 5. DEPOT-STATUS & REPARATUR-ALARM ---
+st.subheader("💼 Depot-Überwachung")
+depot_data = [
+    {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
+    {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
+    {"Ticker": "HOOD", "Einstand": 120.0}, {"Ticker": "NVO", "Einstand": 97.0},
+    {"Ticker": "RBRK", "Einstand": 70.0}, {"Ticker": "SE", "Einstand": 170.0},
+    {"Ticker": "TTD", "Einstand": 102.0}
+]
+
 d_cols = st.columns(3)
-for i, t in enumerate(depot_list):
-    price, _, earn = get_stock_data(t)
+for i, item in enumerate(depot_data):
+    price, _, earn = get_stock_data(item['Ticker'])
     if price:
+        perf = (price / item['Einstand'] - 1) * 100
         with d_cols[i % 3]:
-            st.info(f"**{t}**: {price:.2f}$")
-            if earn: st.caption(f"Earnings: {earn}")
+            if perf < -15:
+                st.error(f"🚨 **{item['Ticker']}**: {price:.2f}$ ({perf:.1f}%) - REPARATUR!")
+                if st.button(f"Roll-Check {item['Ticker']}", key=f"roll_{item['Ticker']}"):
+                    st.session_state['repair_ticker'] = item['Ticker']
+            else:
+                st.success(f"✅ **{item['Ticker']}**: {price:.2f}$ ({perf:.1f}%)")
 
 st.write("---")
 
-# --- 6. EINZEL-CHECK MIT AMPEL & PRÄMIEN ---
-st.subheader("🔍 Experten Einzel-Check")
-c_type, c_tick = st.columns([1, 2])
-with c_type: mode = st.radio("Typ", ["put", "call"], horizontal=True)
-with c_tick: t_in = st.text_input("Ticker", value="HOOD").upper()
+# --- 6. EINZEL-CHECK & REPARATUR-LOGIK ---
+st.subheader("🔍 Experten Einzel-Check & Roll-Management")
+t_input = st.text_input("Ticker Symbol", value=st.session_state.get('repair_ticker', 'HOOD')).upper()
 
-if t_in:
-    price, dates, earn = get_stock_data(t_in)
+if t_input:
+    price, dates, earn = get_stock_data(t_input)
     if price and dates:
-        rsi, trend_ok = get_safety_metrics(t_in)
+        rsi, trend_ok = get_safety_metrics(t_input)
         m1, m2, m3 = st.columns(3)
         m1.metric("Kurs", f"{price:.2f}$")
-        m2.metric("RSI", rsi)
+        m2.metric("RSI (14d)", rsi)
         m3.metric("Trend", "Stabil" if trend_ok else "Schwach")
         
-        d_sel = st.selectbox("Laufzeit", dates)
-        tk = yf.Ticker(t_in)
+        
+
+[Image of a relative strength index chart]
+
+
+        d_sel = st.selectbox("Laufzeit wählen", dates, index=1 if len(dates)>1 else 0)
+        tk = yf.Ticker(t_input)
         try:
-            chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
+            chain = tk.option_chain(d_sel).puts
             T = max((datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days, 1) / 365
             df = chain[chain['bid'] > 0].copy()
-            df = df[df['strike'] < price].sort_values('strike', ascending=False) if mode == "put" else df[df['strike'] > price].sort_values('strike', ascending=True)
+            df = df.sort_values('strike', ascending=False)
             
-            for _, opt in df.head(6).iterrows():
-                delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode)
+            st.write("### Verfügbare Strikes & Sicherheits-Ampel")
+            for _, opt in df.head(8).iterrows():
+                delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4)
                 abs_delta = abs(delta)
                 prob = (1 - abs_delta) * 100
                 ampel = "🟢" if abs_delta <= 0.15 else "🟡" if abs_delta <= 0.30 else "🔴"
                 
-                # TITEL MIT AMPEL, STRIKE UND PRÄMIE
                 with st.expander(f"{ampel} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$ | OTM: {prob:.1f}%"):
                     ca, cb = st.columns(2)
-                    ca.write(f"💰 Cash: **{opt['bid']*100:.0f}$**")
-                    ca.write(f"🛡️ Abstand: **{(abs(opt['strike']-price)/price)*100:.1f}%**")
+                    ca.write(f"💰 Cash-Einnahme: **{opt['bid']*100:.0f}$**")
+                    ca.write(f"🛡️ Puffer: **{(abs(opt['strike']-price)/price)*100:.1f}%**")
                     cb.write(f"📉 Delta: **{abs_delta:.2f}**")
                     cb.write(f"💼 Kapital: **{opt['strike']*100:,.0f}$**")
-        except: st.error("Datenfehler.")
+                    
+                    # Spezial-Logik für Reparatur (Rollen)
+                    if abs_delta > 0.5:
+                        st.warning("⚠️ Diese Option ist 'In-the-Money'. Ein Rollen auf eine spätere Laufzeit mit niedrigerem Strike wird empfohlen.")
+        except: st.error("Optionsdaten konnten nicht geladen werden.")
