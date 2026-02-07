@@ -4,7 +4,6 @@ import yfinance as yf
 import numpy as np
 from scipy.stats import norm
 from datetime import datetime
-import random
 
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
@@ -26,7 +25,7 @@ def get_combined_watchlist():
         "ABBV", "BAC", "KO", "PEP", "CRM", "WFC", "DIS", "CAT", "AXP", "IBM",
         "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", "UPST", "HOOD", "SOFI", "MSTR"
     ]
-    return list(set(sp500_nasdaq_mix)) # Duplikate entfernen
+    return list(set(sp500_nasdaq_mix))
 
 @st.cache_data(ttl=900)
 def get_stock_basics(symbol):
@@ -128,7 +127,7 @@ for i, item in enumerate(depot_data):
 
 st.write("---") 
 
-# SEKTION 3: EINZEL-CHECK
+# SEKTION 3: EINZEL-CHECK (ERWEITERT AUF DELTA 0.1)
 st.subheader("🔍 Einzel-Check")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
@@ -141,19 +140,36 @@ if t_in:
         st.write(f"Aktueller Kurs: **{price:.2f}$**")
         d_sel = st.selectbox("Laufzeit wählen", dates)
         tk = yf.Ticker(t_in)
-        chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
-        T = (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days / 365
-        df = chain[chain['strike'] < price].sort_values('strike', ascending=False) if mode == "put" else chain[chain['strike'] > price].sort_values('strike', ascending=True)
         
-        for _, opt in df.head(6).iterrows():
-            delta = calculate_bsm_delta(price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode)
-            risk = "🟢" if abs(delta) < 0.16 else "🟡" if abs(delta) < 0.31 else "🔴"
-            with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Prämie: {opt['bid']:.2f}$"):
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.write(f"💰 **Optionspreis:** {opt['bid']:.2f}$")
-                    st.write(f"💵 **Cash-Einnahme:** {opt['bid']*100:.0f}$")
-                    st.write(f"📊 **OTM-Wahrsch.:** {(1-abs(delta))*100:.1f}%")
-                with col_b:
-                    st.write(f"🎯 **Kurs-Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
-                    st.write(f"📉 **Delta:** {abs(delta):.2f}")
+        try:
+            chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
+            T = (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days / 365
+            
+            # Berechne Delta für die Filterung
+            chain['delta_calc'] = chain.apply(lambda opt: calculate_bsm_delta(
+                price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode
+            ), axis=1)
+
+            # Filter Logik: Zeige alles von At-the-money bis Delta 0.1
+            if mode == "put":
+                filtered_df = chain[(chain['delta_calc'] <= -0.10) & (chain['strike'] < price)].sort_values('strike', ascending=False)
+            else:
+                filtered_df = chain[(chain['delta_calc'] >= 0.10) & (chain['strike'] > price)].sort_values('strike', ascending=True)
+            
+            st.caption(f"Zeige verfügbare Strikes bis Delta 0.10 (Sicherheitsbereich)")
+            
+            for _, opt in filtered_df.iterrows():
+                delta = abs(opt['delta_calc'])
+                risk = "🟢" if delta < 0.16 else "🟡" if delta < 0.31 else "🔴"
+                
+                with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Δ {delta:.2f} | Prämie: {opt['bid']:.2f}$"):
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.write(f"💰 **Optionspreis:** {opt['bid']:.2f}$")
+                        st.write(f"💵 **Cash-Einnahme:** {opt['bid']*100:.0f}$")
+                        st.write(f"📊 **OTM-Wahrsch.:** {(1-delta)*100:.1f}%")
+                    with col_b:
+                        st.write(f"🎯 **Kurs-Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
+                        st.write(f"📉 **Implizite Vola:** {int((opt['impliedVolatility'] or 0)*100)}%")
+        except Exception as e:
+            st.error(f"Daten für diese Laufzeit konnten nicht geladen werden: {e}")
