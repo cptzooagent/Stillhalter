@@ -188,20 +188,32 @@ if t_in:
             else:
                 filtered_df = chain[(chain['delta_calc'] >= 0.10) & (chain['strike'] > price)].sort_values('strike', ascending=True)
             
-            for _, opt in filtered_df.iterrows():
+           # --- NEUER VERBESSERTER AMPEL-BLOCK ---
+            st.write("---")
+            for _, opt in filtered_df.head(20).iterrows():
                 d_abs = abs(opt['delta_calc'])
-                risk = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.31 else "🔴"
                 
-                # Delta im Titel des Expanders hinzugefügt
-                with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Delta: {d_abs:.2f} | Bid: {opt['bid']:.2f}$"):
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        st.write(f"💰 **Preis:** {opt['bid']:.2f}$")
-                        st.write(f"📊 **OTM:** {(1-d_abs)*100:.1f}%")
-                    with col_b:
-                        st.write(f"🎯 **Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
-                        st.write(f"📉 **Delta:** {d_abs:.2f}")
-                        st.write(f"🌊 **IV:** {int((opt['impliedVolatility'] or 0)*100)}%")
-        except Exception as e:
-            st.error(f"Fehler: {e}")
+                # 1. Ampel-Logik
+                risk_color = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.30 else "🔴"
+                
+                # 2. Rendite p.a. Berechnung
+                # Wir nutzen die Tage bis zum Verfall für die p.a. Rechnung
+                days_to_expiry = max(1, (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days)
+                yield_pa = (opt['bid'] / opt['strike']) * (365 / days_to_expiry) * 100
+                
+                # 3. Puffer Berechnung
+                puffer = (abs(opt['strike'] - price) / price) * 100
+                
+                # 4. Saubere Anzeige (vermeidet Syntax-Fehler durch einfache HTML-Struktur)
+                # Die Prämie (Bid) wird hier direkt grün gefärbt
+                st.markdown(
+                    f"{risk_color} **Strike: {opt['strike']:.1f}$** | "
+                    f"Bid: <span style='color:#2ecc71; font-weight:bold;'>{opt['bid']:.2f}$</span> | "
+                    f"Delta: {d_abs:.2f} | "
+                    f"Puffer: {puffer:.1f}% | "
+                    f"Yield: {yield_pa:.1f}% p.a.",
+                    unsafe_allow_html=True
+                )
+            # --- ENDE DES BLOCKS ---
+
 
