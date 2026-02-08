@@ -117,50 +117,40 @@ max_delta = 0.20
 if st.button("🚀 Kombi-Scan starten"):
     puffer_limit = otm_puffer_slider / 100 
     
-    # Holt die dynamische Liste (S&P 500 + Nasdaq)
     with st.spinner("Lade aktuelle Marktliste..."):
         ticker_liste = get_combined_watchlist()
     
-    st.info(f"Suche in {len(ticker_liste)} Symbolen nach Puts mit >{otm_puffer_slider}% Puffer und >{min_yield_pa}% Rendite...")
+    st.info(f"Suche in {len(ticker_liste)} Symbolen...")
     
     cols = st.columns(4)
     found_idx = 0
-    
-    # Status-Elemente für den Benutzer
     status_text = st.empty()
     progress_bar = st.progress(0)
     
-    # Der eigentliche Scan-Loop
     for i, symbol in enumerate(ticker_liste):
-        # Update Fortschritt (alle 5 Ticker für bessere Performance)
         if i % 5 == 0 or i == len(ticker_liste)-1:
             progress_bar.progress((i + 1) / len(ticker_liste))
             status_text.text(f"Analysiere {i+1}/{len(ticker_liste)}: {symbol}...")
         
         try:
-            # 1. Basis-Daten holen
             res = get_stock_data_full(symbol)
             if res[0] is None or not res[1]: 
                 continue
             
             price, dates, earn, rsi, uptrend, near_lower, atr = res
             
-            # --- STRATEGIE-FILTER ---
             if price < min_stock_price: 
                 continue
             if only_uptrend and not uptrend: 
                 continue
             
-            # 2. Passende Laufzeit finden (mind. 11 Tage)
             target_date = next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
             if not target_date: 
                 continue
 
-            # 3. Optionskette laden
             tk = yf.Ticker(symbol)
             chain = tk.option_chain(target_date).puts
             
-            # 4. Puffer-Check: Finde den besten Strike UNTER dem Limit
             max_strike = price * (1 - puffer_limit)
             secure_options = chain[chain['strike'] <= max_strike].sort_values('strike', ascending=False)
             
@@ -168,8 +158,6 @@ if st.button("🚀 Kombi-Scan starten"):
                 continue
             
             best_opt = secure_options.iloc[0]
-            
-            # 5. Rendite-Check (Wochenend-sicher)
             bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
             
             expiry_dt = datetime.strptime(target_date, '%Y-%m-%d')
@@ -180,18 +168,25 @@ if st.button("🚀 Kombi-Scan starten"):
             if y_pa < min_yield_pa: 
                 continue
 
-            # --- ANZEIGE IN 4 SPALTEN ---
+            # --- NEU: EARNINGS CHECK LOGIK ---
+            earn_warning = ""
+            if earn:
+                try:
+                    # Wir prüfen, ob das Earnings-Datum (DD.MM.) nahe liegt
+                    # Da yfinance oft nur Strings liefert, zeigen wir es als Warnung an
+                    earn_warning = f" ⚠️ <span style='color:#e67e22; font-size:0.8em;'>ER: {earn}</span>"
+                except: pass
+
+            # --- ANZEIGE ---
             with cols[found_idx % 4]:
-                # RSI-Ampel Logik
                 rsi_color = "#e74c3c" if rsi > 70 else "#2ecc71" if rsi < 40 else "#555"
                 rsi_weight = "bold" if rsi > 70 or rsi < 40 else "normal"
                 
                 with st.container(border=True):
-                    # Header: Symbol und Trend-Status
-                    st.markdown(f"**{symbol}** {'✅' if uptrend else '📉'}")
+                    # Header: Symbol, Trend und EARNINGS-WARNUNG
+                    st.markdown(f"**{symbol}** {'✅' if uptrend else '📉'}{earn_warning}", unsafe_allow_html=True)
                     st.metric("Yield p.a.", f"{y_pa:.1f}%")
                     
-                    # Die Info-Box mit Prämie und RSI-Warnung
                     st.markdown(f"""
                     <div style="font-size: 0.85em; line-height: 1.4; background-color: #f1f3f6; padding: 10px; border-radius: 8px; border-left: 5px solid #2ecc71;">
                     <b style="color: #1e7e34; font-size: 1.1em;">Prämie: {bid:.2f}$</b><br>
@@ -203,15 +198,13 @@ if st.button("🚀 Kombi-Scan starten"):
                     """, unsafe_allow_html=True)
             
             found_idx += 1
-
-        except Exception as e:
+        except:
             continue
 
-    # Abschluss-Meldung
     status_text.empty()
     progress_bar.empty()
     if found_idx == 0:
-        st.warning("Scan beendet. Keine Treffer gefunden. Tipp: Puffer oder Rendite-Anspruch senken.")
+        st.warning("Keine Treffer gefunden.")
     else:
         st.success(f"Scan beendet. {found_idx} Chancen identifiziert!")
         
@@ -346,6 +339,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
