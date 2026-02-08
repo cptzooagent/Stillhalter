@@ -166,22 +166,13 @@ if st.button("🚀 Kombi-Scan starten"):
     else:
         st.warning("Keine Treffer unter Berücksichtigung der Sicherheits-Filter.") 
 
-# SEKTION 2: DEPOT STATUS
-st.subheader("💼 Smart Depot-Manager")
-depot_data = [
-    {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
-    {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
-    {"Ticker": "GTM", "Einstand": 17.0}, {"Ticker": "HIMS", "Einstand": 37.0},
-    {"Ticker": "HOOD", "Einstand": 82.82}, {"Ticker": "JKS", "Einstand": 50.0},
-    {"Ticker": "NVO", "Einstand": 97.0}, {"Ticker": "RBRK", "Einstand": 70.0},
-    {"Ticker": "SE", "Einstand": 170.0}, {"Ticker": "TTD", "Einstand": 102.0}
-]
-
-# --- REPARIERTER & KOMPAKTER DEPOT-MANAGER (7-WERTE-FIX) ---
-# --- DEPOT-MANAGER MIT CALL-CHECKER ---
+# --- SEKTION 2: SMART DEPOT-MANAGER (FIXED & UPGRADED) ---
+st.markdown("### 💼 Smart Depot-Manager")
 p_cols = st.columns(4) 
+
 for i, item in enumerate(depot_data):
-    price, _, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(item['Ticker'])
+    # Alle 7 Werte abrufen
+    price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(item['Ticker'])
     
     if price:
         diff = (price / item['Einstand'] - 1) * 100
@@ -189,36 +180,41 @@ for i, item in enumerate(depot_data):
         
         with p_cols[i % 4]:
             with st.container(border=True):
-                # Kopfzeile
+                # FIXED: Korrekter HTML-Header
                 t_emoji = "📈" if uptrend else "📉"
-                st.markdown(f"**{item['Ticker']}** {t_emoji} <span style='float:right; color:{perf_color};>{diff:+.1f}%</span>", unsafe_allow_html=True)
+                st.markdown(
+                    f"**{item['Ticker']}** {t_emoji} "
+                    f"<span style='float:right; color:{perf_color}; font-weight:bold;'>{diff:+.1f}%</span>", 
+                    unsafe_allow_html=True
+                )
                 
-                # Kurs-Info
-                st.write(f"Kurs: {price:.2f}$ | RSI: {rsi:.0f}")
+                st.markdown(f"<p style='font-size:13px; margin:0;'>Kurs: {price:.2f}$ | RSI: {rsi:.0f}</p>", unsafe_allow_html=True)
                 
-                # --- CALL-VERKAUFS-LOGIK ---
+                # --- CALL-STRATEGIE-CHECKER ---
                 if diff < -15:
-                    # Aktie stark im Minus
                     st.error("⚠️ Call-Gefahr!")
-                    st.caption("Einstand zu weit weg. Call-Verkauf würde Verlust zementieren.")
+                    st.caption(f"Einstand ({item['Einstand']}$) zu weit weg.")
                 elif rsi > 60:
-                    # Aktie ist kurzfristig heiß gelaufen -> Guter Call-Zeitpunkt
                     st.success("🟢 Call-Chance!")
-                    st.caption(f"RSI hoch. Verkaufe Call bei Strike > {item['Einstand']}$")
+                    st.caption("RSI ist heiß. Jetzt Prämien prüfen.")
                 else:
                     st.info("⏳ Warten")
-                    st.caption("Warte auf RSI > 60 für bessere Call-Prämien.")
+                    st.caption("Warte auf RSI > 60.")
 
-                if earn: st.warning(f"📅 ER: {earn}")
-                
-                # NEU: Bollinger & ATR Info (ganz klein)
-                bb_txt = "🎯 **BB-Touch**" if near_lower else ""
-                st.markdown(f"<p style='font-size:11px; color:grey; margin:0;'>{bb_txt} | ATR: {atr:.2f}$</p>", unsafe_allow_html=True)
-                
-                # Earnings Warnung (falls vorhanden)
+                # EARNINGS-RADAR
                 if earn:
-                    st.markdown(f"<p style='font-size:11px; margin:0;'>📅 ER: {earn}</p>", unsafe_allow_html=True)
-st.write("---") 
+                    try:
+                        heute = datetime.now()
+                        e_dt = datetime.strptime(f"{earn}{heute.year}", "%d.%m.%Y")
+                        days_to = (e_dt - heute).days
+                        if 0 <= days_to <= 7:
+                            st.markdown(f"🔥 **ER in {days_to}d!**", unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"📅 <span style='font-size:12px;'>ER: {earn}</span>", unsafe_allow_html=True)
+                    except:
+                        st.markdown(f"📅 <span style='font-size:12px;'>ER: {earn}</span>", unsafe_allow_html=True)
+                
+                st.markdown(f"<p style='font-size:10px; color:grey;'>ATR: {atr:.2f}$</p>", unsafe_allow_html=True)
 
 # --- SEKTION 3: EINZEL-CHECK (7-WERTE-FIX & PROFI-INDIKATOREN) ---
 st.subheader("🔍 Einzel-Check & Option-Chain")
@@ -296,6 +292,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Berechnung: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
