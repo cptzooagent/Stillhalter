@@ -90,81 +90,61 @@ min_stock_price = st.sidebar.slider("Mindest-Aktienpreis ($)", 0, 500, 20)
 # --- HAUPTBEREICH ---
 st.title("🛡️ CapTrader AI Market Scanner")
 
-# --- SEKTION 1: SCANNER MIT AUTOMATISCHEM EARNINGS-RADAR ---
-if st.button("🚀 Kombi-Scan starten"):
-    watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "PLTR", "HOOD", "AFRM", "COIN", "MSTR", "AMD", "NFLX", "DIS", "PYPL"]
-    results = []
-    prog = st.progress(0)
-    status = st.empty()
-    
-    for i, t in enumerate(watchlist):
-        status.text(f"Analysiere {t}...")
-        prog.progress((i + 1) / len(watchlist))
-        
-        price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(t)
-        
-        if price and dates:
-            # FILTER: Mindestpreis & Trend-Check
-            if price < min_stock_price or not uptrend:
-                continue
-            
-            try:
-                tk = yf.Ticker(t)
-                target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
-                chain = tk.option_chain(target_date).puts
-                T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
-                
-                chain['delta_v'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.4), axis=1)
-                matches = chain[chain['delta_v'].abs() <= max_delta].copy()
-                
-                if not matches.empty:
-                    best = matches.sort_values('strike', ascending=False).iloc[0]
-                    y_pa = (best['bid'] / best['strike']) * (365 / max(1, T*365)) * 100
-                    
-                    if y_pa >= min_yield_pa:
-                        results.append({
-                            'T': t, 'Y': y_pa, 'S': best['strike'], 'B': best['bid'],
-                            'P': (abs(best['strike'] - price) / price) * 100,
-                            'D': abs(best['delta_v']), 'E': earn, 'R': rsi,
-                            'BB': near_lower, 'ATR': atr
-                        })
-            except: continue
+# --- SEKTION 1: PROFI-EINSTIEGS-CHANCEN (ECHTE OPTIONSDATEN) ---
+st.subheader("🎯 Profi-Einstiegs-Chancen")
 
-    status.empty()
-    if results:
-        st.subheader("🎯 Profi-Einstiegs-Chancen")
-        cols = st.columns(4)
-        for idx, r in enumerate(pd.DataFrame(results).sort_values('Y', ascending=False).to_dict('records')):
-            with cols[idx % 4]:
-                with st.container(border=True):
-                    # Header
-                    color = "🟢" if r['D'] < 0.16 else "🟡"
-                    st.markdown(f"### {color} {r['T']}")
+if st.button("🚀 Kombi-Scan starten"):
+    # Deine Fokus-Liste
+    ticker_liste = ["AMD", "NVDA", "TSLA", "GOOGL", "AAPL", "MSFT", "META", "AFRM", "HOOD"]
+    cols = st.columns(4)
+    col_idx = 0
+    
+    with st.spinner("Scanne Märkte nach Prämien..."):
+        for symbol in ticker_liste:
+            # 1. Basis-Check (Kurs, RSI, Trend)
+            res = get_stock_data_full(symbol)
+            if not res or res[0] is None: continue
+            
+            price, dates, earn, rsi, uptrend, near_lower, atr = res
+            
+            # Filter: Nur anzeigen, wenn Aktie nicht völlig überkauft (RSI < 65)
+            if price and dates and rsi < 65:
+                try:
+                    # 2. Options-Logik (wie in Sektion 3)
+                    tk = yf.Ticker(symbol)
+                    d_sel = dates[0] # Wir nehmen die nächste fällige Laufzeit
+                    chain = tk.option_chain(d_sel).puts
                     
-                    # EARNINGS-RADAR LOGIK
-                    earn_warning = ""
-                    if r['E']:
-                        try:
-                            heute = datetime.now()
-                            # Jahr ergänzen, da yf meist nur DD.MM. liefert
-                            e_date = datetime.strptime(f"{r['E']}{heute.year}", "%d.%m.%Y")
-                            days_left = (e_date - heute).days
-                            
-                            if 0 <= days_left <= 7:
-                                earn_warning = f"<p style='color:#ff4b4b; font-weight:bold; margin:0;'>🔥 ER in {days_left}d!</p>"
-                            else:
-                                earn_warning = f"<p style='color:grey; font-size:12px; margin:0;'>📅 ER: {r['E']}</p>"
-                        except:
-                            earn_warning = f"<p style='color:grey; font-size:12px; margin:0;'>📅 ER: {r['E']}</p>"
+                    expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
+                    tage = max(1, (expiry_dt - datetime.now()).days)
                     
-                    st.markdown(earn_warning, unsafe_allow_html=True)
-                    st.metric("Yield p.a.", f"{r['Y']:.1f}%")
+                    # Delta berechnen, um den sichersten Strike (ca. 0.16) zu finden
+                    chain['delta_calc'] = chain.apply(lambda o: calculate_bsm_delta(
+                        price, o['strike'], tage/365, o['impliedVolatility'] or 0.4, "put"
+                    ), axis=1)
                     
-                    # Details
-                    st.markdown(f"<p style='font-size:13px; margin:0;'>Strike: **{r['S']:.1f}$**</p>", unsafe_allow_html=True)
-                    st.markdown(f"<p style='font-size:12px; color:grey; margin:0;'>Puffer: {r['P']:.1f}% | RSI: {r['R']:.0f}</p>", unsafe_allow_html=True)
-    else:
-        st.warning("Keine Treffer unter Berücksichtigung der Sicherheits-Filter.") 
+                    # Den Strike finden, der Delta 0.16 am nächsten ist
+                    best_opt = chain.iloc[(chain['delta_calc'] + 0.16).abs().argsort()[:1]].iloc[0]
+                    
+                    # Rendite & Puffer
+                    y_pa = (best_opt['bid'] / best_opt['strike']) * (365 / tage) * 100
+                    puffer = (abs(best_opt['strike'] - price) / price) * 100
+                    fmt_date = expiry_dt.strftime('%d.%m.')
+
+                    # 3. Die Karte (Design wie in Bild 1.png)
+                    with cols[col_idx % 4]:
+                        with st.container(border=True):
+                            st.markdown(f"### 🟡 {symbol}")
+                            st.markdown(f"🗓️ ER: {earn if earn else 'N/A'}")
+                            st.write(f"Yield p.a.")
+                            st.title(f"{y_pa:.1f}%")
+                            st.markdown(f"**Strike: {best_opt['strike']:.1f}$**")
+                            st.caption(f"Laufzeit: {fmt_date} | Puffer: {puffer:.1f}%")
+                            st.caption(f"RSI: {rsi:.0f} | Bid: {best_opt['bid']:.2f}$")
+                    
+                    col_idx += 1
+                except:
+                    continue # Überspringen, falls Yahoo mal keine Kette liefert
  
 # Beispiel-Daten für dein Depot (Hier deine echten Werte eintragen!)
 depot_data = [
@@ -293,5 +273,6 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
