@@ -23,16 +23,23 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 # --- 2. DATEN-FUNKTIONEN ---
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=86400)
 def get_combined_watchlist():
-    sp500_nasdaq_mix = [
-        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AVGO", "ADBE", "NFLX", 
-        "AMD", "INTC", "QCOM", "AMAT", "TXN", "MU", "ISRG", "LRCX", "PANW", "SNPS",
-        "LLY", "V", "MA", "JPM", "WMT", "XOM", "UNH", "PG", "ORCL", "COST", 
-        "ABBV", "BAC", "KO", "PEP", "CRM", "WFC", "DIS", "CAT", "AXP", "IBM",
-        "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", "UPST", "HOOD", "SOFI", "MSTR"
-    ]
-    return list(set(sp500_nasdaq_mix))
+    try:
+        # Stabilere Quelle für S&P 500 (GitHub CSV statt Wikipedia)
+        url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
+        df = pd.read_csv(url)
+        tickers = df['Symbol'].tolist()
+        
+        # Manuelle Ergänzung wichtiger Nasdaq/Wachstumswerte, falls sie im S&P fehlen
+        nasdaq_extra = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR", "HOOD", "PLTR", "SQ"]
+        
+        full_list = list(set(tickers + nasdaq_extra))
+        # yfinance braucht Bindestriche statt Punkte (z.B. BRK-B)
+        return [t.replace('.', '-') for t in full_list]
+    except Exception as e:
+        # Dein Sicherheitsnetz, falls der Download scheitert
+        return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR"]
 
 @st.cache_data(ttl=900)
 def get_stock_data_full(symbol):
@@ -109,75 +116,89 @@ max_delta = 0.20
 
 if st.button("🚀 Kombi-Scan starten"):
     puffer_limit = otm_puffer_slider / 100 
-    ticker_liste = ["AMD", "NVDA", "TSLA", "GOOGL", "AAPL", "MSFT", "META", "HOOD", "CCJ"]
+    
+    # Holt die dynamische Liste (S&P 500 + Nasdaq)
+    with st.spinner("Lade aktuelle Marktliste..."):
+        ticker_liste = get_combined_watchlist()
+    
+    st.info(f"Suche in {len(ticker_liste)} Symbolen nach Puts mit >{otm_puffer_slider}% Puffer und >{min_yield_pa}% Rendite...")
+    
     cols = st.columns(4)
     found_idx = 0
     
-    status_text = st.empty() # Platzhalter für Debug-Infos
+    # Status-Elemente für den Benutzer
+    status_text = st.empty()
+    progress_bar = st.progress(0)
+    
+    # Der eigentliche Scan-Loop
+    for i, symbol in enumerate(ticker_liste):
+        # Update Fortschritt (alle 5 Ticker für bessere Performance)
+        if i % 5 == 0 or i == len(ticker_liste)-1:
+            progress_bar.progress((i + 1) / len(ticker_liste))
+            status_text.text(f"Analysiere {i+1}/{len(ticker_liste)}: {symbol}...")
+        
+        try:
+            # 1. Basis-Daten holen
+            res = get_stock_data_full(symbol)
+            if res[0] is None or not res[1]: continue
+            price, dates, earn, rsi, uptrend, near_lower, atr = res
+            
+            # --- FILTER-STUFEN ---
+            # Preis-Filter
+            if price < min_stock_price: continue
+            # Trend-Filter (SMA 200)
+            if only_uptrend and not uptrend: continue
+            
+            # 2. Passende Laufzeit finden (mind. 11 Tage)
+            target_date = next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
+            if not target_date: continue
 
-    with st.spinner(f"Scanne {len(ticker_liste)} Symbole..."):
-        for symbol in ticker_liste:
-            try:
-                status_text.text(f"Prüfe {symbol}...")
-                res = get_stock_data_full(symbol)
-                if res[0] is None: continue
-                price, dates, earn, rsi, uptrend, near_lower, atr = res
-                
-                # Trend-Filter
-                if only_uptrend and not uptrend: continue
-                
-                # Laufzeit finden
-                target_date = next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
-                if not target_date: continue
+            # 3. Optionskette laden
+            tk = yf.Ticker(symbol)
+            chain = tk.option_chain(target_date).puts
+            
+            # 4. Puffer-Check: Finde den besten Strike UNTER dem Limit
+            max_strike = price * (1 - puffer_limit)
+            secure_options = chain[chain['strike'] <= max_strike].sort_values('strike', ascending=False)
+            
+            if secure_options.empty: continue
+            best_opt = secure_options.iloc[0]
+            
+            # 5. Rendite-Check (Wochenend-sicher)
+            bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
+            
+            expiry_dt = datetime.strptime(target_date, '%Y-%m-%d')
+            tage = (expiry_dt - datetime.now()).days
+            y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
+            puffer_ist = ((price - best_opt['strike']) / price) * 100
+            
+            if y_pa < min_yield_pa: continue
 
-                tk = yf.Ticker(symbol)
-                chain = tk.option_chain(target_date).puts
-                
-                # --- PUFFER-LOGIK ---
-                max_strike = price * (1 - puffer_limit)
-                # Wir nehmen alle Puts, die UNTER unserem Puffer-Limit liegen
-                secure_chain = chain[chain['strike'] <= max_strike].copy()
-                
-                if secure_chain.empty:
-                    continue
+            # --- TREFFER ANZEIGEN ---
+            with cols[found_idx % 4]:
+                with st.container(border=True):
+                    # Header: Symbol und Trend-Status
+                    st.markdown(f"**{symbol}** {'✅' if uptrend else '📉'}")
+                    st.metric("Yield p.a.", f"{y_pa:.1f}%")
+                    st.markdown(f"""
+                    <div style="font-size: 0.85em; line-height: 1.4; color: #555;">
+                    <b>Strike:</b> {best_opt['strike']:.1f}$ ({puffer_ist:.1f}% OTM)<br>
+                    <b>Kurs:</b> {price:.2f}$ | <b>RSI:</b> {rsi:.0f}<br>
+                    <b>Laufzeit:</b> {tage} Tage ({expiry_dt.strftime('%d.%m.')})
+                    </div>
+                    """, unsafe_allow_html=True)
+            found_idx += 1
+            
+        except:
+            continue
 
-                # Wir nehmen den Strike, der am nächsten am Puffer-Limit liegt (höchster Profit im sicheren Bereich)
-                best_opt = secure_chain.sort_values('strike', ascending=False).iloc[0]
-                
-                # Zeit berechnen
-                expiry_dt = datetime.strptime(target_date, '%Y-%m-%d')
-                tage = (expiry_dt - datetime.now()).days
-                
-                # Prämie & Rendite
-                # Wir nutzen LastPrice, falls Bid am Wochenende 0 ist
-                bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
-                y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
-                puffer_ist = ((price - best_opt['strike']) / price) * 100
-                
-                # Rendite-Check
-                if y_pa < min_yield_pa:
-                    continue
-                
-                # Anzeige der Kachel
-                with cols[found_idx % 4]:
-                    with st.container(border=True):
-                        st.markdown(f"**{'✅' if uptrend else '📉'} {symbol}**")
-                        st.metric("Yield p.a.", f"{y_pa:.1f}%")
-                        st.markdown(f"""
-                        <div style="font-size: 0.8em; line-height: 1.2;">
-                        <b>Strike:</b> {best_opt['strike']:.1f}$<br>
-                        <b>Puffer:</b> {puffer_ist:.1f}%<br>
-                        <b>Prämie:</b> {bid:.2f}$<br>
-                        <b>Datum:</b> {expiry_dt.strftime('%d.%m.')}
-                        </div>
-                        """, unsafe_allow_html=True)
-                found_idx += 1
-            except Exception as e:
-                continue
-
-    status_text.empty() # Debug-Text löschen
+    # Abschluss-Meldung
+    status_text.empty()
+    progress_bar.empty()
     if found_idx == 0:
-        st.warning(f"Keine Treffer. Versuch: Puffer auf 3% und Rendite auf 5% zu senken.")
+        st.warning("Scan beendet. Keine Treffer gefunden. Tipp: Verringere den Mindest-Puffer oder die Rendite.")
+    else:
+        st.success(f"Scan beendet. {found_idx} Chancen identifiziert!")
         
 # Beispiel-Daten für dein Depot (Hier deine echten Werte eintragen!)
 depot_data = [
@@ -306,3 +327,4 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
