@@ -183,20 +183,18 @@ if st.button("🚀 Kombi-Scan starten"):
                     # Haupt-Metrik: Rendite p.a.
                     st.metric("Yield p.a.", f"{y_pa:.1f}%")
                     
-                    # NEU: RSI-Ampel Logik für die Anzeige
-                    rsi_color = "#e74c3c" if rsi > 70 else "#2ecc71" if rsi < 40 else "#555"
-                    rsi_weight = "bold" if rsi > 70 or rsi < 40 else "normal"
-
                     # Prämie und Details in einer kompakten Box
                     st.markdown(f"""
                     <div style="font-size: 0.85em; line-height: 1.4; background-color: #f1f3f6; padding: 10px; border-radius: 8px; border-left: 5px solid #2ecc71;">
                     <b style="color: #1e7e34; font-size: 1.1em;">Prämie: {bid:.2f}$</b><br>
                     <span style="color: #666;">(Einnahme: {bid*100:.0f}$ pro Kontrakt)</span><hr style="margin: 8px 0;">
                     <b>Strike:</b> {best_opt['strike']:.1f}$ ({puffer_ist:.1f}% Puffer)<br>
-                    <b>Kurs:</b> {price:.2f}$ | <b>RSI:</b> <span style="color:{rsi_color}; font-weight:{rsi_weight};">{rsi:.0f}</span><br>
+                    <b>Kurs:</b> {price:.2f}$ | <b>RSI:</b> {rsi:.0f}<br>
                     <b>Datum:</b> {expiry_dt.strftime('%d.%m.')} ({tage} Tage)
                     </div>
                     """, unsafe_allow_html=True)
+            found_idx += 1
+            # --- ENDE DES ERSETZTEN BLOCKS ---
             
         except:
             continue
@@ -336,6 +334,3 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
-
-
-
