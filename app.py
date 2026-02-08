@@ -178,9 +178,9 @@ depot_data = [
 ]
 
 # --- REPARIERTER & KOMPAKTER DEPOT-MANAGER (7-WERTE-FIX) ---
+# --- DEPOT-MANAGER MIT CALL-CHECKER ---
 p_cols = st.columns(4) 
 for i, item in enumerate(depot_data):
-    # FIX: Hier werden jetzt alle 7 Variablen abgeholt
     price, _, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(item['Ticker'])
     
     if price:
@@ -189,17 +189,27 @@ for i, item in enumerate(depot_data):
         
         with p_cols[i % 4]:
             with st.container(border=True):
-                # Kopfzeile: Ticker, Trend & Performance
+                # Kopfzeile
                 t_emoji = "📈" if uptrend else "📉"
-                st.markdown(f"**{item['Ticker']}** {t_emoji} <span style='float:right; color:{perf_color}; font-weight:bold;'>{diff:+.1f}%</span>", unsafe_allow_html=True)
+                st.markdown(f"**{item['Ticker']}** {t_emoji} <span style='float:right; color:{perf_color};>{diff:+.1f}%</span>", unsafe_allow_html=True)
                 
-                # Datenzeile: Kurs & RSI
-                rsi_style = "color:#3498db; font-weight:bold;" if rsi < 35 else ""
-                st.markdown(
-                    f"<p style='font-size:13px; margin:0;'>"
-                    f"💲 {price:.2f}$ | RSI: <span style='{rsi_style}'>{rsi:.0f}</span>"
-                    f"</p>", unsafe_allow_html=True
-                )
+                # Kurs-Info
+                st.write(f"Kurs: {price:.2f}$ | RSI: {rsi:.0f}")
+                
+                # --- CALL-VERKAUFS-LOGIK ---
+                if diff < -15:
+                    # Aktie stark im Minus
+                    st.error("⚠️ Call-Gefahr!")
+                    st.caption("Einstand zu weit weg. Call-Verkauf würde Verlust zementieren.")
+                elif rsi > 60:
+                    # Aktie ist kurzfristig heiß gelaufen -> Guter Call-Zeitpunkt
+                    st.success("🟢 Call-Chance!")
+                    st.caption(f"RSI hoch. Verkaufe Call bei Strike > {item['Einstand']}$")
+                else:
+                    st.info("⏳ Warten")
+                    st.caption("Warte auf RSI > 60 für bessere Call-Prämien.")
+
+                if earn: st.warning(f"📅 ER: {earn}")
                 
                 # NEU: Bollinger & ATR Info (ganz klein)
                 bb_txt = "🎯 **BB-Touch**" if near_lower else ""
@@ -286,6 +296,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Berechnung: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
