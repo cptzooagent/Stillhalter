@@ -63,6 +63,8 @@ target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 83)
 max_delta = (100 - target_prob) / 100
 min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
 sort_by_rsi = st.sidebar.checkbox("Nach RSI sortieren (Hoch -> Tief)")
+# --- NEUER SCHIEBER FÜR MINDESTPREIS ---
+min_stock_price = st.sidebar.slider("Mindest-Aktienpreis ($)", 0, 500, 20)
 
 # --- HAUPTBEREICH ---
 st.title("🛡️ CapTrader AI Market Scanner")
@@ -233,4 +235,5 @@ if t_in:
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
 # --- ENDE DER DATEI ---
+
 
