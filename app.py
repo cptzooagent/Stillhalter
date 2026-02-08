@@ -218,7 +218,7 @@ if 'depot_data' in locals():
 else:
     st.error("Variable 'depot_data' wurde nicht gefunden!")
 
-# --- SEKTION 3: EINZEL-CHECK (TABELLEN-VERSION GEGEN STR+FLOAT FEHLER) ---
+# --- SEKTION 3: EINZEL-CHECK (DIE SICHERE AMPEL-VERSION) ---
 st.divider()
 st.subheader("🔍 Einzel-Check & Option-Chain")
 
@@ -227,14 +227,12 @@ with c1: mode = st.radio("Optionstyp", ["put", "call"], horizontal=True)
 with c2: t_in = st.text_input("Ticker Symbol", value="HOOD").upper().strip()
 
 if t_in:
-    # 1. Daten abrufen
     price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(t_in)
     
     if price and dates:
-        # Depot-Info
         mein_einstand = next((item['Einstand'] for item in depot_data if item['Ticker'] == t_in), None)
         
-        # Header
+        # Dashboard-Header
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Kurs", f"{price:.2f}$")
         m2.metric("RSI", f"{rsi:.0f}")
@@ -247,44 +245,43 @@ if t_in:
         d_sel = st.selectbox("Laufzeit wählen", dates)
         
         try:
-            # 2. Optionen laden
             tk = yf.Ticker(t_in)
             chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
             
-            # 3. Berechnungen (Nur numerisch!)
             expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
             tage = max(1, (expiry_dt - datetime.now()).days)
+            T = tage / 365
             
-            chain['Yield % p.a.'] = (chain['bid'] / chain['strike']) * (365 / tage) * 100
-            chain['Puffer %'] = (abs(chain['strike'] - price) / price) * 100
+            # Delta-Berechnung
+            chain['delta_c'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4, mode), axis=1)
             
-            # 4. Filterung
             if mode == "put":
-                final_df = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
+                df_view = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
             else:
-                final_df = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
+                df_view = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
 
-            # 5. DIE SICHERE ANZEIGE ALS TABELLE
-            # Wir wählen nur die wichtigen Spalten aus
-            display_df = final_df[['strike', 'bid', 'Puffer %', 'Yield % p.a.']].head(15)
-            
             st.write("---")
-            st.write(f"### Ergebnisse für {mode.upper()}s:")
-            
-            # Diese Methode ist immun gegen den Concat-Fehler:
-            st.dataframe(
-                display_df.style.format({
-                    'strike': '{:.1f}$',
-                    'bid': '{:.2f}$',
-                    'Puffer %': '{:.1f}%',
-                    'Yield % p.a.': '{:.1f}%'
-                }),
-                use_container_width=True
-            )
-            
-            if mode == "call" and mein_einstand:
-                st.caption(f"💡 Tipp: Suche Strikes >= {mein_einstand:.2f}$ für sichere Calls.")
+            for _, opt in df_view.head(15).iterrows():
+                # Kennzahlen berechnen
+                d_abs = abs(opt['delta_c'])
+                y_pa = (opt['bid'] / opt['strike']) * (365 / tage) * 100
+                puffer = (abs(opt['strike'] - price) / price) * 100
+                
+                # Ampel-Farbe
+                color = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.30 else "🔴"
+                
+                # Safe-Tag für Calls
+                safe_tag = ""
+                if mode == "call" and mein_einstand and opt['strike'] >= mein_einstand:
+                    safe_tag = " ✅ **SAFE**"
+                
+                # DIE SICHERE ANZEIGE (f-Strings verhindern den str+float Fehler)
+                st.markdown(
+                    f"{color} **Strike: {opt['strike']:.1f}** | "
+                    f"Bid: <span style='color:#2ecc71; font-weight:bold;'>{opt['bid']:.2f}$</span> | "
+                    f"D: {d_abs:.2f} | P: {puffer:.1f}% | Y: {y_pa:.1f}%{safe_tag}",
+                    unsafe_allow_html=True
+                )
 
         except Exception as e:
-            st.error(f"Kritischer Fehler: {str(e)}")
-
+            st.error(f"Fehler in der Anzeige: {e}")
