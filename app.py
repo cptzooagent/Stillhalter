@@ -218,30 +218,28 @@ if 'depot_data' in locals():
 else:
     st.error("Variable 'depot_data' wurde nicht gefunden!")
 
-# --- SEKTION 3: EINZEL-CHECK (RADIKAL VEREINFACHT) ---
+# --- SEKTION 3: EINZEL-CHECK (TABELLEN-VERSION GEGEN STR+FLOAT FEHLER) ---
 st.divider()
 st.subheader("🔍 Einzel-Check & Option-Chain")
 
-col_t1, col_t2 = st.columns([1, 2])
-with col_t1: 
-    mode = st.radio("Optionstyp", ["put", "call"], horizontal=True)
-with col_t2: 
-    t_in = st.text_input("Ticker Symbol", value="HOOD").upper().strip()
+c1, c2 = st.columns([1, 2])
+with c1: mode = st.radio("Optionstyp", ["put", "call"], horizontal=True)
+with c2: t_in = st.text_input("Ticker Symbol", value="HOOD").upper().strip()
 
 if t_in:
-    # Daten-Zentrale
+    # 1. Daten abrufen
     price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(t_in)
     
     if price and dates:
-        # Depot-Check
+        # Depot-Info
         mein_einstand = next((item['Einstand'] for item in depot_data if item['Ticker'] == t_in), None)
         
-        # Header-Metriken
+        # Header
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Kurs", f"{price:.2f}$")
         m2.metric("RSI", f"{rsi:.0f}")
-        m3.write(f"**Trend:** {'📈 Up' if uptrend else '📉 Down'}")
-        m4.write(f"**ATR:** {atr:.2f}$")
+        m3.write(f"Trend: {'📈 Up' if uptrend else '📉 Down'}")
+        m4.write(f"ATR: {atr:.2f}$")
         
         if mein_einstand:
             st.info(f"📌 Dein Einstand für {t_in}: {mein_einstand:.2f}$")
@@ -249,48 +247,44 @@ if t_in:
         d_sel = st.selectbox("Laufzeit wählen", dates)
         
         try:
+            # 2. Optionen laden
             tk = yf.Ticker(t_in)
-            opts = tk.option_chain(d_sel)
-            chain = opts.puts if mode == "put" else opts.calls
+            chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
             
+            # 3. Berechnungen (Nur numerisch!)
             expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
-            tage_rest = max(1, (expiry_dt - datetime.now()).days)
-            T_jahr = tage_rest / 365
+            tage = max(1, (expiry_dt - datetime.now()).days)
             
-            # Delta Berechnung
-            chain['delta_c'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T_jahr, o['impliedVolatility'] or 0.4, mode), axis=1)
+            chain['Yield % p.a.'] = (chain['bid'] / chain['strike']) * (365 / tage) * 100
+            chain['Puffer %'] = (abs(chain['strike'] - price) / price) * 100
             
-            # Filterung
+            # 4. Filterung
             if mode == "put":
-                df_view = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
+                final_df = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
             else:
-                df_view = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
+                final_df = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
 
-            st.write("---")
+            # 5. DIE SICHERE ANZEIGE ALS TABELLE
+            # Wir wählen nur die wichtigen Spalten aus
+            display_df = final_df[['strike', 'bid', 'Puffer %', 'Yield % p.a.']].head(15)
             
-            # DIE ANZEIGE-SCHLEIFE (OHNE MANUELLE STRING-ADDITION)
-            for _, opt in df_view.head(15).iterrows():
-                d_abs = abs(opt['delta_c'])
-                y_pa = (opt['bid'] / opt['strike']) * (365 / tage_rest) * 100
-                puffer = (abs(opt['strike'] - price) / price) * 100
-                
-                # Ampel-Logik
-                emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.30 else "🔴"
-                
-                # Wir bauen die Zeile komplett über einen f-string ohne "+"
-                zeile = (
-                    f"{emoji} **Strike: {opt['strike']:.1f}** | "
-                    f"Bid: {opt['bid']:.2f}$ | "
-                    f"D: {d_abs:.2f} | "
-                    f"P: {puffer:.1f}% | "
-                    f"Yield: {y_pa:.1f}% p.a."
-                )
-                
-                # Falls es ein sicherer Call ist, hängen wir das Tag an
-                if mode == "call" and mein_einstand and opt['strike'] >= mein_einstand:
-                    zeile += " ✅ SAFE"
-                
-                st.markdown(zeile)
-                
+            st.write("---")
+            st.write(f"### Ergebnisse für {mode.upper()}s:")
+            
+            # Diese Methode ist immun gegen den Concat-Fehler:
+            st.dataframe(
+                display_df.style.format({
+                    'strike': '{:.1f}$',
+                    'bid': '{:.2f}$',
+                    'Puffer %': '{:.1f}%',
+                    'Yield % p.a.': '{:.1f}%'
+                }),
+                use_container_width=True
+            )
+            
+            if mode == "call" and mein_einstand:
+                st.caption(f"💡 Tipp: Suche Strikes >= {mein_einstand:.2f}$ für sichere Calls.")
+
         except Exception as e:
-            st.error(f"Fehler in der Optionskette: {e}")
+            st.error(f"Kritischer Fehler: {str(e)}")
+
