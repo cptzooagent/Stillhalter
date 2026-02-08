@@ -43,14 +43,14 @@ def get_stock_data_full(symbol):
         return None, [], "", 50
 
 # --- UI: SIDEBAR ---
-st.sidebar.header("🛡️ Strategie")
-target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 99, 85)
+st.sidebar.header("Strategie-Einstellungen")
+target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 99, 83)
 max_delta = (100 - target_prob) / 100
-min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=15)
+min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
 
 st.title("🛡️ CapTrader AI Market Scanner")
 
-# --- SEKTION 1: SCANNER (Wie in Bild 15) ---
+# --- SEKTION 1: KOMBI-SCAN (Wie Bild 15) ---
 if st.button("🚀 Markt-Scan starten", use_container_width=True):
     watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "PLTR", "HOOD", "AFRM", "AMD", "NFLX", "COIN"]
     results = []
@@ -83,9 +83,9 @@ if st.button("🚀 Markt-Scan starten", use_container_width=True):
                 st.write(f"💰 **Cash-Prämie: {r['B']*100:.0f}$**")
                 st.write(f"🎯 Strike: {r['S']}$ | RSI: {r['R']:.0f}")
                 if r['E']: st.warning(f"📅 Earnings: {r['E']}")
-    else: st.info("Keine Treffer.")
+    else: st.info("Keine Treffer unter den aktuellen Einstellungen.")
 
-# --- SEKTION 2: DEPOT-MANAGER (Deine Werte aus Bild 6) ---
+# --- SEKTION 2: DEPOT-MANAGER (Wie Bild 6) ---
 st.write("---")
 st.subheader("💼 Smart Depot-Manager")
 
@@ -108,12 +108,11 @@ for i, item in enumerate(depot_data):
                 c1, c2 = st.columns(2)
                 c1.metric("Kurs", f"{price:.2f}$")
                 c2.metric("RSI", f"{rsi:.0f}")
-                
                 if rsi < 30: st.info("💎 Oversold - Hold")
                 elif rsi > 70: st.success("🎯 Overbought - Sell Call?")
                 if earn: st.caption(f"📅 Earnings: {earn}")
 
-# --- SEKTION 3: EINZEL-CHECK (Wie in Bild 16) ---
+# --- SEKTION 3: EINZEL-CHECK (Inklusive Delta-Fix) ---
 st.write("---")
 st.subheader("🔍 Deep-Dive Einzel-Check")
 t_in = st.text_input("Symbol eingeben", "hood").upper()
@@ -122,24 +121,28 @@ if t_in:
     price, dates, earn, rsi = get_stock_data_full(t_in)
     if price:
         st.write(f"Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}**")
-        expiry = st.selectbox("Laufzeit", dates)
+        expiry = st.selectbox("Laufzeit wählen", dates)
         tk = yf.Ticker(t_in)
         chain = tk.option_chain(expiry).puts
         T = max(1/365, (datetime.strptime(expiry, '%Y-%m-%d') - datetime.now()).days / 365)
         
+        # Delta-Berechnung für die Liste
         chain['delta_calc'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4), axis=1)
         
-        for _, opt in chain[chain['delta_calc'].abs() < 0.4].sort_values('strike', ascending=False).head(6).iterrows():
+        for _, opt in chain[chain['delta_calc'].abs() < 0.45].sort_values('strike', ascending=False).head(8).iterrows():
             d_abs = abs(opt['delta_calc'])
             
-            # Ampelsystem (Bild 16)
-            if d_abs < 0.15: risk_label = "🟢 (Sicher)"
-            elif d_abs < 0.25: risk_label = "🟡 (Moderat)"
-            else: risk_label = "🔴 (Aggressiv)"
+            # Risiko-Ampel
+            if d_abs < 0.15: risk_icon = "🟢 (Sicher)"
+            elif d_abs < 0.25: risk_icon = "🟡 (Moderat)"
+            else: risk_icon = "🔴 (Aggressiv)"
             
-            with st.expander(f"{risk_label} Strike {opt['strike']:.1f}$"):
+            # DELTA wieder im Titel und in den Details integriert
+            with st.expander(f"{risk_icon} Strike {opt['strike']:.1f}$ | Delta: {d_abs:.2f}"):
                 col_a, col_b = st.columns(2)
-                col_a.write(f"💰 **Cash-Einnahme:** {opt['bid']*100:.0f}$")
-                col_a.write(f"📊 **OTM:** {(1-d_abs)*100:.1f}%")
-                col_b.write(f"🎯 **Puffer zum Kurs:** {abs(opt['strike']-price)/price*100:.1f}%")
-                col_b.write(f"🌊 **Implizite Vola:** {int((opt['impliedVolatility'] or 0)*100)}%")
+                with col_a:
+                    st.write(f"💰 **Cash-Einnahme:** {opt['bid']*100:.0f}$")
+                    st.write(f"📉 **Delta:** {d_abs:.2f}")
+                with col_b:
+                    st.write(f"🎯 **Puffer zum Kurs:** {abs(opt['strike']-price)/price*100:.1f}%")
+                    st.write(f"🌊 **Implizite Vola:** {int((opt['impliedVolatility'] or 0)*100)}%")
