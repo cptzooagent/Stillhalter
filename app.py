@@ -53,7 +53,7 @@ min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
 
 st.title("🛡️ CapTrader AI Market Scanner")
 
-# --- SEKTION 1: KOMBI-SCAN ---
+# --- SEKTION 1: MARKT-SCAN (Wie Bild 15) ---
 if st.button("🚀 Markt-Scan starten", use_container_width=True):
     watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "PLTR", "HOOD", "AFRM", "AMD", "NFLX", "COIN"]
     results = []
@@ -73,66 +73,3 @@ if st.button("🚀 Markt-Scan starten", use_container_width=True):
                 if not safe_opts.empty:
                     safe_opts['y_pa'] = (safe_opts['bid'] / safe_opts['strike']) * (1/T) * 100
                     best = safe_opts.sort_values('y_pa', ascending=False).iloc[0]
-                    if best['y_pa'] >= min_yield_pa:
-                        results.append({'T': t, 'Y': best['y_pa'], 'S': best['strike'], 'B': best['bid'], 'D': abs(best['delta_val']), 'R': rsi, 'E': earn})
-            except: continue
-
-    if results:
-        cols = st.columns(3)
-        for i, r in enumerate(results):
-            with cols[i % 3]:
-                st.markdown(f"### {r['T']}")
-                st.metric("Rendite p.a.", f"{r['Y']:.1f}%", f"↑ Δ {r['D']:.2f}")
-                st.write(f"💰 **Cash-Prämie: {r['B']*100:.0f}$**")
-                st.write(f"🎯 Strike: {r['S']}$ | RSI: {r['R']:.0f}")
-                if r['E']: st.warning(f"📅 Earnings: {r['E']}")
-    else: st.info("Keine Treffer unter den aktuellen Einstellungen.")
-
-# --- SEKTION 2: DEPOT-MANAGER ---
-st.write("---")
-st.subheader("💼 Smart Depot-Manager")
-
-depot_data = [
-    {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
-    {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
-    {"Ticker": "GTM", "Einstand": 17.0}, {"Ticker": "HIMS", "Einstand": 37.0},
-    {"Ticker": "HOOD", "Einstand": 82.82}, {"Ticker": "JKS", "Einstand": 50.0},
-    {"Ticker": "NVO", "Einstand": 97.0}, {"Ticker": "RBRK", "Einstand": 70.0},
-    {"Ticker": "SE", "Einstand": 170.0}, {"Ticker": "TTD", "Einstand": 102.0}
-]
-
-p_cols = st.columns(3)
-for i, item in enumerate(depot_data):
-    price, _, earn, rsi = get_stock_data_full(item['Ticker'])
-    if price:
-        diff = (price / item['Einstand'] - 1) * 100
-        with p_cols[i % 3]:
-            with st.expander(f"{item['Ticker']} ({diff:.1f}%)", expanded=True):
-                c1, c2 = st.columns(2)
-                c1.metric("Kurs", f"{price:.2f}$")
-                c2.metric("RSI", f"{rsi:.0f}")
-                if rsi < 30: st.info("💎 Oversold")
-                elif rsi > 70: st.success("🎯 Overbought")
-
-# --- SEKTION 3: EINZEL-CHECK (Fix: Put/Call Auswahl zurück) ---
-st.write("---")
-st.subheader("🔍 Deep-Dive Einzel-Check")
-
-col_type, col_ticker = st.columns([1, 3])
-opt_type = col_type.radio("Typ", ["put", "call"], horizontal=True)
-t_in = col_ticker.text_input("Symbol eingeben", "HOOD").upper()
-
-if t_in:
-    price, dates, earn, rsi = get_stock_data_full(t_in)
-    if price:
-        st.write(f"Aktueller Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}**")
-        expiry = st.selectbox("Laufzeit wählen", dates)
-        tk = yf.Ticker(t_in)
-        chain = tk.option_chain(expiry).calls if opt_type == "call" else tk.option_chain(expiry).puts
-        T = max(1/365, (datetime.strptime(expiry, '%Y-%m-%d') - datetime.now()).days / 365)
-        
-        chain['delta_calc'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4, option_type=opt_type), axis=1)
-        
-        # Sortierung: Puts absteigend, Calls aufsteigend vom Geld weg
-        sort_order = opt_type == "call"
-        for _, opt in chain.sort_values('strike', ascending=sort_order).head(8).
