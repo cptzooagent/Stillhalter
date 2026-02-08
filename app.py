@@ -80,8 +80,12 @@ def get_stock_data_full(symbol):
 
 # --- UI: SEITENLEISTE ---
 st.sidebar.header("🛡️ Strategie-Einstellungen")
-target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 83)
-max_delta = (100 - target_prob) / 100
+# 1. Der neue Slider für den direkten Puffer
+otm_puffer = st.sidebar.slider("Gewünschter Puffer (%)", 5, 20, 10)
+
+# 2. Max Delta berechnen (für die mathematische Sicherheit im Hintergrund)
+# Ein Puffer von 10% entspricht grob einem Delta von 0.15 bis 0.20
+max_delta = 0.20
 min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
 sort_by_rsi = st.sidebar.checkbox("Nach RSI sortieren (Hoch -> Tief)")
 # --- NEUER SCHIEBER FÜR MINDESTPREIS ---
@@ -304,6 +308,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
