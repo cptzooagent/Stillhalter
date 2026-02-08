@@ -80,17 +80,43 @@ def get_stock_data_full(symbol):
 
 # --- UI: SEITENLEISTE ---
 st.sidebar.header("🛡️ Strategie-Einstellungen")
-# 1. Der neue Slider für den direkten Puffer
-otm_puffer = st.sidebar.slider("Gewünschter Puffer (%)", 5, 20, 10)
 
-# 2. Max Delta berechnen (für die mathematische Sicherheit im Hintergrund)
-# Ein Puffer von 10% entspricht grob einem Delta von 0.15 bis 0.20
-max_delta = 0.20
-min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
-sort_by_rsi = st.sidebar.checkbox("Nach RSI sortieren (Hoch -> Tief)")
+# 1. Der neue Puffer-Slider (Direkte Steuerung der Sicherheit)
+# Wir nutzen den Key 'otm_puffer_slider', um ihn im Session State zu festigen
+otm_puffer_slider = st.sidebar.slider(
+    "Gewünschter Puffer (%)", 
+    min_value=5, 
+    max_value=20, 
+    value=10,
+    help="Wie viel Prozent muss die Aktie mindestens fallen, bevor der Strike erreicht wird?"
+)
+
+# 2. Mindestrendite p.a.
+min_yield_pa = st.sidebar.number_input(
+    "Mindestrendite p.a. (%)", 
+    value=20,
+    step=1
+)
+
+# 3. Sortierung & Filter
+sort_by_rsi = st.sidebar.checkbox("Nach RSI sortieren (Tief -> Hoch)")
+
 # --- NEUER SCHIEBER FÜR MINDESTPREIS ---
-min_stock_price = st.sidebar.slider("Mindest-Aktienpreis ($)", 0, 500, 20)
+min_stock_price = st.sidebar.slider(
+    "Mindest-Aktienpreis ($)", 
+    min_value=0, 
+    max_value=500, 
+    value=20
+)
 
+# --- INFO BOX IN DER SIDEBAR ---
+st.sidebar.markdown("---")
+st.sidebar.info(f"""
+**Aktuelle Logik:**
+- **Puffer:** Mind. {otm_puffer_slider}% OTM
+- **Delta:** Automatisch optimiert (~0.15)
+- **Min. Yield:** {min_yield_pa}%
+""")
 # --- HAUPTBEREICH ---
 st.title("🛡️ CapTrader AI Market Scanner")
 
@@ -308,6 +334,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
