@@ -218,7 +218,7 @@ if 'depot_data' in locals():
 else:
     st.error("Variable 'depot_data' wurde nicht gefunden!")
 
-# --- SEKTION 3: EINZEL-CHECK (REBORN & SAFE) ---
+# --- SEKTION 3: EINZEL-CHECK (DIE ULTIMATIVE FEHLERFREIE AMPEL) ---
 st.divider()
 st.subheader("🔍 Einzel-Check & Option-Chain")
 
@@ -229,22 +229,21 @@ with c2:
     t_in = st.text_input("Ticker Symbol", value="HOOD").upper().strip()
 
 if t_in:
-    # Daten laden
     price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(t_in)
     
     if price and dates:
-        # Depot-Abgleich
+        # Depot-Abgleich für Einstandspreis
         mein_einstand = next((item['Einstand'] for item in depot_data if item['Ticker'] == t_in), None)
         
-        # Header-Anzeige (Metriken)
+        # Dashboard-Header
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Kurs", f"{price:.2f}$")
-        m2.metric("RSI", f"{rsi:.0f}")
-        m3.write(f"Trend: {'📈 Up' if uptrend else '📉 Down'}")
-        m4.write(f"ATR: {atr:.2f}$")
+        m1.metric("Kurs", "{:.2f}$".format(price))
+        m2.metric("RSI", "{:.0f}".format(rsi))
+        m3.write("**Trend:** {}".format('📈 Up' if uptrend else '📉 Down'))
+        m4.write("**ATR:** {:.2f}$".format(atr))
         
         if mein_einstand:
-            st.info(f"📌 Dein Einstand für {t_in}: {mein_einstand:.2f}$")
+            st.info("📌 Dein Einstand für {}: {:.2f}$".format(t_in, mein_einstand))
 
         d_sel = st.selectbox("Laufzeit wählen", dates)
         
@@ -256,10 +255,10 @@ if t_in:
             tage = max(1, (expiry_dt - datetime.now()).days)
             T = tage / 365
             
-            # Delta-Berechnung
+            # Delta-Berechnung (BSM)
             chain['delta_c'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4, mode), axis=1)
             
-            # Sortierung
+            # Sortierung & Filterung
             if mode == "put":
                 df_view = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
             else:
@@ -267,7 +266,7 @@ if t_in:
 
             st.write("---")
             
-            # DIE SICHERE ANZEIGE (Wichtig: Nutzt format() statt +)
+            # DIE ANZEIGE-SCHLEIFE (Vollständig geschützt gegen den Concat-Fehler)
             for _, opt in df_view.head(15).iterrows():
                 d_abs = abs(opt['delta_c'])
                 y_pa = (opt['bid'] / opt['strike']) * (365 / tage) * 100
@@ -276,21 +275,18 @@ if t_in:
                 # Ampel-Wahl
                 emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.30 else "🔴"
                 
-                # Safe-Tag (Call-Check)
-                safe = " ✅ **SAFE**" if (mode == "call" and mein_einstand and opt['strike'] >= mein_einstand) else ""
+                # Safe-Tag Logik
+                safe_tag = ""
+                if mode == "call" and mein_einstand and opt['strike'] >= mein_einstand:
+                    safe_tag = " ✅ **SAFE**"
                 
-                # WIR NUTZEN EINE LISTE UND JOIN - DAS VERHINDERT DEN FEHLER GARANTIERT
-                parts = [
-                    emoji,
-                    f"**Strike: {opt['strike']:.1f}** |",
-                    f"Bid: {opt['bid']:.2f}$ |",
-                    f"D: {d_abs:.2f} |",
-                    f"P: {puffer:.1f}% |",
-                    f"Y: {y_pa:.1f}% p.a.{safe}"
-                ]
+                # DIE SICHERE ZEILEN-KONSTRUKTION
+                # Wir nutzen nur die .format() Methode, niemals den '+' Operator!
+                zeile = "{} **Strike: {:.1f}** | Bid: {:.2f}$ | D: {:.2f} | P: {:.1f}% | Y: {:.1f}% p.a.{}".format(
+                    emoji, opt['strike'], opt['bid'], d_abs, puffer, y_pa, safe_tag
+                )
                 
-                # Wir fügen die Teile mit Leerzeichen zusammen
-                st.markdown(" ".join(parts))
+                st.markdown(zeile)
 
         except Exception as e:
-            st.error(f"Fehler in der Anzeige-Logik: {e}")
+            st.error("Fehler in der Optionskette: {}".format(e))
