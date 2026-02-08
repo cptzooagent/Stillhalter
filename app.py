@@ -113,54 +113,71 @@ if st.button("🚀 Kombi-Scan starten"):
     cols = st.columns(4)
     found_idx = 0
     
+    status_text = st.empty() # Platzhalter für Debug-Infos
+
     with st.spinner(f"Scanne {len(ticker_liste)} Symbole..."):
         for symbol in ticker_liste:
             try:
+                status_text.text(f"Prüfe {symbol}...")
                 res = get_stock_data_full(symbol)
                 if res[0] is None: continue
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
                 
-                # Check: Mindestpreis aus Sidebar
-                if price < min_stock_price: continue
+                # Trend-Filter
+                if only_uptrend and not uptrend: continue
                 
-                # Laufzeit finden (mind. 11 Tage)
+                # Laufzeit finden
                 target_date = next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
                 if not target_date: continue
 
                 tk = yf.Ticker(symbol)
                 chain = tk.option_chain(target_date).puts
                 
-                # Puffer-Filter (HIER LAG DER FEHLER)
+                # --- PUFFER-LOGIK ---
                 max_strike = price * (1 - puffer_limit)
+                # Wir nehmen alle Puts, die UNTER unserem Puffer-Limit liegen
                 secure_chain = chain[chain['strike'] <= max_strike].copy()
-                if secure_chain.empty: continue
+                
+                if secure_chain.empty:
+                    continue
 
-                # Zeit & Delta
+                # Wir nehmen den Strike, der am nächsten am Puffer-Limit liegt (höchster Profit im sicheren Bereich)
+                best_opt = secure_chain.sort_values('strike', ascending=False).iloc[0]
+                
+                # Zeit berechnen
                 expiry_dt = datetime.strptime(target_date, '%Y-%m-%d')
                 tage = (expiry_dt - datetime.now()).days
-                secure_chain['delta_calc'] = secure_chain.apply(lambda o: calculate_bsm_delta(
-                    price, o['strike'], tage/365, o['impliedVolatility'] or 0.4, "put"
-                ), axis=1)
                 
-                # Strike wählen
-                best_opt = secure_chain.iloc[(secure_chain['delta_calc'] + 0.15).abs().argsort()[:1]].iloc[0]
-                bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] or 0.05)
+                # Prämie & Rendite
+                # Wir nutzen LastPrice, falls Bid am Wochenende 0 ist
+                bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
                 y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
                 puffer_ist = ((price - best_opt['strike']) / price) * 100
                 
-                # Check: Mindestrendite aus Sidebar
-                if y_pa < min_yield_pa: continue
+                # Rendite-Check
+                if y_pa < min_yield_pa:
+                    continue
                 
+                # Anzeige der Kachel
                 with cols[found_idx % 4]:
                     with st.container(border=True):
-                        st.markdown(f"**{'✅' if abs(best_opt['delta_calc']) <= 0.20 else '⚠️'} {symbol}**")
+                        st.markdown(f"**{'✅' if uptrend else '📉'} {symbol}**")
                         st.metric("Yield p.a.", f"{y_pa:.1f}%")
-                        st.markdown(f"<small>Strike: {best_opt['strike']:.1f}$ ({puffer_ist:.1f}% Puffer)<br>Termin: {expiry_dt.strftime('%d.%m.')} ({tage}d)</small>", unsafe_allow_html=True)
+                        st.markdown(f"""
+                        <div style="font-size: 0.8em; line-height: 1.2;">
+                        <b>Strike:</b> {best_opt['strike']:.1f}$<br>
+                        <b>Puffer:</b> {puffer_ist:.1f}%<br>
+                        <b>Prämie:</b> {bid:.2f}$<br>
+                        <b>Datum:</b> {expiry_dt.strftime('%d.%m.')}
+                        </div>
+                        """, unsafe_allow_html=True)
                 found_idx += 1
-            except: continue
+            except Exception as e:
+                continue
 
+    status_text.empty() # Debug-Text löschen
     if found_idx == 0:
-        st.warning(f"Keine Treffer mit {otm_puffer_slider}% Puffer.")
+        st.warning(f"Keine Treffer. Versuch: Puffer auf 3% und Rendite auf 5% zu senken.")
         
 # Beispiel-Daten für dein Depot (Hier deine echten Werte eintragen!)
 depot_data = [
@@ -289,29 +306,3 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
