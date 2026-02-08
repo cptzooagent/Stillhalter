@@ -154,7 +154,6 @@ if st.button("🚀 Kombi-Scan starten"):
                 # Wir nehmen das Datum am Ende des Fensters (meist lukrativer) 
                 # oder du lässt ihn das Fenster einfach so nutzen:
                 target_date = available_dates[-1] # Nimmt tendenziell eher die 18-20 Tage Termine
-                continue
 
             tk = yf.Ticker(symbol)
             chain = tk.option_chain(target_date).puts
@@ -347,6 +346,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
