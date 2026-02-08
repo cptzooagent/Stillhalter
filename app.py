@@ -170,17 +170,36 @@ if st.button("🚀 Kombi-Scan starten"):
             
             if not secure_options.empty:
                 best_opt = secure_options.iloc[0]
-                bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
                 tage = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
-                y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
-                puffer_ist = ((price - best_opt['strike']) / price) * 100
                 
-                if y_pa >= min_yield_pa:
-                    all_results.append({
-                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': best_opt['strike'],
-                        'puffer': puffer_ist, 'bid': bid, 'rsi': rsi, 'uptrend': uptrend,
-                        'earn': earn, 'tage': tage, 'date': target_date
-                    })
+                # --- NEUE FILTER-LOGIK GEGEN EINBUCHUNGEN ---
+                is_safe = True
+                
+                # 1. Earnings Blocker (21 Tage Puffer)
+                if earn:
+                    try:
+                        current_year = datetime.now().year
+                        e_date = datetime.strptime(f"{earn}{current_year}", "%d.%m.%Y")
+                        # Wenn Earnings innerhalb der nächsten (Tage + 3) liegen -> Aussortieren
+                        if datetime.now() < e_date < (datetime.now() + timedelta(days=tage + 3)):
+                            is_safe = False
+                    except: pass
+
+                # 2. RSI Überverkauft-Schutz (Kein Put-Verkauf bei Panik)
+                if rsi < 35:
+                    is_safe = False
+
+                if is_safe:
+                    bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
+                    y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
+                    puffer_ist = ((price - best_opt['strike']) / price) * 100
+                    
+                    if y_pa >= min_yield_pa:
+                        all_results.append({
+                            'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': best_opt['strike'],
+                            'puffer': puffer_ist, 'bid': bid, 'rsi': rsi, 'uptrend': uptrend,
+                            'earn': earn, 'tage': tage, 'date': target_date
+                        })
         except: continue
 
     all_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
@@ -297,6 +316,7 @@ if t_in:
                 )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
