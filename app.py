@@ -91,7 +91,7 @@ if st.button("🚀 Markt-Scan starten", use_container_width=True):
     else:
         st.info("Keine Treffer unter den aktuellen Einstellungen.")
 
-# --- SEKTION 2: DEPOT-MANAGER (Deine Werte aus Bild 6) ---
+# --- SEKTION 2: DEPOT-MANAGER ---
 st.write("---")
 st.subheader("💼 Smart Depot-Manager")
 
@@ -116,12 +116,15 @@ for i, item in enumerate(depot_data):
                 c2.metric("RSI", f"{rsi:.0f}")
                 if rsi < 30: st.info("💎 Oversold")
                 elif rsi > 70: st.success("🎯 Overbought")
-                if earn: st.caption(f"📅 Earnings: {earn}")
 
-# --- SEKTION 3: EINZEL-CHECK (Fix für Bilder 21, 23) ---
+# --- SEKTION 3: EINZEL-CHECK (Fix für Bild 21, 23, 24) ---
 st.write("---")
 st.subheader("🔍 Deep-Dive Einzel-Check")
 
 c_type, c_tick = st.columns([1, 3])
 opt_type = c_type.radio("Typ", ["put", "call"], horizontal=True)
-t_in = c_tick.text_input("Symbol",
+# Fix Bild 24: Klammer korrekt geschlossen
+t_in = c_tick.text_input("Symbol", "HOOD").upper()
+
+if t_in:
+    price, dates, earn, rsi = get
