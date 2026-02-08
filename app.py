@@ -228,8 +228,8 @@ if st.button("🚀 Kombi-Scan starten"):
                     </div>
                     """, unsafe_allow_html=True)
 
-# --- SEKTION 2: SMART DEPOT-MANAGER ---
-st.markdown("### 💼 Smart Depot-Manager")
+# --- SEKTION 2: SMART DEPOT-MANAGER (REPAIR VERSION) ---
+st.markdown("### 💼 Smart Depot-Manager (Aktiv)")
 depot_data = [
     {'Ticker': 'AFRM', 'Einstand': 76.00}, {'Ticker': 'HOOD', 'Einstand': 120.0},
     {'Ticker': 'JKS', 'Einstand': 50.00}, {'Ticker': 'GTM', 'Einstand': 17.00},
@@ -241,7 +241,7 @@ depot_data = [
 
 p_cols = st.columns(4) 
 for i, item in enumerate(depot_data):
-    price, dates, earn, rsi, uptrend, _, _ = get_stock_data_full(item['Ticker'])
+    price, _, earn, rsi, uptrend, _, _ = get_stock_data_full(item['Ticker'])
     if price:
         diff = (price / item['Einstand'] - 1) * 100
         perf_color = "#2ecc71" if diff >= 0 else "#e74c3c"
@@ -249,22 +249,20 @@ for i, item in enumerate(depot_data):
             with st.container(border=True):
                 st.markdown(f"**{item['Ticker']}** <span style='float:right; color:{perf_color}; font-weight:bold;'>{diff:+.1f}%</span>", unsafe_allow_html=True)
                 
-                # Berechnung für "Sicheren Call" (z.B. 10% über aktuellem Kurs)
-                safe_call_strike = price * 1.10
-                
-                if diff < -10:
-                    if rsi > 50:
-                        st.success("🎯 CC-REPARATUR")
-                        st.caption(f"Call bei {safe_call_strike:.1f}$ prüfen.")
-                        st.write(f"Senkt Einstand!")
+                # Strategie-Logik
+                if diff < -20:
+                    # Repair-Ansatz: Call 15% über aktuellem Kurs, egal wo der Einstand ist
+                    repair_strike = price * 1.15
+                    st.warning("🛠️ Repair-Modus")
+                    st.caption(f"Call @{repair_strike:.1f}$ senkt Einstand.")
+                    if rsi < 40: 
+                        st.info("Wait: RSI zu tief")
                     else:
-                        st.info("⌛ Seitwärts")
-                        st.caption("Prämie aktuell zu gering.")
+                        st.success(f"Prämie einsammeln!")
                 elif rsi > 65:
-                    st.success("🟢 CALL-CHANCE")
-                    st.caption("Aktie heiß gelaufen. Melken!")
+                    st.success("🟢 Call-Chance!")
                 else:
-                    st.write("Neutral")
+                    st.info("⏳ Seitwärts")
                 
                 if earn: st.warning(f"📅 ER: {earn}")
 
@@ -324,6 +322,7 @@ if t_in:
                 )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
