@@ -84,26 +84,41 @@ st.sidebar.markdown("---")
 only_uptrend = st.sidebar.checkbox("Nur Aufwärtstrend (SMA 200)", value=False)
 st.sidebar.info("Tipp: Deaktiviere den Aufwärtstrend für mehr Treffer am Wochenende.")
 
-# --- NEU: MARKT-DASHBOARD (VIX & BITCOIN) ---
+# --- ERWEITERTES MARKT-DASHBOARD ---
 st.markdown("## 📊 Globales Marktwetter")
-m_col1, m_col2 = st.columns(2)
+m_col1, m_col2, m_col3 = st.columns(3)
 
+# 1. Fear & Greed Index (NEU)
+try:
+    # Nutzung einer freien API für den Fear & Greed Index
+    import requests
+    fg_data = requests.get("https://api.alternative.me/fng/").json()
+    fg_val = int(fg_data['data'][0]['value'])
+    fg_text = fg_data['data'][0]['value_classification']
+    
+    # Farbe basierend auf Status
+    fg_color = "inverse" if fg_val < 30 else "normal" # Rot bei Fear, Grün bei Greed
+    m_col1.metric("Fear & Greed Index", f"{fg_val}/100", fg_text, delta_color=fg_color)
+except:
+    m_col1.error("Fear & Greed n.a.")
+
+# 2. VIX Abfrage
 try:
     vix_data = yf.Ticker("^VIX").history(period="2d")
     vix_val = vix_data['Close'].iloc[-1]
-    vix_prev = vix_data['Close'].iloc[-2]
-    v_delta = vix_val - vix_prev
-    m_col1.metric("VIX (Angst-Index)", f"{vix_val:.2f}", f"{v_delta:+.2f}", delta_color="inverse")
+    v_delta = vix_val - vix_data['Close'].iloc[-2]
+    m_col2.metric("VIX (Angst-Index)", f"{vix_val:.2f}", f"{v_delta:+.2f}", delta_color="inverse")
 except:
-    m_col1.error("VIX-Daten nicht verfügbar")
+    m_col2.error("VIX n.a.")
 
+# 3. Bitcoin Abfrage
 try:
     btc_data = yf.Ticker("BTC-USD").history(period="2d")
     btc_price = btc_data['Close'].iloc[-1]
     btc_delta = btc_price - btc_data['Close'].iloc[-2]
-    m_col2.metric("Bitcoin (Risk-On Sentiment)", f"{btc_price:,.0f} $", f"{btc_delta:+.2f} $")
+    m_col3.metric("Bitcoin (Risk-On)", f"{btc_price:,.0f} $", f"{btc_delta:+.2f} $")
 except:
-    m_col2.error("Bitcoin-Daten nicht verfügbar")
+    m_col3.error("Bitcoin n.a.")
 
 st.markdown("---")
 
@@ -270,3 +285,4 @@ if t_in:
                 )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
