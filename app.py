@@ -92,51 +92,48 @@ st.title("🛡️ CapTrader AI Market Scanner")
 
 import time # Wichtig für die kleine Pause
 
-# --- SEKTION 1: KOMBI-SCAN (REGLER-DIREKTZUGRIFF) ---
+# --- SEKTION 1: KOMBI-SCAN (PASSEND ZU DEINEM SLIDER 'target_prob') ---
 st.subheader("🎯 Profi-Einstiegs-Chancen")
 
-# Wir holen den Wert JETZT direkt ab. 
-# WICHTIG: Ersetze 'otm_slider' durch den GENAUEN Namen, den du deinem Slider gegeben hast!
-try:
-    # Wir schauen nach, welcher Wert gerade im Slider eingestellt ist
-    aktueller_puffer_wert = otm_slider 
-except NameError:
-    # Falls die Variable oben im Code anders heißt, versuchen wir sie hier zu finden:
-    st.error("Der Scanner findet den 'otm_slider' nicht. Bitte prüfe den Variablennamen deines Reglers.")
-    aktueller_puffer_wert = 10 # Notlösung
-
 if st.button("🚀 Kombi-Scan starten"):
+    # 1. Wir nutzen deine Variable 'target_prob' aus der Sidebar
+    # Da dein Slider z.B. 80 (für 80% Sicherheit) liefert, 
+    # berechnen wir daraus den OTM-Abstand (100 - 80 = 20% Puffer)
+    puffer_limit = (100 - target_prob) / 100 
+    
     ticker_liste = ["AMD", "NVDA", "TSLA", "GOOGL", "AAPL", "MSFT", "META", "HOOD", "CCJ"]
     cols = st.columns(4)
     found_idx = 0
     
-    # Anzeige, mit welchem Puffer er wirklich sucht
-    with st.spinner(f"Suche Puts mit mind. {aktueller_puffer_wert}% Puffer..."):
+    with st.spinner(f"Suche Puts mit {target_prob}% Sicherheit (ca. {100-target_prob}% Puffer)..."):
         for symbol in ticker_liste:
             try:
-                # 1. Kursdaten laden
+                # Basis-Daten abrufen
                 res = get_stock_data_full(symbol)
                 if not res or res[0] is None: continue
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
                 
-                # 2. Laufzeit (ab 11 Tage)
-                target_date = next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
+                # Nächste Laufzeit ab 11 Tagen finden
+                target_date = None
+                for d in dates:
+                    if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11:
+                        target_date = d
+                        break
                 if not target_date: continue
-                
-                # 3. Optionsdaten
+
+                # Optionsdaten laden
                 tk = yf.Ticker(symbol)
                 chain = tk.option_chain(target_date).puts
                 if chain.empty: continue
 
-                # --- DER REGLER-FILTER ---
-                # Wir nutzen hier die Variable 'aktueller_puffer_wert'
-                max_strike = price * (1 - (aktueller_puffer_wert / 100))
+                # --- DER REGLER-FILTER (BASIEREND AUF DEINEM SLIDER) ---
+                max_strike = price * (1 - puffer_limit)
                 secure_chain = chain[chain['strike'] <= max_strike].copy()
 
                 if secure_chain.empty:
-                    continue # Überspringen, wenn kein Strike weit genug weg ist
+                    continue
 
-                # 4. Berechnung & Delta
+                # Zeit & Delta berechnen
                 expiry_dt = datetime.strptime(target_date, '%Y-%m-%d')
                 tage = max(1, (expiry_dt - datetime.now()).days)
 
@@ -144,34 +141,41 @@ if st.button("🚀 Kombi-Scan starten"):
                     price, o['strike'], tage/365, o['impliedVolatility'] or 0.4, "put"
                 ), axis=1)
                 
-                best_opt = secure_chain.iloc[(secure_chain['delta_calc'] + 0.16).abs().argsort()[:1]].iloc[0]
+                # Wir nehmen den Strike, der am nächsten an deinem gewünschten Delta liegt
+                # max_delta wurde in deinem Screenshot bereits oben berechnet!
+                best_opt = secure_chain.iloc[(secure_chain['delta_calc'] + max_delta).abs().argsort()[:1]].iloc[0]
                 
+                # Kennzahlen extrahieren
                 bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] or 0.05)
                 y_pa = (bid / best_opt['strike']) * (365 / tage) * 100
-                puffer_ist = ((price - best_opt['strike']) / price) * 100
+                puffer_real = ((price - best_opt['strike']) / price) * 100
                 
-                # --- ANZEIGE ---
+                # --- ANZEIGE IN KOMPAKTEN KACHELN ---
                 with cols[found_idx % 4]:
                     with st.container(border=True):
-                        status_icon = "✅" if abs(best_opt['delta_calc']) <= 0.20 else "⚠️"
+                        # Icon zeigt an, ob der Strike innerhalb deines max_delta liegt
+                        status_icon = "✅" if abs(best_opt['delta_calc']) <= max_delta else "⚠️"
+                        
                         st.markdown(f"**{status_icon} {symbol}**")
                         st.metric("Yield p.a.", f"{y_pa:.1f}%")
+                        
                         st.markdown(f"""
                         <div style="font-size: 0.85em; line-height: 1.3;">
                         <b>Strike:</b> {best_opt['strike']:.1f}$ <br>
-                        <b>Puffer:</b> <span style="color:#2ecc71; font-weight:bold;">{puffer_ist:.1f}%</span> <br>
+                        <b>Puffer:</b> <span style="color:#2ecc71; font-weight:bold;">{puffer_real:.1f}%</span> <br>
                         <b>Prämie:</b> {bid:.2f}$ <br>
                         <b>Termin:</b> {expiry_dt.strftime('%d.%m.')} ({tage}d)
                         </div>
                         """, unsafe_allow_html=True)
                 
                 found_idx += 1
-            except:
+                time.sleep(0.05)
+
+            except Exception:
                 continue
 
-    # Dynamische Fehlermeldung am Ende
     if found_idx == 0:
-        st.warning(f"Keine Puts mit {aktueller_puffer_wert}% Puffer gefunden. Regler evtl. zu hoch?")
+        st.warning(f"Keine Puts mit {target_prob}% Sicherheit gefunden. Regler evtl. zu hoch?")
         
 # Beispiel-Daten für dein Depot (Hier deine echten Werte eintragen!)
 depot_data = [
@@ -300,6 +304,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
