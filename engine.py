@@ -4,15 +4,14 @@ import numpy as np
 from scipy.stats import norm
 from datetime import datetime
 
-# --- MATHEMATIK & LOGIK ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
-    """Berechnet das Delta zur Risikoeinschätzung."""
+    """Black-Scholes Delta Berechnung."""
     if T <= 0 or sigma <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
 def calculate_rsi(data, window=14):
-    """Berechnet den Relative Strength Index."""
+    """Technischer RSI Indikator."""
     if len(data) < window + 1: return 50
     delta = data.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
@@ -21,7 +20,7 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 def get_clean_earnings(tk):
-    """Sicherer Abruf von Earnings-Daten ohne Zeitzonen-Konflikte."""
+    """Robuster Abruf des nächsten Earnings-Datums."""
     try:
         cal = tk.calendar
         if isinstance(cal, dict) and 'Earnings Date' in cal:
@@ -33,7 +32,7 @@ def get_clean_earnings(tk):
     return None
 
 def get_watchlist():
-    """Zentrale Watchlist der zu scannenden Ticker."""
+    """Deine vordefinierte Scanner-Liste."""
     return [
         "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AVGO", "ADBE", "NFLX", 
         "AMD", "INTC", "QCOM", "AMAT", "TXN", "MU", "ISRG", "LRCX", "PANW", "SNPS",
