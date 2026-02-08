@@ -218,22 +218,23 @@ if 'depot_data' in locals():
 else:
     st.error("Variable 'depot_data' wurde nicht gefunden!")
 
-# --- SEKTION 3: EINZEL-CHECK MIT BUG-FIX ---
+# --- SEKTION 3: EINZEL-CHECK (BUG-FIX VERSION) ---
 st.divider()
 st.subheader("🔍 Einzel-Check & Option-Chain")
 
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Optionstyp", ["put", "call"], horizontal=True)
-with c2: t_in = st.text_input("Ticker Symbol (z.B. HOOD, NVDA, CCJ)", value="HOOD").upper()
+with c2: t_in = st.text_input("Ticker Symbol", value="HOOD").upper()
 
 if t_in:
+    # Daten abrufen
     price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(t_in)
     
     if price and dates:
-        # Check ob im Depot
+        # Check ob im Depot für Einstandsanzeige
         mein_einstand = next((item['Einstand'] for item in depot_data if item['Ticker'] == t_in), None)
         
-        # Dashboard oben
+        # Dashboard-Header
         res_cols = st.columns(4)
         res_cols[0].metric("Kurs", f"{price:.2f}$")
         res_cols[1].metric("RSI", f"{rsi:.0f}")
@@ -241,7 +242,6 @@ if t_in:
         res_cols[3].write(f"**Vola (ATR):** {atr:.2f}$")
         
         if mein_einstand:
-            # FIX: Hier nutzen wir f-Strings um den Float-Fehler zu vermeiden
             st.info(f"📌 Dein Einstand für {t_in}: {mein_einstand:.2f}$")
 
         d_sel = st.selectbox("Laufzeit wählen", dates)
@@ -253,9 +253,10 @@ if t_in:
             expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
             T = max(1, (expiry_dt - datetime.now()).days) / 365
             
-            # Delta Berechnung
+            # Delta-Berechnung
             chain['delta_c'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4, mode), axis=1)
             
+            # Filterung
             if mode == "put":
                 df_view = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
             else:
@@ -267,20 +268,19 @@ if t_in:
                 y_pa = (opt['bid'] / opt['strike']) * (365 / max(1, T*365)) * 100
                 puffer = (abs(opt['strike'] - price) / price) * 100
                 
-                # Call-Safe Check
-                safe_tag = ""
-                if mode == "call" and mein_einstand and opt['strike'] >= mein_einstand:
-                    safe_tag = " ✅ **SAFE**"
+                # Call-Safe Markierung
+                safe_tag = " ✅ **SAFE**" if (mode == "call" and mein_einstand and opt['strike'] >= mein_einstand) else ""
                 
-                # Design
+                # Design & Ampel
                 color = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.30 else "🔴"
-                bid_val = f"{opt['bid']:.2f}$"
                 
-                # WICHTIG: Kein HTML-Concat mit +, sondern f-strings
+                # WICHTIG: Hier nutzen wir f-Strings für die HTML-Konstruktion
                 st.markdown(
-                    f"{color} **Strike: {opt['strike']:.1f}** | Bid: <span style='color:#2ecc71;font-weight:bold;'>{bid_val}</span> | "
+                    f"{color} **Strike: {opt['strike']:.1f}** | "
+                    f"Bid: <span style='color:#2ecc71; font-weight:bold;'>{opt['bid']:.2f}$</span> | "
                     f"D: {d_abs:.2f} | P: {puffer:.1f}% | Y: {y_pa:.1f}%{safe_tag}",
                     unsafe_allow_html=True
                 )
         except Exception as e:
             st.error(f"Fehler bei Options-Daten: {e}")
+
