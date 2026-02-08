@@ -132,9 +132,23 @@ if st.button("🚀 Kombi-Scan starten"):
                 # Wir nehmen den Strike ca. 10-15% unter Kurs als Sicherheits-Check
                 best_opt = chain[chain['strike'] <= price * 0.9].sort_values('strike', ascending=False).iloc[0]
                 
-                # Kennzahlen berechnen
-                bid = best_opt['bid'] if best_opt['bid'] > 0 else best_opt['lastPrice']
-                y_pa = (bid / best_opt['strike']) * (365 / tage) * 100
+                # --- LOGIK: REGLER-BASIERTE STRIKE-WAHL ---
+
+# 1. Wir holen uns den Wert vom Slider (achte darauf, dass der Name stimmt!)
+# Wenn dein Slider 'otm_slider' heißt:
+mindest_puffer = otm_slider / 100 
+
+# 2. Wir filtern die gesamte Kette: Nur Strikes, die X% unter dem Kurs liegen
+# Beispiel: Preis 100$ - 10% Puffer = nur Strikes <= 90$ erlauben
+secure_chain = chain[chain['strike'] <= price * (1 - mindest_puffer)]
+
+if not secure_chain.empty:
+    # Aus den ÜBRIG GEBLIEBENEN suchen wir jetzt die mit dem besten Delta
+    # So verhinderst du, dass er einen zu nahen Strike nimmt, nur weil das Delta gut aussieht
+    best_opt = secure_chain.iloc[(secure_chain['delta_calc'] + 0.16).abs().argsort()[:1]].iloc[0]
+else:
+    # Falls KEIN Strike so weit weg ist (kein Puffer möglich), überspringen wir den Ticker
+    continue
                 
                 # --- ANZEIGE IM KOMPAKT-STIL ---
                 with cols[found_idx % 4]:
@@ -286,6 +300,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
