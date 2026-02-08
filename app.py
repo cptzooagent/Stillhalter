@@ -217,81 +217,82 @@ if 'depot_data' in locals():
                         st.warning(f"📅 ER: {earn}")
 else:
     st.error("Variable 'depot_data' wurde nicht gefunden!")
-
-# --- SEKTION 3: EINZEL-CHECK (FINALER FIX GEGEN CONCAT-FEHLER) ---
+# --- SEKTION 3: EINZEL-CHECK (ULTRA-ROBUST) ---
 st.divider()
 st.subheader("🔍 Einzel-Check & Option-Chain")
 
-c1, c2 = st.columns([1, 2])
-with c1: 
-    sel_mode = st.radio("Optionstyp", ["put", "call"], horizontal=True)
-with c2: 
-    t_in = st.text_input("Ticker Symbol", value="HOOD").upper().strip()
+# Eingabe-Layout
+c_ui1, c_ui2 = st.columns([1, 2])
+with c_ui1: 
+    s_mode = st.radio("Optionstyp", ["put", "call"], horizontal=True)
+with c_ui2: 
+    t_input = st.text_input("Ticker Symbol", value="HOOD").upper().strip()
 
-if t_in:
+if t_input:
     # 1. Daten abrufen
-    price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(t_in)
-    
-    if price and dates:
-        # Check ob im Depot für Einstandsanzeige
-        mein_einstand = next((item['Einstand'] for item in depot_data if item['Ticker'] == t_in), None)
+    res = get_stock_data_full(t_input)
+    # Entpacken (Sicherheits-Check falls Funktion None liefert)
+    if res and len(res) == 7:
+        price, dates, earn, rsi, uptrend, near_lower, atr = res
         
-        # Dashboard-Metriken (Sicher formatiert)
-        m_cols = st.columns(4)
-        m_cols[0].metric("Kurs", f"{price:.2f}$")
-        m_cols[1].metric("RSI", f"{rsi:.0f}")
-        m_cols[2].write(f"Trend: {'📈 Up' if uptrend else '📉 Down'}")
-        m_cols[3].write(f"Vola (ATR): {atr:.2f}$")
+        # Depot-Check
+        mein_einstand = next((item['Einstand'] for item in depot_data if item['Ticker'] == t_input), None)
+        
+        # Metriken-Header (Keine String-Addition!)
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Kurs", f"{price:.2f}$")
+        m2.metric("RSI", f"{rsi:.0f}")
+        m3.write(f"Trend: {'📈 Up' if uptrend else '📉 Down'}")
+        m4.write(f"ATR: {atr:.2f}$")
         
         if mein_einstand:
-            st.info(f"📌 Dein Einstand für {t_in}: {mein_einstand:.2f}$")
+            st.info(f"Einstand für {t_input}: {mein_einstand:.2f}$")
 
-        d_sel = st.selectbox("Laufzeit wählen", dates)
-        
-        try:
-            # 2. Optionskette laden
-            tk = yf.Ticker(t_in)
-            chain = tk.option_chain(d_sel).puts if sel_mode == "put" else tk.option_chain(d_sel).calls
+        if dates:
+            d_sel = st.selectbox("Laufzeit wählen", dates)
             
-            # Zeit bis Expiry
-            expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
-            tage = max(1, (expiry_dt - datetime.now()).days)
-            T_jahr = tage / 365
-            
-            # Delta-Berechnung (BSM)
-            chain['delta_c'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T_jahr, o['impliedVolatility'] or 0.4, sel_mode), axis=1)
-            
-            # Filterung & Sortierung
-            if sel_mode == "put":
-                df_view = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
-            else:
-                df_view = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
+            try:
+                # 2. Optionsdaten
+                tk = yf.Ticker(t_input)
+                chain = tk.option_chain(d_sel).puts if s_mode == "put" else tk.option_chain(d_sel).calls
+                
+                exp_dt = datetime.strptime(d_sel, '%Y-%m-%d')
+                tage = max(1, (exp_dt - datetime.now()).days)
+                
+                # Delta-Berechnung
+                chain['delta_c'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], tage/365, o['impliedVolatility'] or 0.4, s_mode), axis=1)
+                
+                # Filtern
+                if s_mode == "put":
+                    df_v = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
+                else:
+                    df_v = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
 
-            st.write("---")
-            
-            # 3. DIE ANZEIGE-SCHLEIFE (Technisch sicher)
-            for _, opt in df_view.head(15).iterrows():
-                # Kennzahlen berechnen
-                d_abs = abs(opt['delta_c'])
-                y_pa = (opt['bid'] / opt['strike']) * (365 / tage) * 100
-                puffer = (abs(opt['strike'] - price) / price) * 100
-                
-                # Ampel-Wahl
-                color = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.30 else "🔴"
-                
-                # Safe-Tag Logik (Kein '+' Operator!)
-                safe_tag = ""
-                if sel_mode == "call" and mein_einstand and opt['strike'] >= mein_einstand:
-                    safe_tag = " ✅ **SAFE**"
-                
-                # WICHTIG: Wir bauen die Zeile REIN über f-Strings. 
-                # Jedes Element in {} wird von Python automatisch in Text gewandelt.
-                # Es gibt kein '+' Zeichen außerhalb der Anführungszeichen!
-                st.markdown(
-                    f"{color} **Strike: {opt['strike']:.1f}** | "
-                    f"Bid: {opt['bid']:.2f}$ | "
-                    f"D: {d_abs:.2f} | P: {puffer:.1f}% | Y: {y_pa:.1f}%{safe_tag}"
-                )
+                st.write("---")
+                # 3. DIE ANZEIGE (Nutzt Kommas statt '+', das ist unkaputtbar)
+                for _, row in df_v.head(15).iterrows():
+                    d_abs = abs(row['delta_c'])
+                    y_pa = (row['bid'] / row['strike']) * (365 / tage) * 100
+                    puf = (abs(row['strike'] - price) / price) * 100
+                    
+                    # Ampel
+                    emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.30 else "🔴"
+                    
+                    # Safe-Tag
+                    safe = "✅ SAFE" if (s_mode == "call" and mein_einstand and row['strike'] >= mein_einstand) else ""
+                    
+                    # WICHTIG: st.write mit Kommas verbindet Elemente OHNE Fehler-Risiko
+                    st.write(
+                        emoji, 
+                        f"**Strike: {row['strike']:.1f}**", "|",
+                        f"Bid: {row['bid']:.2f}$", "|",
+                        f"D: {d_abs:.2f}", "|",
+                        f"P: {puf:.1f}%", "|",
+                        f"Y: {y_pa:.1f}%", 
+                        safe
+                    )
 
-        except Exception as e:
-            st.error(f"Fehler bei der Datenverarbeitung: {e}")
+            except Exception as e:
+                st.error(f"Fehler in der Kette: {e}")
+        else:
+            st.warning("Keine Verfallsdaten gefunden.")
