@@ -218,7 +218,7 @@ if 'depot_data' in locals():
 else:
     st.error("Variable 'depot_data' wurde nicht gefunden!")
 
-# --- SEKTION 3: EINZEL-CHECK MIT DEPOT-ABGLEICH ---
+# --- SEKTION 3: EINZEL-CHECK MIT BUG-FIX ---
 st.divider()
 st.subheader("🔍 Einzel-Check & Option-Chain")
 
@@ -227,14 +227,13 @@ with c1: mode = st.radio("Optionstyp", ["put", "call"], horizontal=True)
 with c2: t_in = st.text_input("Ticker Symbol (z.B. HOOD, NVDA, CCJ)", value="HOOD").upper()
 
 if t_in:
-    # Daten abrufen (7-Werte-Logik)
     price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(t_in)
     
     if price and dates:
-        # Prüfen, ob Aktie im Depot ist für Break-Even-Anzeige
+        # Check ob im Depot
         mein_einstand = next((item['Einstand'] for item in depot_data if item['Ticker'] == t_in), None)
         
-        # Dashboard
+        # Dashboard oben
         res_cols = st.columns(4)
         res_cols[0].metric("Kurs", f"{price:.2f}$")
         res_cols[1].metric("RSI", f"{rsi:.0f}")
@@ -242,7 +241,8 @@ if t_in:
         res_cols[3].write(f"**Vola (ATR):** {atr:.2f}$")
         
         if mein_einstand:
-            st.info(f"📌 Dein Einstand für {t_in}: **{mein_einstand:.2f}$**")
+            # FIX: Hier nutzen wir f-Strings um den Float-Fehler zu vermeiden
+            st.info(f"📌 Dein Einstand für {t_in}: {mein_einstand:.2f}$")
 
         d_sel = st.selectbox("Laufzeit wählen", dates)
         
@@ -251,12 +251,11 @@ if t_in:
             chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
             
             expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
-            T = (expiry_dt - datetime.now()).days / 365
+            T = max(1, (expiry_dt - datetime.now()).days) / 365
             
-            # Delta & Kennzahlen berechnen
+            # Delta Berechnung
             chain['delta_c'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4, mode), axis=1)
             
-            # Filterung: Beim Put alles < Kurs, beim Call alles > Kurs (oder nahe dran)
             if mode == "put":
                 df_view = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
             else:
@@ -268,36 +267,20 @@ if t_in:
                 y_pa = (opt['bid'] / opt['strike']) * (365 / max(1, T*365)) * 100
                 puffer = (abs(opt['strike'] - price) / price) * 100
                 
-                # Markierung für "Sichere Calls" (über Einstand)
+                # Call-Safe Check
                 safe_tag = ""
                 if mode == "call" and mein_einstand and opt['strike'] >= mein_einstand:
-                    safe_tag = "✅ **SAFE** (über Einstand)"
+                    safe_tag = " ✅ **SAFE**"
                 
-                # Ampel & Design
+                # Design
                 color = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.30 else "🔴"
-                bid_html = f"<span style='color:#2ecc71; font-weight:bold;'>{opt['bid']:.2f}$</span>"
+                bid_val = f"{opt['bid']:.2f}$"
                 
+                # WICHTIG: Kein HTML-Concat mit +, sondern f-strings
                 st.markdown(
-                    f"{color} **Strike: {opt['strike']:.1f}** | Bid: {bid_html} | "
-                    f"Delta: {d_abs:.2f} | Puffer: {puffer:.1f}% | Yield: {y_pa:.1f}% p.a. {safe_tag}",
+                    f"{color} **Strike: {opt['strike']:.1f}** | Bid: <span style='color:#2ecc71;font-weight:bold;'>{bid_val}</span> | "
+                    f"D: {d_abs:.2f} | P: {puffer:.1f}% | Y: {y_pa:.1f}%{safe_tag}",
                     unsafe_allow_html=True
                 )
         except Exception as e:
-            st.error(f"Fehler beim Laden der Optionskette: {e}")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+            st.error(f"Fehler bei Options-Daten: {e}")
