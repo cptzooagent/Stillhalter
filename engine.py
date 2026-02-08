@@ -5,13 +5,11 @@ from scipy.stats import norm
 from datetime import datetime
 
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
-    """Black-Scholes Delta Berechnung."""
     if T <= 0 or sigma <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
 def calculate_rsi(data, window=14):
-    """Technischer RSI Indikator."""
     if len(data) < window + 1: return 50
     delta = data.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
@@ -20,23 +18,12 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 def get_clean_earnings(tk):
-    """Robuster Abruf des nächsten Earnings-Datums."""
     try:
         cal = tk.calendar
-        if isinstance(cal, dict) and 'Earnings Date' in cal:
-            return cal['Earnings Date'][0]
-        if isinstance(cal, pd.DataFrame) and not cal.empty:
-            return cal.iloc[0, 0]
-    except:
-        return None
+        if isinstance(cal, dict) and 'Earnings Date' in cal: return cal['Earnings Date'][0]
+        if isinstance(cal, pd.DataFrame) and not cal.empty: return cal.iloc[0, 0]
+    except: return None
     return None
 
 def get_watchlist():
-    """Deine vordefinierte Scanner-Liste."""
-    return [
-        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AVGO", "ADBE", "NFLX", 
-        "AMD", "INTC", "QCOM", "AMAT", "TXN", "MU", "ISRG", "LRCX", "PANW", "SNPS",
-        "LLY", "V", "MA", "JPM", "WMT", "XOM", "UNH", "PG", "ORCL", "COST", 
-        "ABBV", "BAC", "KO", "PEP", "CRM", "WFC", "DIS", "CAT", "AXP", "IBM",
-        "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", "UPST", "HOOD", "SOFI", "MSTR"
-    ]
+    return ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "COIN", "PLTR", "HOOD", "AFRM", "MSTR"]
