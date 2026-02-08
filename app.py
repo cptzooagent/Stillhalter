@@ -187,7 +187,7 @@ if st.button("🚀 Kombi-Scan starten"):
 # Beispiel-Daten für dein Depot (Hier deine echten Werte eintragen!)
 depot_data = [
     {'Ticker': 'AFRM', 'Einstand': 76.00},
-    {'Ticker': 'HOOD', 'Einstand': 82.82},
+    {'Ticker': 'HOOD', 'Einstand': 120.0},
     {'Ticker': 'JKS', 'Einstand': 50.00},
     {'Ticker': 'GTM', 'Einstand': 17.00},
     {'Ticker': 'HIMS', 'Einstand': 37.00},
@@ -311,6 +311,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
