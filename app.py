@@ -92,23 +92,22 @@ st.title("🛡️ CapTrader AI Market Scanner")
 
 import time # Wichtig für die kleine Pause
 
-# --- SEKTION 1: KOMBI-SCAN (VOLLSTÄNDIG & STABIL) ---
+# --- SEKTION 1: KOMBI-SCAN (ULTRA-STABIL & FEHLERTOLERANT) ---
 st.subheader("🎯 Profi-Einstiegs-Chancen")
 
-# Button zum Starten des Scans
+# 1. SICHERHEITS-CHECK: Existiert der Slider? 
+# Falls otm_slider nicht gefunden wird, nehmen wir 10% als Standard.
+try:
+    puffer_prozent = otm_slider
+except NameError:
+    puffer_prozent = 10  # Fallback, falls die Variable im Code oben anders heißt
+
 if st.button("🚀 Kombi-Scan starten"):
-    # 1. Liste der Fokus-Aktien
     ticker_liste = ["AMD", "NVDA", "TSLA", "GOOGL", "AAPL", "MSFT", "META", "HOOD", "CCJ"]
-    
-    # 2. Grid-Layout (4 Spalten)
     cols = st.columns(4)
     found_idx = 0
     
-    # Sicherstellen, dass der Wert vom Slider (Sidebar) geladen wird
-    # Wir nutzen 'otm_slider' (bitte prüfen, ob dein Slider in der Sidebar so heißt)
-    puffer_limit = otm_slider / 100 
-
-    with st.spinner(f"Suche Puts mit mind. {otm_slider}% Puffer..."):
+    with st.spinner(f"Suche Puts mit mind. {puffer_prozent}% Puffer..."):
         for symbol in ticker_liste:
             try:
                 # Daten abrufen
@@ -118,75 +117,72 @@ if st.button("🚀 Kombi-Scan starten"):
                 
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
                 
-                # Laufzeit-Check (Ziel: Mindestens 11 Tage in der Zukunft)
+                # Nächste Laufzeit ab 11 Tagen finden
                 target_date = None
                 for d in dates:
-                    diff = (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days
-                    if diff >= 11:
+                    if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11:
                         target_date = d
                         break
                 
                 if not target_date:
                     continue
 
-                # Optionsdaten von Yahoo laden
+                # Optionsdaten laden
                 tk = yf.Ticker(symbol)
                 chain = tk.option_chain(target_date).puts
                 if chain.empty:
                     continue
 
-                # --- DER SICHERHEITS-FILTER (OTM-REGLER) ---
-                # Wir erlauben nur Strikes, die den vom User gewählten Abstand einhalten
-                max_strike_erlaubt = price * (1 - puffer_limit)
-                secure_chain = chain[chain['strike'] <= max_strike_erlaubt].copy()
+                # --- DER REGLER-FILTER ---
+                max_strike = price * (1 - (puffer_prozent / 100))
+                secure_chain = chain[chain['strike'] <= max_strike].copy()
 
                 if secure_chain.empty:
-                    continue # Kein Strike gefunden, der weit genug weg ist
+                    continue
 
-                # Zeit für Delta-Berechnung
+                # Zeit & Delta
                 expiry_dt = datetime.strptime(target_date, '%Y-%m-%d')
                 tage = max(1, (expiry_dt - datetime.now()).days)
 
-                # Delta berechnen (BSM Modell)
                 secure_chain['delta_calc'] = secure_chain.apply(lambda o: calculate_bsm_delta(
                     price, o['strike'], tage/365, o['impliedVolatility'] or 0.4, "put"
                 ), axis=1)
                 
-                # Den Strike wählen, der Delta 0.16 am nächsten ist (innerhalb der sicheren Zone)
+                # Strike-Wahl (Delta 0.16 Ziel innerhalb der sicheren Zone)
                 best_opt = secure_chain.iloc[(secure_chain['delta_calc'] + 0.16).abs().argsort()[:1]].iloc[0]
                 
-                # Kennzahlen für die Anzeige
+                # Kennzahlen
                 bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] or 0.05)
                 y_pa = (bid / best_opt['strike']) * (365 / tage) * 100
-                realer_puffer = ((price - best_opt['strike']) / price) * 100
+                puffer_ist = ((price - best_opt['strike']) / price) * 100
                 
-                # --- KOMPAKTE KACHEL RENDERN ---
+                # --- ANZEIGE ---
                 with cols[found_idx % 4]:
                     with st.container(border=True):
-                        # Sicherheits-Check: Warnung bei hohem Delta trotz Puffer
-                        warn_icon = "⚠️" if abs(best_opt['delta_calc']) > 0.20 else "✅"
+                        # Sicherheits-Check Icon
+                        status_icon = "✅" if abs(best_opt['delta_calc']) <= 0.20 else "⚠️"
                         
-                        st.markdown(f"**{warn_icon} {symbol}**")
+                        st.markdown(f"**{status_icon} {symbol}**")
                         st.metric("Yield p.a.", f"{y_pa:.1f}%")
                         
                         st.markdown(f"""
-                        <div style="font-size: 0.85em; line-height: 1.3; color: #555;">
+                        <div style="font-size: 0.85em; line-height: 1.3;">
                         <b>Strike:</b> {best_opt['strike']:.1f}$ <br>
-                        <b>Puffer:</b> <span style="color:#2ecc71; font-weight:bold;">{realer_puffer:.1f}%</span> <br>
+                        <b>Puffer:</b> <span style="color:#2ecc71; font-weight:bold;">{puffer_ist:.1f}%</span> <br>
                         <b>Prämie:</b> {bid:.2f}$ <br>
                         <b>Termin:</b> {expiry_dt.strftime('%d.%m.')} ({tage}d)
                         </div>
                         """, unsafe_allow_html=True)
                 
                 found_idx += 1
-                time.sleep(0.05) # Kleine Pause zur Schonung der API
+                time.sleep(0.05) 
 
             except Exception:
-                continue # Falls ein Ticker hakt, einfach mit dem nächsten weitermachen
+                # Falls ein Ticker hakt (Timeout), einfach weitermachen
+                continue
 
-    # Falls gar nichts gefunden wurde (z.B. Regler auf 80% und keine Gebote da)
     if found_idx == 0:
-        st.warning(f"Keine Puts mit {otm_slider}% Puffer gefunden. Versuche einen kleineren Puffer.")
+        st.warning(f"Keine Werte mit {puffer_prozent}% Puffer gefunden. Versuche es mit weniger Puffer.")
         
 # Beispiel-Daten für dein Depot (Hier deine echten Werte eintragen!)
 depot_data = [
@@ -315,6 +311,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
