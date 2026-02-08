@@ -90,42 +90,45 @@ min_stock_price = st.sidebar.slider("Mindest-Aktienpreis ($)", 0, 500, 20)
 # --- HAUPTBEREICH ---
 st.title("🛡️ CapTrader AI Market Scanner")
 
-# --- SEKTION 1: SCANNER (KOMPLETT) ---
-# --- SEKTION 1: PROFI-MARKT-SCANNER (SMA/BB/ATR-UPGRADE) ---
+# --- SEKTION 1: PROFI-MARKT-SCANNER (TREND & VOLA) ---
 if st.button("🚀 Kombi-Scan starten"):
-    watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "PLTR", "HOOD", "AFRM", "COIN", "MSTR", "AMD", "NFLX", "DIS", "PYPL"]
+    # Erweitere Watchlist nach Belieben
+    watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "PLTR", "HOOD", "AFRM", "COIN", "MSTR", "AMD", "NFLX"]
     results = []
     prog = st.progress(0)
     status = st.empty()
     
     for i, t in enumerate(watchlist):
-        status.text(f"Scanne {t}...")
+        status.text(f"Checke {t}...")
         prog.progress((i + 1) / len(watchlist))
         
-        # Hier rufen wir die NEUE Funktion mit 7 Rückgabewerten auf
+        # WICHTIG: Wir entpacken jetzt alle 7 Werte der neuen Funktion
         price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(t)
         
         if price and dates:
-            # FILTER 1: Mindestpreis (aus deinem Schieberegler)
+            # 1. PREIS-FILTER (dein Schieberegler)
             if price < min_stock_price: continue
             
-            # FILTER 2: Trend-Check (Nur Puts im Aufwärtstrend verkaufen!)
+            # 2. TREND-FILTER (Keine Puts im Abwärtstrend!)
             if not uptrend: continue
             
             try:
                 tk = yf.Ticker(t)
+                # Suche Laufzeit ~30 Tage
                 target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
                 chain = tk.option_chain(target_date).puts
                 T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
                 
+                # Delta berechnen
                 chain['delta_v'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.4), axis=1)
                 
-                # Filter nach deiner gewünschten Sicherheit (max_delta)
+                # Filter nach deiner Delta-Sicherheit (max_delta aus Sidebar)
                 matches = chain[chain['delta_v'].abs() <= max_delta].copy()
                 
                 if not matches.empty:
                     best = matches.sort_values('strike', ascending=False).iloc[0]
-                    y_pa = (best['bid'] / best['strike']) * (365 / max(1, T*365)) * 100
+                    days = max(1, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days)
+                    y_pa = (best['bid'] / best['strike']) * (365 / days) * 100
                     
                     if y_pa >= min_yield_pa:
                         results.append({
@@ -138,23 +141,25 @@ if st.button("🚀 Kombi-Scan starten"):
 
     status.empty()
     if results:
-        st.subheader("🎯 Profi-Einstiegs-Chancen (Trend & Vola gefiltert)")
+        st.subheader("🎯 Profi-Einstiegs-Chancen")
+        # Anzeige in 4 kompakten Spalten
         cols = st.columns(4)
         for idx, r in enumerate(pd.DataFrame(results).sort_values('Y', ascending=False).to_dict('records')):
             with cols[idx % 4]:
                 with st.container(border=True):
-                    # Ampel & Ticker
+                    # Ampel & BB-Signal
                     color = "🟢" if r['D'] < 0.16 else "🟡"
-                    bb_tag = "🎯 **BB-Signal**" if r['BB'] else ""
-                    st.markdown(f"### {color} {r['T']}")
-                    st.markdown(f"{bb_tag}", unsafe_allow_html=True)
+                    bb_hint = "🎯 **BB-Signal**" if r['BB'] else ""
                     
+                    st.markdown(f"**{color} {r['T']}** <span style='float:right;'>{bb_hint}</span>", unsafe_allow_html=True)
                     st.metric("Yield p.a.", f"{r['Y']:.1f}%")
-                    st.write(f"Strike: **{r['S']:.1f}$** (Puffer: {r['P']:.1f}%)")
-                    st.caption(f"RSI: {r['R']:.0f} | ATR: {r['ATR']:.2f}$")
+                    
+                    st.markdown(f"<p style='font-size:13px; margin:0;'>Strike: **{r['S']:.1f}$** (Puffer: {r['P']:.1f}%)</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='font-size:12px; color:grey; margin:0;'>RSI: {r['R']:.0f} | ATR: {r['ATR']:.2f}$</p>", unsafe_allow_html=True)
+                    
                     if r['E']: st.warning(f"ER: {r['E']}")
     else:
-        st.warning("Keine Treffer. Eventuell Trend-Filter zu streng?")
+        st.warning("Keine Treffer. Tipp: Trend-Filter ist aktiv (nur Aktien > SMA 200).")
 st.write("---") 
 
 # SEKTION 2: DEPOT STATUS
@@ -252,6 +257,7 @@ if t_in:
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
