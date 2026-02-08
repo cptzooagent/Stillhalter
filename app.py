@@ -90,45 +90,36 @@ min_stock_price = st.sidebar.slider("Mindest-Aktienpreis ($)", 0, 500, 20)
 # --- HAUPTBEREICH ---
 st.title("🛡️ CapTrader AI Market Scanner")
 
-# --- SEKTION 1: PROFI-MARKT-SCANNER (TREND & VOLA) ---
+# --- SEKTION 1: SCANNER MIT AUTOMATISCHEM EARNINGS-RADAR ---
 if st.button("🚀 Kombi-Scan starten"):
-    # Erweitere Watchlist nach Belieben
-    watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "PLTR", "HOOD", "AFRM", "COIN", "MSTR", "AMD", "NFLX"]
+    watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "PLTR", "HOOD", "AFRM", "COIN", "MSTR", "AMD", "NFLX", "DIS", "PYPL"]
     results = []
     prog = st.progress(0)
     status = st.empty()
     
     for i, t in enumerate(watchlist):
-        status.text(f"Checke {t}...")
+        status.text(f"Analysiere {t}...")
         prog.progress((i + 1) / len(watchlist))
         
-        # WICHTIG: Wir entpacken jetzt alle 7 Werte der neuen Funktion
         price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(t)
         
         if price and dates:
-            # 1. PREIS-FILTER (dein Schieberegler)
-            if price < min_stock_price: continue
-            
-            # 2. TREND-FILTER (Keine Puts im Abwärtstrend!)
-            if not uptrend: continue
+            # FILTER: Mindestpreis & Trend-Check
+            if price < min_stock_price or not uptrend:
+                continue
             
             try:
                 tk = yf.Ticker(t)
-                # Suche Laufzeit ~30 Tage
                 target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
                 chain = tk.option_chain(target_date).puts
                 T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
                 
-                # Delta berechnen
                 chain['delta_v'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.4), axis=1)
-                
-                # Filter nach deiner Delta-Sicherheit (max_delta aus Sidebar)
                 matches = chain[chain['delta_v'].abs() <= max_delta].copy()
                 
                 if not matches.empty:
                     best = matches.sort_values('strike', ascending=False).iloc[0]
-                    days = max(1, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days)
-                    y_pa = (best['bid'] / best['strike']) * (365 / days) * 100
+                    y_pa = (best['bid'] / best['strike']) * (365 / max(1, T*365)) * 100
                     
                     if y_pa >= min_yield_pa:
                         results.append({
@@ -142,25 +133,38 @@ if st.button("🚀 Kombi-Scan starten"):
     status.empty()
     if results:
         st.subheader("🎯 Profi-Einstiegs-Chancen")
-        # Anzeige in 4 kompakten Spalten
         cols = st.columns(4)
         for idx, r in enumerate(pd.DataFrame(results).sort_values('Y', ascending=False).to_dict('records')):
             with cols[idx % 4]:
                 with st.container(border=True):
-                    # Ampel & BB-Signal
+                    # Header
                     color = "🟢" if r['D'] < 0.16 else "🟡"
-                    bb_hint = "🎯 **BB-Signal**" if r['BB'] else ""
+                    st.markdown(f"### {color} {r['T']}")
                     
-                    st.markdown(f"**{color} {r['T']}** <span style='float:right;'>{bb_hint}</span>", unsafe_allow_html=True)
+                    # EARNINGS-RADAR LOGIK
+                    earn_warning = ""
+                    if r['E']:
+                        try:
+                            heute = datetime.now()
+                            # Jahr ergänzen, da yf meist nur DD.MM. liefert
+                            e_date = datetime.strptime(f"{r['E']}{heute.year}", "%d.%m.%Y")
+                            days_left = (e_date - heute).days
+                            
+                            if 0 <= days_left <= 7:
+                                earn_warning = f"<p style='color:#ff4b4b; font-weight:bold; margin:0;'>🔥 ER in {days_left}d!</p>"
+                            else:
+                                earn_warning = f"<p style='color:grey; font-size:12px; margin:0;'>📅 ER: {r['E']}</p>"
+                        except:
+                            earn_warning = f"<p style='color:grey; font-size:12px; margin:0;'>📅 ER: {r['E']}</p>"
+                    
+                    st.markdown(earn_warning, unsafe_allow_html=True)
                     st.metric("Yield p.a.", f"{r['Y']:.1f}%")
                     
-                    st.markdown(f"<p style='font-size:13px; margin:0;'>Strike: **{r['S']:.1f}$** (Puffer: {r['P']:.1f}%)</p>", unsafe_allow_html=True)
-                    st.markdown(f"<p style='font-size:12px; color:grey; margin:0;'>RSI: {r['R']:.0f} | ATR: {r['ATR']:.2f}$</p>", unsafe_allow_html=True)
-                    
-                    if r['E']: st.warning(f"ER: {r['E']}")
+                    # Details
+                    st.markdown(f"<p style='font-size:13px; margin:0;'>Strike: **{r['S']:.1f}$**</p>", unsafe_allow_html=True)
+                    st.markdown(f"<p style='font-size:12px; color:grey; margin:0;'>Puffer: {r['P']:.1f}% | RSI: {r['R']:.0f}</p>", unsafe_allow_html=True)
     else:
-        st.warning("Keine Treffer. Tipp: Trend-Filter ist aktiv (nur Aktien > SMA 200).")
-st.write("---") 
+        st.warning("Keine Treffer unter Berücksichtigung der Sicherheits-Filter.") 
 
 # SEKTION 2: DEPOT STATUS
 st.subheader("💼 Smart Depot-Manager")
@@ -282,6 +286,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Berechnung: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
