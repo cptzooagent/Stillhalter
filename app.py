@@ -140,18 +140,21 @@ if st.button("🚀 Kombi-Scan starten"):
         try:
             # 1. Basis-Daten holen
             res = get_stock_data_full(symbol)
-            if res[0] is None or not res[1]: continue
+            if res[0] is None or not res[1]: 
+                continue
+            
             price, dates, earn, rsi, uptrend, near_lower, atr = res
             
-            # --- FILTER-STUFEN ---
-            # Preis-Filter
-            if price < min_stock_price: continue
-            # Trend-Filter (SMA 200)
-            if only_uptrend and not uptrend: continue
+            # --- STRATEGIE-FILTER ---
+            if price < min_stock_price: 
+                continue
+            if only_uptrend and not uptrend: 
+                continue
             
             # 2. Passende Laufzeit finden (mind. 11 Tage)
             target_date = next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
-            if not target_date: continue
+            if not target_date: 
+                continue
 
             # 3. Optionskette laden
             tk = yf.Ticker(symbol)
@@ -161,7 +164,9 @@ if st.button("🚀 Kombi-Scan starten"):
             max_strike = price * (1 - puffer_limit)
             secure_options = chain[chain['strike'] <= max_strike].sort_values('strike', ascending=False)
             
-            if secure_options.empty: continue
+            if secure_options.empty: 
+                continue
+            
             best_opt = secure_options.iloc[0]
             
             # 5. Rendite-Check (Wochenend-sicher)
@@ -172,41 +177,41 @@ if st.button("🚀 Kombi-Scan starten"):
             y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
             puffer_ist = ((price - best_opt['strike']) / price) * 100
             
-            if y_pa < min_yield_pa: continue
+            if y_pa < min_yield_pa: 
+                continue
 
             # --- ANZEIGE IN 4 SPALTEN ---
-                with cols[found_idx % 4]:
-                    # RSI-Farben definieren
-                    rsi_color = "#e74c3c" if rsi > 70 else "#2ecc71" if rsi < 40 else "#555"
-                    rsi_weight = "bold" if rsi > 70 or rsi < 40 else "normal"
-                    
-                    with st.container(border=True):
-                        # Header mit Symbol und Trend
-                        st.markdown(f"**{symbol}** {'✅' if uptrend else '📉'}")
-                        st.metric("Yield p.a.", f"{y_pa:.1f}%")
-                        
-                        # Die Info-Box mit Prämie und RSI-Warnung
-                        st.markdown(f"""
-                        <div style="font-size: 0.85em; line-height: 1.4; background-color: #f1f3f6; padding: 10px; border-radius: 8px; border-left: 5px solid #2ecc71;">
-                        <b style="color: #1e7e34; font-size: 1.1em;">Prämie: {bid:.2f}$</b><br>
-                        <span style="color: #666;">(Einnahme: {bid*100:.0f}$ pro Kontrakt)</span><hr style="margin: 8px 0;">
-                        <b>Strike:</b> {best_opt['strike']:.1f}$ ({puffer_ist:.1f}% Puffer)<br>
-                        <b>Kurs:</b> {price:.2f}$ | <b>RSI:</b> <span style="color:{rsi_color}; font-weight:{rsi_weight};">{rsi:.0f}</span><br>
-                        <b>Datum:</b> {expiry_dt.strftime('%d.%m.')} ({tage} Tage)
-                        </div>
-                        """, unsafe_allow_html=True)
+            with cols[found_idx % 4]:
+                # RSI-Ampel Logik
+                rsi_color = "#e74c3c" if rsi > 70 else "#2ecc71" if rsi < 40 else "#555"
+                rsi_weight = "bold" if rsi > 70 or rsi < 40 else "normal"
                 
-                found_idx += 1 # WICHTIG: Erhöhung des Index für die Spalten-Verteilung
+                with st.container(border=True):
+                    # Header: Symbol und Trend-Status
+                    st.markdown(f"**{symbol}** {'✅' if uptrend else '📉'}")
+                    st.metric("Yield p.a.", f"{y_pa:.1f}%")
+                    
+                    # Die Info-Box mit Prämie und RSI-Warnung
+                    st.markdown(f"""
+                    <div style="font-size: 0.85em; line-height: 1.4; background-color: #f1f3f6; padding: 10px; border-radius: 8px; border-left: 5px solid #2ecc71;">
+                    <b style="color: #1e7e34; font-size: 1.1em;">Prämie: {bid:.2f}$</b><br>
+                    <span style="color: #666;">(Einnahme: {bid*100:.0f}$ pro Kontrakt)</span><hr style="margin: 8px 0;">
+                    <b>Strike:</b> {best_opt['strike']:.1f}$ ({puffer_ist:.1f}% Puffer)<br>
+                    <b>Kurs:</b> {price:.2f}$ | <b>RSI:</b> <span style="color:{rsi_color}; font-weight:{rsi_weight};">{rsi:.0f}</span><br>
+                    <b>Datum:</b> {expiry_dt.strftime('%d.%m.')} ({tage} Tage)
+                    </div>
+                    """, unsafe_allow_html=True)
             
-            
-        except:
+            found_idx += 1
+
+        except Exception as e:
             continue
 
     # Abschluss-Meldung
     status_text.empty()
     progress_bar.empty()
     if found_idx == 0:
-        st.warning("Scan beendet. Keine Treffer gefunden. Tipp: Verringere den Mindest-Puffer oder die Rendite.")
+        st.warning("Scan beendet. Keine Treffer gefunden. Tipp: Puffer oder Rendite-Anspruch senken.")
     else:
         st.success(f"Scan beendet. {found_idx} Chancen identifiziert!")
         
@@ -337,4 +342,5 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
