@@ -136,10 +136,16 @@ if st.button("🚀 Kombi-Scan starten"):
     
     status_text = st.empty()
     progress_bar = st.progress(0)
-    
-    # Liste zum Sammeln der Treffer für die Sortierung
     all_results = []
     
+    # --- VIX MARKT-WETTER ABFRAGEN ---
+    try:
+        vix_val = yf.Ticker("^VIX").history(period="1d")['Close'].iloc[-1]
+        vix_color = "#2ecc71" if vix_val < 20 else "#f1c40f" if vix_val < 30 else "#e74c3c"
+        vix_status = f"<span style='color:{vix_color}; font-weight:bold;'>VIX: {vix_val:.2f}</span>"
+    except:
+        vix_status = "VIX: Nicht verfügbar"
+
     for i, symbol in enumerate(ticker_liste):
         if i % 5 == 0 or i == len(ticker_liste)-1:
             progress_bar.progress((i + 1) / len(ticker_liste))
@@ -150,55 +156,62 @@ if st.button("🚀 Kombi-Scan starten"):
             if res[0] is None or not res[1]: continue
             price, dates, earn, rsi, uptrend, near_lower, atr = res
             
-            # Preis-Filter (Neu mit Max-Preis)
             if not (min_stock_price <= price <= max_stock_price): continue
             if only_uptrend and not uptrend: continue
             
-            # Datums-Logik (11-20 Tage)
-            available_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 20]
-            target_date = available_dates[-1] if available_dates else next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
-            if not target_date: continue
+            # --- DATUMS-CHECK (11-20 TAGE) MIT RENDITE-MAXIMIERUNG ---
+            best_expiry_for_ticker = None
+            max_yield_found = -1
+            
+            # Prüfe alle Termine im Fenster und nimm den mit der besten Rendite
+            valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 20]
+            if not valid_dates:
+                # Fallback auf nächsten Termin ab 11 Tagen
+                fallback = next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
+                valid_dates = [fallback] if fallback else []
 
             tk = yf.Ticker(symbol)
-            chain = tk.option_chain(target_date).puts
-            max_strike = price * (1 - puffer_limit)
-            secure_options = chain[chain['strike'] <= max_strike].sort_values('strike', ascending=False)
-            
-            if secure_options.empty: continue
-            best_opt = secure_options.iloc[0]
-            
-            # Rendite & Puffer
-            bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
-            tage = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
-            y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
-            puffer_ist = ((price - best_opt['strike']) / price) * 100
-            
-            if y_pa >= min_yield_pa:
-                # Treffer in Liste speichern
+            for d_str in valid_dates:
+                chain = tk.option_chain(d_str).puts
+                max_strike = price * (1 - puffer_limit)
+                secure_options = chain[chain['strike'] <= max_strike].sort_values('strike', ascending=False)
+                
+                if not secure_options.empty:
+                    opt = secure_options.iloc[0]
+                    bid = opt['bid'] if opt['bid'] > 0 else (opt['lastPrice'] if opt['lastPrice'] > 0 else 0.05)
+                    tage = (datetime.strptime(d_str, '%Y-%m-%d') - datetime.now()).days
+                    curr_yield = (bid / opt['strike']) * (365 / max(1, tage)) * 100
+                    
+                    if curr_yield > max_yield_found:
+                        max_yield_found = curr_yield
+                        best_expiry_for_ticker = {
+                            'date': d_str, 'strike': opt['strike'], 'bid': bid, 
+                            'tage': tage, 'y_pa': curr_yield, 'puffer': ((price - opt['strike']) / price) * 100
+                        }
+
+            if best_expiry_for_ticker and max_yield_found >= min_yield_pa:
                 all_results.append({
-                    'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': best_opt['strike'],
-                    'puffer': puffer_ist, 'bid': bid, 'rsi': rsi, 'uptrend': uptrend,
-                    'earn': earn, 'tage': tage, 'date': target_date
+                    'symbol': symbol, 'price': price, 'rsi': rsi, 'uptrend': uptrend, 
+                    'earn': earn, **best_expiry_for_ticker
                 })
         except: continue
 
-    # Ergebnisse sortieren (Höchste Rendite zuerst)
+    # Ergebnisse sortieren & anzeigen
     all_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
-    
-    # Anzeige der sortierten Ergebnisse
     status_text.empty()
     progress_bar.empty()
+    
+    st.markdown(f"### Aktuelles Marktumfeld: {vix_status}", unsafe_allow_html=True)
     
     if not all_results:
         st.warning("Keine Treffer gefunden.")
     else:
-        st.success(f"Scan beendet. {len(all_results)} Chancen sortiert nach Rendite identifiziert!")
+        st.success(f"Scan beendet. {len(all_results)} Chancen nach Rendite sortiert!")
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
                 earn_warning = f" ⚠️ <span style='color:#e67e22; font-size:0.8em;'>ER: {res['earn']}</span>" if res['earn'] else ""
                 rsi_color = "#e74c3c" if res['rsi'] > 70 else "#2ecc71" if res['rsi'] < 40 else "#555"
-                
                 with st.container(border=True):
                     st.markdown(f"**{res['symbol']}** {'✅' if res['uptrend'] else '📉'}{earn_warning}", unsafe_allow_html=True)
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
@@ -208,7 +221,7 @@ if st.button("🚀 Kombi-Scan starten"):
                     <span style="color: #666;">({res['bid']*100:.0f}$ pro Kontrakt)</span><hr style="margin: 8px 0;">
                     <b>Strike:</b> {res['strike']:.1f}$ ({res['puffer']:.1f}% Puffer)<br>
                     <b>Kurs:</b> {res['price']:.2f}$ | <b>RSI:</b> <span style="color:{rsi_color}; font-weight:bold;">{res['rsi']:.0f}</span><br>
-                    <b>Termin:</b> {res['tage']} Tage
+                    <b>Termin:</b> {res['date'][8:10]}.{res['date'][5:7]}. ({res['tage']} Tage)
                     </div>
                     """, unsafe_allow_html=True)
         
@@ -343,6 +356,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
