@@ -30,6 +30,18 @@ def get_combined_watchlist():
         url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
         df = pd.read_csv(url)
         tickers = df['Symbol'].tolist()
+
+        def get_vix_status():
+    try:
+        vix = yf.Ticker("^VIX").history(period="1d")['Close'].iloc[-1]
+        if vix > 30:
+            return f"🔴 VIX: {vix:.2f} (Extreme Panik - Vorsicht!)"
+        elif vix > 20:
+            return f"🟡 VIX: {vix:.2f} (Erhöhte Volatilität - Gute Prämien)"
+        else:
+            return f"🟢 VIX: {res:.2f} (Ruhiger Markt)"
+    except:
+        return "⚪ VIX: Nicht verfügbar"
         
         # Manuelle Ergänzung wichtiger Nasdaq/Wachstumswerte, falls sie im S&P fehlen
         nasdaq_extra = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR", "HOOD", "PLTR", "SQ"]
@@ -331,6 +343,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
