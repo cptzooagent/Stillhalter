@@ -206,33 +206,40 @@ for i, item in enumerate(depot_data):
                     st.markdown(f"<p style='font-size:11px; margin:0;'>📅 ER: {earn}</p>", unsafe_allow_html=True)
 st.write("---") 
 
-# --- AB HIER ERSETZEN (Sektion 3 bis Ende der Datei) ---
+# --- SEKTION 3: EINZEL-CHECK (7-WERTE-FIX & PROFI-INDIKATOREN) ---
 st.subheader("🔍 Einzel-Check & Option-Chain")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
 with c2: t_in = st.text_input("Ticker Symbol", value="HOOD").upper()
 
 if t_in:
-    price, dates, earn, rsi, _ = get_stock_data_full(t_in)
+    # FIX: Hier entpacken wir jetzt alle 7 Rückgabewerte
+    price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(t_in)
+    
     if price and dates:
-        st.info(f"Aktueller Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}** | Nächste Ernte: {earn}")
+        # Status-Zeile mit den neuen Indikatoren
+        trend_status = "📈 Aufwärtstrend" if uptrend else "📉 Abwärtstrend"
+        bb_status = " | 🎯 BB-Touch" if near_lower else ""
+        
+        st.info(f"**{price:.2f}$** | RSI: **{rsi:.0f}** | {trend_status}{bb_status} | ATR: {atr:.2f}$")
+        if earn: st.warning(f"Nächste Earnings: {earn}")
+        
         d_sel = st.selectbox("Laufzeit wählen", dates)
         
         try:
             tk = yf.Ticker(t_in)
             chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
             
-            # Zeit bis Verfall berechnen
             expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
             days_to_expiry = max(1, (expiry_dt - datetime.now()).days)
             T = days_to_expiry / 365
             
-            # Delta-Berechnung (Nutzt deine bestehende Funktion)
+            # Delta-Berechnung
             chain['delta_calc'] = chain.apply(lambda opt: calculate_bsm_delta(
                 price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode
             ), axis=1)
 
-            # Filterung für die Anzeige (Wunsch-Design)
+            # Filterung für die Anzeige
             if mode == "put":
                 filtered_df = chain[chain['strike'] <= price * 1.1].sort_values('strike', ascending=False)
             else:
@@ -242,27 +249,25 @@ if t_in:
             for _, opt in filtered_df.head(20).iterrows():
                 d_abs = abs(opt['delta_calc'])
                 
-                # AMPEL LOGIK
-                risk_emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.30 else "🔴"
+                # Ampel-Logik
+                color = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.30 else "🔴"
                 
-                # RENDITE & PUFFER
+                # Rendite & Puffer
                 y_pa = (opt['bid'] / opt['strike']) * (365 / days_to_expiry) * 100
                 puffer = (abs(opt['strike'] - price) / price) * 100
                 
-                # ANZEIGE (Identisch zu Screenshot 2.png)
-                # Wir bauen den String sicher zusammen, um f-string Fehler zu vermeiden
-                bid_val = f"{opt['bid']:.2f}$"
-                line = (f"{risk_emoji} **Strike: {opt['strike']:.1f}** | "
-                        f"Bid: <span style='color:#2ecc71; font-weight:bold;'>{bid_val}</span> | "
-                        f"Delta: {d_abs:.2f} | "
-                        f"Puffer: {puffer:.1f}% | "
-                        f"Rendite: {y_pa:.1f}% p.a.")
-                
-                st.markdown(line, unsafe_allow_html=True)
+                # Anzeige im Wunsch-Design
+                bid_html = f"<span style='color:#2ecc71; font-weight:bold;'>{opt['bid']:.2f}$</span>"
+                st.markdown(
+                    f"{color} **Strike: {opt['strike']:.1f}** | Bid: {bid_html} | "
+                    f"Delta: {d_abs:.2f} | Puffer: {puffer:.1f}% | Yield: {y_pa:.1f}% p.a.",
+                    unsafe_allow_html=True
+                )
                 
         except Exception as e:
-            st.error(f"Ein Fehler ist aufgetreten: {e}")
+            st.error(f"Fehler in der Optionskette: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
