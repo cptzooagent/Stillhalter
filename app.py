@@ -218,29 +218,30 @@ if 'depot_data' in locals():
 else:
     st.error("Variable 'depot_data' wurde nicht gefunden!")
 
-# --- SEKTION 3: EINZEL-CHECK (DIE ULTIMATIVE FEHLERFREIE AMPEL) ---
+# --- SEKTION 3: EINZEL-CHECK (FORMAT-STABIL) ---
 st.divider()
 st.subheader("🔍 Einzel-Check & Option-Chain")
 
-c1, c2 = st.columns([1, 2])
-with c1: 
+col_left, col_right = st.columns([1, 2])
+with col_left: 
     mode = st.radio("Optionstyp", ["put", "call"], horizontal=True)
-with c2: 
+with col_right: 
     t_in = st.text_input("Ticker Symbol", value="HOOD").upper().strip()
 
 if t_in:
+    # Daten abrufen
     price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(t_in)
     
     if price and dates:
-        # Depot-Abgleich für Einstandspreis
+        # Depot-Abgleich
         mein_einstand = next((item['Einstand'] for item in depot_data if item['Ticker'] == t_in), None)
         
-        # Dashboard-Header
+        # Dashboard oben
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Kurs", "{:.2f}$".format(price))
         m2.metric("RSI", "{:.0f}".format(rsi))
-        m3.write("**Trend:** {}".format('📈 Up' if uptrend else '📉 Down'))
-        m4.write("**ATR:** {:.2f}$".format(atr))
+        m3.write("Trend: {}".format('📈 Up' if uptrend else '📉 Down'))
+        m4.write("ATR: {:.2f}$".format(atr))
         
         if mein_einstand:
             st.info("📌 Dein Einstand für {}: {:.2f}$".format(t_in, mein_einstand))
@@ -249,16 +250,17 @@ if t_in:
         
         try:
             tk = yf.Ticker(t_in)
-            chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
+            opts = tk.option_chain(d_sel)
+            chain = opts.puts if mode == "put" else opts.calls
             
             expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
             tage = max(1, (expiry_dt - datetime.now()).days)
-            T = tage / 365
+            T_yr = tage / 365
             
-            # Delta-Berechnung (BSM)
-            chain['delta_c'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4, mode), axis=1)
+            # Delta-Berechnung
+            chain['delta_c'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T_yr, o['impliedVolatility'] or 0.4, mode), axis=1)
             
-            # Sortierung & Filterung
+            # Filterung
             if mode == "put":
                 df_view = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
             else:
@@ -266,27 +268,24 @@ if t_in:
 
             st.write("---")
             
-            # DIE ANZEIGE-SCHLEIFE (Vollständig geschützt gegen den Concat-Fehler)
+            # DIE ANZEIGE-SCHLEIFE (Null-Risiko für Concat-Fehler)
             for _, opt in df_view.head(15).iterrows():
                 d_abs = abs(opt['delta_c'])
                 y_pa = (opt['bid'] / opt['strike']) * (365 / tage) * 100
-                puffer = (abs(opt['strike'] - price) / price) * 100
+                puf = (abs(opt['strike'] - price) / price) * 100
                 
-                # Ampel-Wahl
-                emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.30 else "🔴"
+                # Ampel-Logik
+                emo = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.30 else "🔴"
                 
-                # Safe-Tag Logik
-                safe_tag = ""
-                if mode == "call" and mein_einstand and opt['strike'] >= mein_einstand:
-                    safe_tag = " ✅ **SAFE**"
+                # Safe-Check
+                safe = " ✅ **SAFE**" if (mode == "call" and mein_einstand and opt['strike'] >= mein_einstand) else ""
                 
-                # DIE SICHERE ZEILEN-KONSTRUKTION
-                # Wir nutzen nur die .format() Methode, niemals den '+' Operator!
-                zeile = "{} **Strike: {:.1f}** | Bid: {:.2f}$ | D: {:.2f} | P: {:.1f}% | Y: {:.1f}% p.a.{}".format(
-                    emoji, opt['strike'], opt['bid'], d_abs, puffer, y_pa, safe_tag
+                # WIR NUTZEN NUR .format() -> KEIN "+" ZEICHEN!
+                zeile = "{} **Strike: {:.1f}** | Bid: {:.2f}$ | D: {:.2f} | P: {:.1f}% | Y: {:.1f}%{}".format(
+                    emo, opt['strike'], opt['bid'], d_abs, puf, y_pa, safe
                 )
                 
                 st.markdown(zeile)
 
         except Exception as e:
-            st.error("Fehler in der Optionskette: {}".format(e))
+            st.error("Options-Fehler: {}".format(e))
