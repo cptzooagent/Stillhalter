@@ -11,7 +11,6 @@ st.set_page_config(page_title="CapTrader Pro Scanner", layout="wide")
 # --- 1. MATHE: DELTA & RSI ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     if T <= 0 or sigma <= 0: return 0
-    # Black-Scholes Formel für Delta
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     if option_type == 'call':
         return norm.cdf(d1)
@@ -26,7 +25,7 @@ def calculate_rsi(data, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-# --- 2. DATEN-FUNKTION (Vereinheitlicht für Bild 25) ---
+# --- 2. DATEN-FUNKTION ---
 @st.cache_data(ttl=900)
 def get_stock_data_full(symbol):
     try:
@@ -55,7 +54,7 @@ min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=15)
 
 st.title("🛡️ CapTrader AI Market Scanner")
 
-# --- SEKTION 1: MARKT-SCAN (Fix für Bild 22) ---
+# --- SEKTION 1: MARKT-SCAN (Mit Laufzeit-Fix) ---
 if st.button("🚀 Markt-Scan starten", use_container_width=True):
     watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "PLTR", "HOOD", "AFRM", "AMD", "NFLX", "COIN"]
     results = []
@@ -65,18 +64,20 @@ if st.button("🚀 Markt-Scan starten", use_container_width=True):
         if price and dates:
             try:
                 tk = yf.Ticker(t)
+                # Finde Option die am nächsten an 30 Tagen ist
                 target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
+                days_to_expiry = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
+                T = max(1/365, days_to_expiry / 365)
+                
                 chain = tk.option_chain(target_date).puts
-                T = max(1/365, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365)
-                
                 chain['delta_val'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.4, option_type='put'), axis=1)
-                safe_opts = chain[chain['delta_val'].abs() <= max_delta].copy()
                 
+                safe_opts = chain[chain['delta_val'].abs() <= max_delta].copy()
                 if not safe_opts.empty:
                     safe_opts['y_pa'] = (safe_opts['bid'] / safe_opts['strike']) * (1/T) * 100
                     best = safe_opts.sort_values('y_pa', ascending=False).iloc[0]
                     if best['y_pa'] >= min_yield_pa:
-                        results.append({'T': t, 'Y': best['y_pa'], 'S': best['strike'], 'B': best['bid'], 'D': abs(best['delta_val']), 'R': rsi, 'E': earn})
+                        results.append({'T': t, 'Y': best['y_pa'], 'S': best['strike'], 'B': best['bid'], 'D': abs(best['delta_val']), 'R': rsi, 'E': earn, 'Days': days_to_expiry, 'Exp': target_date})
             except:
                 continue
 
@@ -85,24 +86,21 @@ if st.button("🚀 Markt-Scan starten", use_container_width=True):
         for i, r in enumerate(results):
             with cols[i % 3]:
                 st.markdown(f"### {r['T']}")
-                st.metric("Rendite p.a.", f"{r['Y']:.1f}%", f"↑ Δ {r['D']:.2f}")
-                st.write(f"💰 **Cash-Prämie: {r['B']*100:.0f}$**")
-                st.write(f"🎯 Strike: {r['S']}$ | RSI: {r['R']:.0f}")
-                if r['E']: st.warning(f"📅 Earnings: {r['E']}")
+                st.metric("Rendite p.a.", f"{r['Y']:.1f}%", f"Δ {r['D']:.2f}")
+                st.write(f"📅 **Laufzeit:** {r['Exp']} ({r['Days']} Tage)")
+                st.write(f"💰 **Prämie:** {r['B']*100:.0f}$ | Strike: {r['S']}$")
+                if r['E']: st.warning(f"Earnings am {r['E']}")
     else:
         st.info("Keine Treffer unter den aktuellen Einstellungen.")
 
-# --- SEKTION 2: DEPOT-MANAGER (Deine Werte aus Bild 6) ---
+# --- SEKTION 2: DEPOT-MANAGER ---
 st.write("---")
 st.subheader("💼 Smart Depot-Manager")
 
 depot_data = [
     {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
     {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
-    {"Ticker": "GTM", "Einstand": 17.0}, {"Ticker": "HIMS", "Einstand": 37.0},
-    {"Ticker": "HOOD", "Einstand": 82.82}, {"Ticker": "JKS", "Einstand": 50.0},
-    {"Ticker": "NVO", "Einstand": 97.0}, {"Ticker": "RBRK", "Einstand": 70.0},
-    {"Ticker": "SE", "Einstand": 170.0}, {"Ticker": "TTD", "Einstand": 102.0}
+    {"Ticker": "HOOD", "Einstand": 82.82}, {"Ticker": "NVO", "Einstand": 97.0}
 ]
 
 p_cols = st.columns(3)
@@ -111,51 +109,46 @@ for i, item in enumerate(depot_data):
     if price:
         diff = (price / item['Einstand'] - 1) * 100
         with p_cols[i % 3]:
-            with st.expander(f"{item['Ticker']} ({diff:.1f}%)", expanded=True):
-                c1, c2 = st.columns(2)
-                c1.metric("Kurs", f"{price:.2f}$")
-                c2.metric("RSI", f"{rsi:.0f}")
-                if rsi < 30: st.info("💎 Oversold")
-                elif rsi > 70: st.success("🎯 Overbought")
+            st.write(f"**{item['Ticker']}** ({diff:.1f}%)")
+            st.caption(f"Kurs: {price:.2f}$ | RSI: {rsi:.0f}")
 
-# --- SEKTION 3: EINZEL-CHECK (Fix für Bilder 21, 23, 24, 25) ---
+# --- SEKTION 3: EINZEL-CHECK (Mit Delta-Fix) ---
 st.write("---")
 st.subheader("🔍 Deep-Dive Einzel-Check")
 
 c_type, c_tick = st.columns([1, 3])
 opt_type = c_type.radio("Typ", ["put", "call"], horizontal=True)
-# Fix Bild 24: Klammer geschlossen
-t_in = c_tick.text_input("Symbol", "HOOD").upper()
+t_in = c_tick.text_input("Symbol eingeben", "HOOD").upper()
 
 if t_in:
-    # Fix Bild 25: Funktionsname vereinheitlicht
     price, dates, earn, rsi = get_stock_data_full(t_in)
-    if price:
-        st.write(f"Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}**")
-        expiry = st.selectbox("Laufzeit", dates)
+    if price and dates:
+        st.write(f"Aktueller Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}**")
+        expiry = st.selectbox("Wähle Laufzeit", dates)
+        
         tk = yf.Ticker(t_in)
         chain = tk.option_chain(expiry).calls if opt_type == "call" else tk.option_chain(expiry).puts
+        
+        # Zeitberechnung für Delta
         T = max(1/365, (datetime.strptime(expiry, '%Y-%m-%d') - datetime.now()).days / 365)
         
-        chain['delta_calc'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4, option_type=opt_type), axis=1)
+        # WICHTIG: Delta wird HIER für jeden Strike individuell berechnet
+        chain['delta_calc'] = chain.apply(
+            lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4, option_type=opt_type), axis=1
+        )
         
-        # Fix Bild 21: Syntax der Sortierung korrigiert
-        sort_order = (opt_type == "call")
-        filtered_chain = chain.sort_values('strike', ascending=sort_order).head(8)
+        # Sortierung für die Anzeige
+        sort_asc = (opt_type == "call") 
+        display_chain = chain.sort_values('strike', ascending=sort_asc).head(8)
         
-        for _, opt in filtered_chain.iterrows():
+        for _, opt in display_chain.iterrows():
             d_abs = abs(opt['delta_calc'])
             
-            if d_abs < 0.15: risk_label = "🟢 (Sicher)"
-            elif d_abs < 0.25: risk_label = "🟡 (Moderat)"
-            else: risk_label = "🔴 (Aggressiv)"
+            # Farbe basierend auf Delta
+            if d_abs < 0.15: color = "🟢"
+            elif d_abs < 0.25: color = "🟡"
+            else: color = "🔴"
             
-            # Fix Bild 23: Einrückung unter 'with' korrigiert
-            with st.expander(f"{risk_label} Strike {opt['strike']:.1f}$ | Delta: {d_abs:.2f}"):
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.write(f"💰 **Cash-Prämie:** {opt['bid']*100:.0f}$")
-                    st.write(f"📉 **Delta:** {d_abs:.2f}")
-                with col_b:
-                    st.write(f"🎯 **Puffer zum Kurs:** {abs(opt['strike']-price)/price*100:.1f}%")
-                    st.write(f"🌊 **Implizite Vola:** {int((opt['impliedVolatility'] or 0)*100)}%")
+            with st.expander(f"{color} Strike {opt['strike']:.1f}$ | Delta: {d_abs:.2f}"):
+                c1, c2 = st.columns(2)
+                c1.write(f"
