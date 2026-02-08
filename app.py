@@ -173,31 +173,37 @@ depot_data = [
     {"Ticker": "SE", "Einstand": 170.0}, {"Ticker": "TTD", "Einstand": 102.0}
 ]
 
-# --- NEUES AUFGERÄUMTES DEPOT-LAYOUT ---
-# --- ULTRA-KOMPAKTER DEPOT-MANAGER ---
+# --- REPARIERTER & KOMPAKTER DEPOT-MANAGER (7-WERTE-FIX) ---
 p_cols = st.columns(4) 
 for i, item in enumerate(depot_data):
-    price, _, earn, rsi, earn_dt = get_stock_data_full(item['Ticker'])
+    # FIX: Hier werden jetzt alle 7 Variablen abgeholt
+    price, _, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(item['Ticker'])
     
-    # In der for-schleife des Depot-Managers ersetzen:
-price, _, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(item['Ticker'])
-
-if price:
-    diff = (price / item['Einstand'] - 1) * 100
-    perf_color = "#2ecc71" if diff >= 0 else "#e74c3c"
-    
-    with p_cols[i % 4]:
-        with st.container(border=True):
-            # Zeile 1: Ticker & Trend-Licht
-            trend_emoji = "📈" if uptrend else "📉"
-            st.markdown(f"**{item['Ticker']}** {trend_emoji} <span style='float:right; color:{perf_color}; font-weight:bold;'>{diff:+.1f}%</span>", unsafe_allow_html=True)
-            
-            # Zeile 2: RSI & Bollinger Signal
-            b_signal = "🎯 BB-Touch" if near_lower else ""
-            st.markdown(f"<p style='font-size:13px; margin:0;'>RSI: {rsi:.0f} | {b_signal}</p>", unsafe_allow_html=True)
-            
-            # Zeile 3: ATR (Risiko-Maß)
-            st.markdown(f"<p style='font-size:12px; color:grey; margin:0;'>Vola (ATR): {atr:.2f}$</p>", unsafe_allow_html=True)
+    if price:
+        diff = (price / item['Einstand'] - 1) * 100
+        perf_color = "#2ecc71" if diff >= 0 else "#e74c3c"
+        
+        with p_cols[i % 4]:
+            with st.container(border=True):
+                # Kopfzeile: Ticker, Trend & Performance
+                t_emoji = "📈" if uptrend else "📉"
+                st.markdown(f"**{item['Ticker']}** {t_emoji} <span style='float:right; color:{perf_color}; font-weight:bold;'>{diff:+.1f}%</span>", unsafe_allow_html=True)
+                
+                # Datenzeile: Kurs & RSI
+                rsi_style = "color:#3498db; font-weight:bold;" if rsi < 35 else ""
+                st.markdown(
+                    f"<p style='font-size:13px; margin:0;'>"
+                    f"💲 {price:.2f}$ | RSI: <span style='{rsi_style}'>{rsi:.0f}</span>"
+                    f"</p>", unsafe_allow_html=True
+                )
+                
+                # NEU: Bollinger & ATR Info (ganz klein)
+                bb_txt = "🎯 **BB-Touch**" if near_lower else ""
+                st.markdown(f"<p style='font-size:11px; color:grey; margin:0;'>{bb_txt} | ATR: {atr:.2f}$</p>", unsafe_allow_html=True)
+                
+                # Earnings Warnung (falls vorhanden)
+                if earn:
+                    st.markdown(f"<p style='font-size:11px; margin:0;'>📅 ER: {earn}</p>", unsafe_allow_html=True)
 st.write("---") 
 
 # --- AB HIER ERSETZEN (Sektion 3 bis Ende der Datei) ---
@@ -257,6 +263,7 @@ if t_in:
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
