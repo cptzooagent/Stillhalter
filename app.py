@@ -3,205 +3,138 @@ import pandas as pd
 import yfinance as yf
 import numpy as np
 from scipy.stats import norm
-from datetime import datetime, timedelta
+from datetime import datetime
 
-# --- SETUP ---
-st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
+# --- 1. STABILE KONFIGURATION ---
+st.set_page_config(page_title="CapTrader AI Scanner", layout="wide")
 
-# --- 1. MATHE: DELTA-BERECHNUNG ---
-def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
+# Custom CSS für die Karten-Optik aus Bild 6
+st.markdown("""
+    <style>
+    .stMetric { background-color: #ffffff; padding: 10px; border-radius: 5px; border: 1px solid #e1e4e8; }
+    .main-title { font-size: 2.2rem; font-weight: bold; color: #1E3A8A; text-align: center; }
+    .risk-note { font-size: 0.9rem; color: #64748b; font-style: italic; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 2. LOGIK-KERN ---
+def get_delta(S, K, T, sigma, cp='put'):
     if T <= 0 or sigma <= 0: return 0
-    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
+    d1 = (np.log(S / K) + (0.04 + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    return norm.cdf(d1) - 1 if cp == 'put' else norm.cdf(d1)
 
-def calculate_rsi(data, window=14):
+def get_rsi(data, window=14):
     if len(data) < window + 1: return 50
     delta = data.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-    rs = gain / loss
+    up = delta.clip(lower=0).rolling(window=window).mean()
+    down = -delta.clip(upper=0).rolling(window=window).mean()
+    rs = up / down
     return 100 - (100 / (1 + rs))
 
-# --- 2. DATEN-FUNKTIONEN ---
-@st.cache_data(ttl=3600)
-def get_combined_watchlist():
-    sp500_nasdaq_mix = [
-        "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AVGO", "ADBE", "NFLX", 
-        "AMD", "INTC", "QCOM", "AMAT", "TXN", "MU", "ISRG", "LRCX", "PANW", "SNPS",
-        "LLY", "V", "MA", "JPM", "WMT", "XOM", "UNH", "PG", "ORCL", "COST", 
-        "ABBV", "BAC", "KO", "PEP", "CRM", "WFC", "DIS", "CAT", "AXP", "IBM",
-        "COIN", "MARA", "PLTR", "AFRM", "SQ", "RIVN", "UPST", "HOOD", "SOFI", "MSTR"
-    ]
-    return list(set(sp500_nasdaq_mix))
-
-@st.cache_data(ttl=900)
-def get_stock_data_full(symbol):
+@st.cache_data(ttl=600)
+def get_stock_info(symbol):
     try:
         tk = yf.Ticker(symbol)
-        price = tk.fast_info['last_price']
-        dates = list(tk.options)
-        
-        hist = tk.history(period="1mo")
-        rsi_val = calculate_rsi(hist['Close']).iloc[-1] if not hist.empty else 50
-        
-        earn_date = None
-        earn_str = ""
+        p = tk.fast_info['last_price']
+        h = tk.history(period="1mo")
+        rsi_val = get_rsi(h['Close']).iloc[-1] if not h.empty else 50
+        earn = ""
         try:
             cal = tk.calendar
             if cal is not None and 'Earnings Date' in cal:
-                earn_date = cal['Earnings Date'][0]
-                earn_str = earn_date.strftime('%d.%m.')
+                earn = cal['Earnings Date'][0].strftime('%d.%m.')
         except: pass
-        
-        return price, dates, earn_str, rsi_val, earn_date
-    except:
-        return None, [], "", 50, None
+        return p, list(tk.options), rsi_val, earn, tk
+    except: return None, [], 50, "", None
 
-# --- UI: SEITENLEISTE ---
-st.sidebar.header("🛡️ Strategie-Einstellungen")
-target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 83)
-max_delta = (100 - target_prob) / 100
-min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
-sort_by_rsi = st.sidebar.checkbox("Nach RSI sortieren (Hoch -> Tief)")
+# --- 3. SIDEBAR (Fix Bild 7 & 8) ---
+st.sidebar.header("⚙️ Strategie")
+target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 98, 85)
+min_yield = st.sidebar.number_input("Min. Rendite p.a. (%)", value=15)
+sort_rsi = st.sidebar.checkbox("Nach RSI sortieren", value=True)
+st.sidebar.markdown("---")
+st.sidebar.warning("⚠️ RSI immer mit Chart (Support/Resistance) abgleichen!")
 
-# --- HAUPTBEREICH ---
-st.title("🛡️ CapTrader AI Market Scanner")
+st.markdown('<p class="main-title">🛡️ CapTrader AI Market Intelligence</p>', unsafe_allow_html=True)
 
-# SEKTION 1: SCANNER
-if st.button("🚀 Kombi-Scan starten"):
-    watchlist = get_combined_watchlist()
+# --- 4. SCANNER (STABIL & DETAILREICH) ---
+if st.button("🚀 Markt-Analyse starten", use_container_width=True):
+    watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "PLTR", "HOOD", "AFRM"]
     results = []
     prog = st.progress(0)
-    status = st.empty()
     
     for i, t in enumerate(watchlist):
-        status.text(f"Analysiere {t}...")
         prog.progress((i + 1) / len(watchlist))
-        price, dates, earn, rsi, _ = get_stock_data_full(t)
-        
-        if price and dates:
+        p, dates, rsi, earn, tk = get_stock_info(t)
+        if p and dates:
             try:
-                tk = yf.Ticker(t)
-                target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
-                chain = tk.option_chain(target_date).puts
-                T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
+                # Target: ca. 30 Tage Laufzeit
+                d_target = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
+                chain = tk.option_chain(d_target).puts
+                T = (datetime.strptime(d_target, '%Y-%m-%d') - datetime.now()).days / 365
+                chain['delta'] = chain.apply(lambda r: get_delta(p, r['strike'], T, r['impliedVolatility'] or 0.4), axis=1)
                 
-                chain['delta_val'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.4), axis=1)
-                safe_opts = chain[chain['delta_val'].abs() <= max_delta].copy()
-                
-                if not safe_opts.empty:
-                    days = max(1, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days)
-                    safe_opts['y_pa'] = (safe_opts['bid'] / safe_opts['strike']) * (365 / days) * 100
-                    matches = safe_opts[safe_opts['y_pa'] >= min_yield_pa]
-                    
-                    if not matches.empty:
-                        best = matches.sort_values('y_pa', ascending=False).iloc[0]
-                        results.append({
-                            'ticker': t, 'yield': best['y_pa'], 'strike': best['strike'], 
-                            'bid': best['bid'], 'puffer': (abs(best['strike'] - price) / price) * 100, 
-                            'delta': abs(best['delta_val']), 'earn': earn, 'rsi': rsi
-                        })
+                matches = chain[chain['delta'].abs() <= (1 - target_prob/100)].copy()
+                if not matches.empty:
+                    matches['y_pa'] = (matches['bid'] / matches['strike']) * (1/T) * 100
+                    best = matches.sort_values('y_pa', ascending=False).iloc[0]
+                    if best['y_pa'] >= min_yield:
+                        results.append({'T': t, 'Y': best['y_pa'], 'S': best['strike'], 'B': best['bid'], 'D': abs(best['delta']), 'R': rsi, 'E': earn})
             except: continue
 
-    status.text("Kombinations-Scan abgeschlossen!")
     if results:
-        df_res = pd.DataFrame(results)
-        sort_col = 'rsi' if sort_by_rsi else 'yield'
-        opp_df = df_res.sort_values(sort_col, ascending=False).head(12)
-        
-        cols = st.columns(4)
-        for idx, row in enumerate(opp_df.to_dict('records')):
-            with cols[idx % 4]:
-                st.markdown(f"### {row['ticker']}")
-                st.caption(f"RSI: {row['rsi']:.0f}")
-                if row['earn']: st.warning(f"⚠️ ER: {row['earn']}")
-                st.metric("Rendite p.a.", f"{row['yield']:.1f}%")
-                st.write(f"💰 Bid: **{row['bid']:.2f}$** | Puffer: **{row['puffer']:.1f}%**")
-                st.write(f"🎯 Strike: **{row['strike']:.1f}$** (Δ {row['delta']:.2f})")
+        df = pd.DataFrame(results).sort_values('R' if sort_rsi else 'Y', ascending=(not sort_rsi))
+        cols = st.columns(3)
+        for i, r in enumerate(df.to_dict('records')):
+            with cols[i % 3]:
+                st.metric(r['T'], f"{r['Y']:.1f}% p.a.", f"Δ {r['D']:.2f}")
+                with st.expander(f"Details: Strike {r['S']}$", expanded=False):
+                    st.write(f"💵 **Prämie:** {r['B']:.2f}$ ({r['B']*100:.0f}$ Cash)")
+                    st.write(f"📊 **RSI:** {r['R']:.0f}")
+                    if r['E']: st.error(f"📅 Earnings: {r['E']}")
     else:
-        st.warning(f"Keine Treffer.")
+        st.warning("Keine Treffer mit diesen Filtern.")
 
-st.write("---") 
-
-# SEKTION 2: DEPOT STATUS
+# --- 5. DEPOT-MANAGER (Fix Bild 3 & 6) ---
+st.markdown("---")
 st.subheader("💼 Smart Depot-Manager")
-depot_data = [
-    {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
-    {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
-    {"Ticker": "GTM", "Einstand": 17.0}, {"Ticker": "HIMS", "Einstand": 37.0},
-    {"Ticker": "HOOD", "Einstand": 82.82}, {"Ticker": "JKS", "Einstand": 50.0},
-    {"Ticker": "NVO", "Einstand": 97.0}, {"Ticker": "RBRK", "Einstand": 70.0},
-    {"Ticker": "SE", "Einstand": 170.0}, {"Ticker": "TTD", "Einstand": 102.0}
-]
+depot = ["AFRM", "HOOD", "NVDA", "PLTR", "META", "TSLA"]
+d_cols = st.columns(3)
+for i, t in enumerate(depot):
+    p, _, rsi, earn, _ = get_stock_info(t)
+    if p:
+        with d_cols[i % 3]:
+            # Expander ist die sicherste Lösung für deine Streamlit-Version (Bild 3)
+            with st.expander(f"{t} Analyse", expanded=True):
+                m1, m2 = st.columns(2)
+                m1.metric("Kurs", f"{p:.1f}$")
+                m2.metric("RSI", f"{rsi:.0f}")
+                if rsi < 30: st.info("💎 Oversold - Hold")
+                elif rsi > 70: st.success("🎯 Overbought - Sell Call?")
+                if earn: st.caption(f"Earnings am {earn}")
 
-p_cols = st.columns(3)
-for i, item in enumerate(depot_data):
-    price, _, earn, rsi, earn_dt = get_stock_data_full(item['Ticker'])
-    if price:
-        diff = (price / item['Einstand'] - 1) * 100
-        with p_cols[i % 3]:
-            with st.expander(f"{item['Ticker']} ({diff:.1f}%)", expanded=True):
-                if earn_dt is not None:
-                    try:
-                        days_to_earn = (earn_dt.replace(tzinfo=None) - datetime.now().replace(tzinfo=None)).days
-                        if 0 <= days_to_earn <= 3:
-                            st.error(f"🚨 EARNINGS IN {days_to_earn} TAGEN!")
-                    except: pass
-
-                c1, c2 = st.columns(2)
-                c1.metric("Kurs", f"{price:.2f}$")
-                c2.metric("RSI", f"{rsi:.0f}")
-                
-                if diff > -5 and rsi > 65:
-                    st.success("✅ Call-Verkauf prüfen")
-                elif rsi < 35:
-                    st.info("💎 Oversold - Hold")
-                
-                if earn: st.caption(f"📅 Earnings: {earn}")
-
-st.write("---") 
-
-# SEKTION 3: EINZEL-CHECK (FIX: DELTA WIEDER DA)
-st.subheader("🔍 Einzel-Check")
+# --- 6. EINZEL-CHECK (DELTA & PRÄMIE IM TITEL) ---
+st.markdown("---")
+st.subheader("🔍 Deep-Dive Einzel-Check")
 c1, c2 = st.columns([1, 2])
-with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
-with c2: t_in = st.text_input("Ticker", value="NVDA").upper()
+with c1: mode = st.radio("Optionstyp", ["put", "call"])
+with c2: t_in = st.text_input("Ticker-Symbol", "NVDA").upper()
 
 if t_in:
-    price, dates, earn, rsi, _ = get_stock_data_full(t_in)
-    if price and dates:
-        st.write(f"Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}**")
-        d_sel = st.selectbox("Laufzeit wählen", dates)
-        tk = yf.Ticker(t_in)
-        
+    p, dates, rsi, earn, tk = get_stock_info(t_in)
+    if p and dates:
+        st.write(f"Aktueller Kurs: **{p:.2f}$** | RSI: **{rsi:.0f}**")
+        d_sel = st.selectbox("Optionen-Laufzeit wählen", dates)
         try:
-            chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
+            chain = tk.option_chain(d_sel).puts if mode == 'put' else tk.option_chain(d_sel).calls
             T = (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days / 365
+            chain['delta'] = chain.apply(lambda r: get_delta(p, r['strike'], T, r['impliedVolatility'] or 0.4, mode), axis=1)
             
-            # Delta für die Filterung und Anzeige berechnen
-            chain['delta_calc'] = chain.apply(lambda opt: calculate_bsm_delta(
-                price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode
-            ), axis=1)
-
-            if mode == "put":
-                filtered_df = chain[(chain['delta_calc'] <= -0.10) & (chain['strike'] < price)].sort_values('strike', ascending=False)
-            else:
-                filtered_df = chain[(chain['delta_calc'] >= 0.10) & (chain['strike'] > price)].sort_values('strike', ascending=True)
-            
-            for _, opt in filtered_df.iterrows():
-                d_abs = abs(opt['delta_calc'])
-                risk = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.31 else "🔴"
-                
-                # Delta im Titel des Expanders hinzugefügt
-                with st.expander(f"{risk} Strike {opt['strike']:.1f}$ | Delta: {d_abs:.2f} | Bid: {opt['bid']:.2f}$"):
-                    col_a, col_b = st.columns(2)
-                    with col_a:
-                        st.write(f"💰 **Preis:** {opt['bid']:.2f}$")
-                        st.write(f"📊 **OTM:** {(1-d_abs)*100:.1f}%")
-                    with col_b:
-                        st.write(f"🎯 **Puffer:** {(abs(opt['strike']-price)/price)*100:.1f}%")
-                        st.write(f"📉 **Delta:** {d_abs:.2f}")
-                        st.write(f"🌊 **IV:** {int((opt['impliedVolatility'] or 0)*100)}%")
-        except Exception as e:
-            st.error(f"Fehler: {e}")
-
+            # Anzeige der Top 5 Strikes mit Delta und Prämie direkt im Titel
+            for _, row in chain[chain['delta'].abs() < 0.4].sort_values('strike', ascending=(mode=='call')).head(5).iterrows():
+                d_val = abs(row['delta'])
+                with st.expander(f"Strike {row['strike']:.1f}$ | Δ {d_val:.2f} | Bid: {row['bid']:.2f}$"):
+                    a, b = st.columns(2)
+                    a.write(f"💰 **Einnahme:** {row['bid']*100:.0f}$")
+                    b.write(f"📉 **Puffer:** {abs(row['strike']-p)/p*100:.1f}%")
+        except: st.error("Konnte Optionsdaten nicht laden.")
