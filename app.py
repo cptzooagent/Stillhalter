@@ -169,30 +169,46 @@ depot_data = [
     {"Ticker": "SE", "Einstand": 170.0}, {"Ticker": "TTD", "Einstand": 102.0}
 ]
 
-p_cols = st.columns(3)
+# --- NEUES AUFGERÄUMTES DEPOT-LAYOUT ---
+p_cols = st.columns(4) # Wir nutzen 4 Spalten für eine bessere Übersicht
 for i, item in enumerate(depot_data):
     price, _, earn, rsi, earn_dt = get_stock_data_full(item['Ticker'])
+    
     if price:
         diff = (price / item['Einstand'] - 1) * 100
-        with p_cols[i % 3]:
-            with st.expander(f"{item['Ticker']} ({diff:.1f}%)", expanded=True):
+        # Farbe für die Performance (Grün für Plus, Rot für Minus)
+        perf_color = "#2ecc71" if diff >= 0 else "#e74c3c"
+        
+        with p_cols[i % 4]:
+            with st.container(border=True):
+                # Header: Ticker und Performance
+                st.markdown(f"### {item['Ticker']}")
+                st.markdown(f"<span style='color:{perf_color}; font-weight:bold; font-size:20px;'>{diff:+.1f}%</span>", unsafe_allow_html=True)
+                
+                # Metrics Bereich
+                c1, c2 = st.columns(2)
+                c1.caption("Kurs")
+                c1.write(f"**{price:.2f}$**")
+                c2.caption("RSI")
+                # RSI Farbe (Blau wenn überverkauft)
+                rsi_style = "color:#3498db;font-weight:bold;" if rsi < 35 else ""
+                c2.markdown(f"<span style='{rsi_style}'>{rsi:.0f}</span>", unsafe_allow_html=True)
+                
+                # Signale & Warnungen
                 if earn_dt is not None:
                     try:
                         days_to_earn = (earn_dt.replace(tzinfo=None) - datetime.now().replace(tzinfo=None)).days
-                        if 0 <= days_to_earn <= 3:
-                            st.error(f"🚨 EARNINGS IN {days_to_earn} TAGEN!")
+                        if 0 <= days_to_earn <= 5:
+                            st.error(f"⚠️ ER in {days_to_earn}d")
+                        elif earn:
+                            st.caption(f"📅 ER: {earn}")
                     except: pass
-
-                c1, c2 = st.columns(2)
-                c1.metric("Kurs", f"{price:.2f}$")
-                c2.metric("RSI", f"{rsi:.0f}")
                 
-                if diff > -5 and rsi > 65:
-                    st.success("✅ Call-Verkauf prüfen")
+                # Handlungs-Empfehlung kompakt
+                if rsi > 65:
+                    st.success("🎯 Call-Check")
                 elif rsi < 35:
-                    st.info("💎 Oversold - Hold")
-                
-                if earn: st.caption(f"📅 Earnings: {earn}")
+                    st.info("💎 Oversold")
 
 st.write("---") 
 
@@ -253,6 +269,7 @@ if t_in:
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
