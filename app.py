@@ -98,15 +98,13 @@ min_stock_price = st.sidebar.slider("Mindest-Aktienpreis ($)", 0, 500, 20)
 # Das max_delta setzen wir fest auf einen sicheren Wert (0.20)
 max_delta = 0.20
 
-# --- SEKTION 1: KOMBI-SCAN (ABGESTIMMT AUF 'otm_puffer_slider') ---
 st.subheader("🎯 Profi-Einstiegs-Chancen")
 
 if st.button("🚀 Kombi-Scan starten"):
-    # WICHTIG: Hier nutzen wir jetzt direkt deinen neuen Slider-Wert
-    # Wenn der Slider auf 5 steht, suchen wir 5% Puffer
+    # WICHTIG: Wir nutzen jetzt direkt deinen neuen Slider-Wert
+    # puffer_limit wird z.B. 0.05 bei 5% Slider-Einstellung
     puffer_limit = otm_puffer_slider / 100 
     
-    # Deine Watchlist
     ticker_liste = ["AMD", "NVDA", "TSLA", "GOOGL", "AAPL", "MSFT", "META", "HOOD", "CCJ"]
     cols = st.columns(4)
     found_idx = 0
@@ -114,31 +112,31 @@ if st.button("🚀 Kombi-Scan starten"):
     with st.spinner(f"Suche Puts mit mind. {otm_puffer_slider}% Puffer..."):
         for symbol in ticker_liste:
             try:
-                # Basis-Daten abrufen
+                # 1. Kursdaten laden
                 res = get_stock_data_full(symbol)
                 if not res or res[0] is None: continue
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
                 
-                # Filter: Mindestpreis aus der Sidebar prüfen
+                # Filter: Mindest-Aktienpreis aus Sidebar
                 if price < min_stock_price: continue
                 
-                # Nächste Laufzeit ab 11 Tagen finden
+                # 2. Laufzeit (ab 11 Tage)
                 target_date = next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
                 if not target_date: continue
-
-                # Optionsdaten laden
+                
+                # 3. Optionsdaten
                 tk = yf.Ticker(symbol)
                 chain = tk.option_chain(target_date).puts
                 if chain.empty: continue
 
-                # --- DER RICHTIGE PUFFER-FILTER ---
-                # Wir berechnen den maximal erlaubten Strike (Kurs minus Puffer)
+                # --- DER KORREKTE PUFFER-FILTER ---
+                # Wir suchen Strikes, die UNTER (Preis * (1 - 0.05)) liegen
                 max_strike = price * (1 - puffer_limit)
                 secure_chain = chain[chain['strike'] <= max_strike].copy()
 
                 if secure_chain.empty: continue
 
-                # Zeit & Delta berechnen
+                # 4. Zeit & Delta (BSM Modell)
                 expiry_dt = datetime.strptime(target_date, '%Y-%m-%d')
                 tage = max(1, (expiry_dt - datetime.now()).days)
 
@@ -146,30 +144,31 @@ if st.button("🚀 Kombi-Scan starten"):
                     price, o['strike'], tage/365, o['impliedVolatility'] or 0.4, "put"
                 ), axis=1)
                 
-                # Wir wählen den Strike, der am nächsten am sicheren Delta 0.15 liegt
+                # Besten Strike wählen (nahe Delta 0.15 für Stabilität)
                 best_opt = secure_chain.iloc[(secure_chain['delta_calc'] + 0.15).abs().argsort()[:1]].iloc[0]
                 
-                # Kennzahlen extrahieren
+                # Kennzahlen
                 bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] or 0.05)
                 y_pa = (bid / best_opt['strike']) * (365 / tage) * 100
-                puffer_real = ((price - best_opt['strike']) / price) * 100
+                puffer_ist = ((price - best_opt['strike']) / price) * 100
                 
-                # Filter: Mindestrendite aus der Sidebar prüfen
+                # --- ZUSÄTZLICHER FILTER: MINDESTRENDITE ---
+                # Nur anzeigen, wenn die Rendite >= deinem Sidebar-Wert ist
                 if y_pa < min_yield_pa: continue
                 
-                # --- ANZEIGE IN KACHELN ---
+                # --- ANZEIGE ---
                 with cols[found_idx % 4]:
                     with st.container(border=True):
-                        # Icon zeigt an, ob der Strike sicher ist (Delta <= 0.20)
-                        status_icon = "✅" if abs(best_opt['delta_calc']) <= 0.20 else "⚠️"
+                        # Icon: Zeigt an ob Delta im Profi-Bereich (<= 0.20)
+                        status = "✅" if abs(best_opt['delta_calc']) <= 0.20 else "⚠️"
                         
-                        st.markdown(f"**{status_icon} {symbol}**")
+                        st.markdown(f"**{status} {symbol}**")
                         st.metric("Yield p.a.", f"{y_pa:.1f}%")
                         
                         st.markdown(f"""
                         <div style="font-size: 0.85em; line-height: 1.3;">
                         <b>Strike:</b> {best_opt['strike']:.1f}$ <br>
-                        <b>Puffer:</b> <span style="color:#2ecc71; font-weight:bold;">{puffer_real:.1f}%</span> <br>
+                        <b>Puffer:</b> <span style="color:#2ecc71; font-weight:bold;">{puffer_ist:.1f}%</span> <br>
                         <b>Prämie:</b> {bid:.2f}$ <br>
                         <b>Termin:</b> {expiry_dt.strftime('%d.%m.')} ({tage}d)
                         </div>
@@ -177,8 +176,7 @@ if st.button("🚀 Kombi-Scan starten"):
                 
                 found_idx += 1
                 time.sleep(0.05)
-
-            except Exception:
+            except:
                 continue
 
     if found_idx == 0:
@@ -311,6 +309,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
