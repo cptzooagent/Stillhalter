@@ -222,7 +222,11 @@ depot_data = [
     {'Ticker': 'JKS', 'Einstand': 50.00},
     {'Ticker': 'GTM', 'Einstand': 17.00},
     {'Ticker': 'HIMS', 'Einstand': 37.00},
+    {'Ticker': 'NVO', 'Einstand': 97.00},
+    {'Ticker': 'RBRK', 'Einstand': 70.00},
+    {'Ticker': 'SE', 'Einstand': 170.00},
     {'Ticker': 'ETSY', 'Einstand': 67.00},
+    {'Ticker': 'TTD', 'Einstand': 102.00},
     {'Ticker': 'ELF', 'Einstand': 109.00}
 ]       
 
@@ -342,5 +346,6 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
