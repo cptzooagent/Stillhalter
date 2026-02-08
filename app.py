@@ -100,10 +100,12 @@ min_yield_pa = st.sidebar.number_input(
     value=15
 )
 
-# 3. Aktienpreis-Filter
-min_stock_price = st.sidebar.slider(
-    "Mindest-Aktienpreis ($)", 
-    0, 500, 20
+# 3. Aktienpreis-Filter (Range)
+min_stock_price, max_stock_price = st.sidebar.slider(
+    "Aktienpreis-Spanne ($)", 
+    0, 1000, (20, 500),
+    help="Filtert Aktien basierend auf ihrem aktuellen Kurs."
+
 )
 
 # 4. Strategie-Filter
@@ -346,6 +348,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
