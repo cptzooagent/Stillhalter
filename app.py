@@ -92,68 +92,67 @@ st.title("🛡️ CapTrader AI Market Scanner")
 
 import time # Wichtig für die kleine Pause
 
-# --- SEKTION 1: PROFI-EINSTIEGS-CHANCEN (DER SICHERHEITS-SCANNER) ---
+# --- SEKTION 1: KOMBI-SCAN (VOLLSTÄNDIG & STABIL) ---
 st.subheader("🎯 Profi-Einstiegs-Chancen")
 
-# Sicherstellen, dass die Variable otm_slider existiert (aus deiner Sidebar)
-# Falls dein Slider anders heißt, bitte hier anpassen!
-otm_puffer_limit = otm_slider if 'otm_slider' in locals() else 10
-
+# Button zum Starten des Scans
 if st.button("🚀 Kombi-Scan starten"):
-    # Deine Fokus-Liste
+    # 1. Liste der Fokus-Aktien
     ticker_liste = ["AMD", "NVDA", "TSLA", "GOOGL", "AAPL", "MSFT", "META", "HOOD", "CCJ"]
     
-    # Grid-Layout vorbereiten
+    # 2. Grid-Layout (4 Spalten)
     cols = st.columns(4)
     found_idx = 0
     
-    with st.spinner(f"Suche Puts mit mind. {otm_puffer_limit}% Puffer..."):
+    # Sicherstellen, dass der Wert vom Slider (Sidebar) geladen wird
+    # Wir nutzen 'otm_slider' (bitte prüfen, ob dein Slider in der Sidebar so heißt)
+    puffer_limit = otm_slider / 100 
+
+    with st.spinner(f"Suche Puts mit mind. {otm_slider}% Puffer..."):
         for symbol in ticker_liste:
             try:
-                # 1. Basis-Daten abrufen
+                # Daten abrufen
                 res = get_stock_data_full(symbol)
                 if not res or res[0] is None:
                     continue
                 
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
                 
-                # 2. Laufzeit suchen (Ziel: Mindestens 11 Tage für Zeitwert)
+                # Laufzeit-Check (Ziel: Mindestens 11 Tage in der Zukunft)
                 target_date = None
                 for d in dates:
-                    tage_diff = (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days
-                    if tage_diff >= 11:
+                    diff = (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days
+                    if diff >= 11:
                         target_date = d
                         break
                 
                 if not target_date:
                     continue
 
-                # 3. Optionskette laden
+                # Optionsdaten von Yahoo laden
                 tk = yf.Ticker(symbol)
                 chain = tk.option_chain(target_date).puts
                 if chain.empty:
                     continue
 
-                # --- SICHERHEITS-FILTER (DEIN OTM-REGLER) ---
-                # Wir berechnen den maximal erlaubten Strike-Preis
-                max_strike = price * (1 - (otm_puffer_limit / 100))
-                
-                # Filtere die Kette: Nur Strikes unterhalb deines Sicherheitslimits
-                secure_chain = chain[chain['strike'] <= max_strike].copy()
-                
+                # --- DER SICHERHEITS-FILTER (OTM-REGLER) ---
+                # Wir erlauben nur Strikes, die den vom User gewählten Abstand einhalten
+                max_strike_erlaubt = price * (1 - puffer_limit)
+                secure_chain = chain[chain['strike'] <= max_strike_erlaubt].copy()
+
                 if secure_chain.empty:
-                    continue
+                    continue # Kein Strike gefunden, der weit genug weg ist
 
                 # Zeit für Delta-Berechnung
                 expiry_dt = datetime.strptime(target_date, '%Y-%m-%d')
                 tage = max(1, (expiry_dt - datetime.now()).days)
 
-                # Delta berechnen (um den "Sweet Spot" innerhalb deiner OTM-Vorgabe zu finden)
+                # Delta berechnen (BSM Modell)
                 secure_chain['delta_calc'] = secure_chain.apply(lambda o: calculate_bsm_delta(
                     price, o['strike'], tage/365, o['impliedVolatility'] or 0.4, "put"
                 ), axis=1)
                 
-                # Wir nehmen den Strike, der Delta 0.16 am nächsten ist, aber bereits OTM gefiltert wurde
+                # Den Strike wählen, der Delta 0.16 am nächsten ist (innerhalb der sicheren Zone)
                 best_opt = secure_chain.iloc[(secure_chain['delta_calc'] + 0.16).abs().argsort()[:1]].iloc[0]
                 
                 # Kennzahlen für die Anzeige
@@ -161,16 +160,15 @@ if st.button("🚀 Kombi-Scan starten"):
                 y_pa = (bid / best_opt['strike']) * (365 / tage) * 100
                 realer_puffer = ((price - best_opt['strike']) / price) * 100
                 
-                # 4. KOMPAKTE KACHEL ANZEIGEN (Design wie Depot-Manager)
+                # --- KOMPAKTE KACHEL RENDERN ---
                 with cols[found_idx % 4]:
                     with st.container(border=True):
-                        # Kopfzeile mit Symbol und Warn-Emoji bei hohem Delta
-                        delta_warn = "⚠️" if abs(best_opt['delta_calc']) > 0.20 else "✅"
-                        st.markdown(f"**{delta_warn} {symbol}**")
+                        # Sicherheits-Check: Warnung bei hohem Delta trotz Puffer
+                        warn_icon = "⚠️" if abs(best_opt['delta_calc']) > 0.20 else "✅"
                         
+                        st.markdown(f"**{warn_icon} {symbol}**")
                         st.metric("Yield p.a.", f"{y_pa:.1f}%")
                         
-                        # Detail-Sektion mit HTML für kompakte Darstellung
                         st.markdown(f"""
                         <div style="font-size: 0.85em; line-height: 1.3; color: #555;">
                         <b>Strike:</b> {best_opt['strike']:.1f}$ <br>
@@ -181,14 +179,14 @@ if st.button("🚀 Kombi-Scan starten"):
                         """, unsafe_allow_html=True)
                 
                 found_idx += 1
-                time.sleep(0.1) # Kurze Pause gegen Yahoo-Sperre
+                time.sleep(0.05) # Kleine Pause zur Schonung der API
 
-            except Exception as e:
-                # Einzelfehler überspringen, damit der Scan weiterläuft
-                continue
+            except Exception:
+                continue # Falls ein Ticker hakt, einfach mit dem nächsten weitermachen
 
+    # Falls gar nichts gefunden wurde (z.B. Regler auf 80% und keine Gebote da)
     if found_idx == 0:
-        st.warning(f"Keine Werte mit {otm_puffer_limit}% Puffer gefunden. Regler evtl. zu hoch?")
+        st.warning(f"Keine Puts mit {otm_slider}% Puffer gefunden. Versuche einen kleineren Puffer.")
         
 # Beispiel-Daten für dein Depot (Hier deine echten Werte eintragen!)
 depot_data = [
@@ -317,6 +315,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
