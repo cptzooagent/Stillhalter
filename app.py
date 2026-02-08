@@ -174,27 +174,30 @@ if st.button("🚀 Kombi-Scan starten"):
             
             if y_pa < min_yield_pa: continue
 
-            # --- AB HIER ERSETZEN ---
-            with cols[found_idx % 4]:
-                with st.container(border=True):
-                    # Header: Symbol und Trend-Status
-                    st.markdown(f"**{symbol}** {'✅' if uptrend else '📉'}")
+            # --- ANZEIGE IN 4 SPALTEN ---
+                with cols[found_idx % 4]:
+                    # RSI-Farben definieren
+                    rsi_color = "#e74c3c" if rsi > 70 else "#2ecc71" if rsi < 40 else "#555"
+                    rsi_weight = "bold" if rsi > 70 or rsi < 40 else "normal"
                     
-                    # Haupt-Metrik: Rendite p.a.
-                    st.metric("Yield p.a.", f"{y_pa:.1f}%")
-                    
-                    # Prämie und Details in einer kompakten Box
-                    st.markdown(f"""
-                    <div style="font-size: 0.85em; line-height: 1.4; background-color: #f1f3f6; padding: 10px; border-radius: 8px; border-left: 5px solid #2ecc71;">
-                    <b style="color: #1e7e34; font-size: 1.1em;">Prämie: {bid:.2f}$</b><br>
-                    <span style="color: #666;">(Einnahme: {bid*100:.0f}$ pro Kontrakt)</span><hr style="margin: 8px 0;">
-                    <b>Strike:</b> {best_opt['strike']:.1f}$ ({puffer_ist:.1f}% Puffer)<br>
-                    <b>Kurs:</b> {price:.2f}$ | <b>RSI:</b> {rsi:.0f}<br>
-                    <b>Datum:</b> {expiry_dt.strftime('%d.%m.')} ({tage} Tage)
-                    </div>
-                    """, unsafe_allow_html=True)
-            found_idx += 1
-            # --- ENDE DES ERSETZTEN BLOCKS ---
+                    with st.container(border=True):
+                        # Header mit Symbol und Trend
+                        st.markdown(f"**{symbol}** {'✅' if uptrend else '📉'}")
+                        st.metric("Yield p.a.", f"{y_pa:.1f}%")
+                        
+                        # Die Info-Box mit Prämie und RSI-Warnung
+                        st.markdown(f"""
+                        <div style="font-size: 0.85em; line-height: 1.4; background-color: #f1f3f6; padding: 10px; border-radius: 8px; border-left: 5px solid #2ecc71;">
+                        <b style="color: #1e7e34; font-size: 1.1em;">Prämie: {bid:.2f}$</b><br>
+                        <span style="color: #666;">(Einnahme: {bid*100:.0f}$ pro Kontrakt)</span><hr style="margin: 8px 0;">
+                        <b>Strike:</b> {best_opt['strike']:.1f}$ ({puffer_ist:.1f}% Puffer)<br>
+                        <b>Kurs:</b> {price:.2f}$ | <b>RSI:</b> <span style="color:{rsi_color}; font-weight:{rsi_weight};">{rsi:.0f}</span><br>
+                        <b>Datum:</b> {expiry_dt.strftime('%d.%m.')} ({tage} Tage)
+                        </div>
+                        """, unsafe_allow_html=True)
+                
+                found_idx += 1 # WICHTIG: Erhöhung des Index für die Spalten-Verteilung
+            
             
         except:
             continue
@@ -334,3 +337,4 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
