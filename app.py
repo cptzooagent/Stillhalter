@@ -218,7 +218,7 @@ if 'depot_data' in locals():
 else:
     st.error("Variable 'depot_data' wurde nicht gefunden!")
 
-# --- SEKTION 3: EINZEL-CHECK (ULTRA-SAFE VERSION) ---
+# --- SEKTION 3: EINZEL-CHECK (REBORN & SAFE) ---
 st.divider()
 st.subheader("🔍 Einzel-Check & Option-Chain")
 
@@ -229,14 +229,14 @@ with c2:
     t_in = st.text_input("Ticker Symbol", value="HOOD").upper().strip()
 
 if t_in:
-    # Daten abrufen
+    # Daten laden
     price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(t_in)
     
     if price and dates:
-        # Check ob im Depot
+        # Depot-Abgleich
         mein_einstand = next((item['Einstand'] for item in depot_data if item['Ticker'] == t_in), None)
         
-        # Header-Anzeige
+        # Header-Anzeige (Metriken)
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Kurs", f"{price:.2f}$")
         m2.metric("RSI", f"{rsi:.0f}")
@@ -259,7 +259,7 @@ if t_in:
             # Delta-Berechnung
             chain['delta_c'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4, mode), axis=1)
             
-            # Filterung
+            # Sortierung
             if mode == "put":
                 df_view = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
             else:
@@ -267,7 +267,7 @@ if t_in:
 
             st.write("---")
             
-            # DER SICHERE LOOP: Wir übergeben Variablen einzeln an st.write
+            # DIE SICHERE ANZEIGE (Wichtig: Nutzt format() statt +)
             for _, opt in df_view.head(15).iterrows():
                 d_abs = abs(opt['delta_c'])
                 y_pa = (opt['bid'] / opt['strike']) * (365 / tage) * 100
@@ -276,18 +276,21 @@ if t_in:
                 # Ampel-Wahl
                 emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.30 else "🔴"
                 
-                # WICHTIG: Wir nutzen KEIN "+", sondern Kommas in st.write. 
-                # Das verhindert jeden "str + float" Fehler.
-                col1, col2, col3, col4, col5 = st.columns([1, 2, 1, 1, 2])
-                with col1: st.write(emoji)
-                with col2: st.write(f"**{opt['strike']:.1f}$**")
-                with col3: st.write(f"{opt['bid']:.2f}$")
-                with col4: st.write(f"{d_abs:.2f}")
-                with col5: 
-                    msg = f"{y_pa:.1f}% p.a."
-                    if mode == "call" and mein_einstand and opt['strike'] >= mein_einstand:
-                        msg += " ✅"
-                    st.write(msg)
+                # Safe-Tag (Call-Check)
+                safe = " ✅ **SAFE**" if (mode == "call" and mein_einstand and opt['strike'] >= mein_einstand) else ""
+                
+                # WIR NUTZEN EINE LISTE UND JOIN - DAS VERHINDERT DEN FEHLER GARANTIERT
+                parts = [
+                    emoji,
+                    f"**Strike: {opt['strike']:.1f}** |",
+                    f"Bid: {opt['bid']:.2f}$ |",
+                    f"D: {d_abs:.2f} |",
+                    f"P: {puffer:.1f}% |",
+                    f"Y: {y_pa:.1f}% p.a.{safe}"
+                ]
+                
+                # Wir fügen die Teile mit Leerzeichen zusammen
+                st.markdown(" ".join(parts))
 
         except Exception as e:
-            st.error(f"Fehler: {e}")
+            st.error(f"Fehler in der Anzeige-Logik: {e}")
