@@ -144,12 +144,16 @@ if st.button("🚀 Kombi-Scan starten"):
             if only_uptrend and not uptrend: 
                 continue
             
-           # Sucht das nächste Verfallsdatum im Bereich von 11 bis 20 Tagen
-            target_date = next((d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 20), None)
+            # 1. Alle verfügbaren Daten im Fenster 11-20 Tage sammeln
+            available_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 20]
             
-            # Falls im Bereich nichts gefunden wurde, nimm als Backup das erste nach 11 Tagen
-            if not target_date:
+            if not available_dates:
+                # Fallback: Erstes Datum ab 11 Tagen
                 target_date = next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
+            else:
+                # Wir nehmen das Datum am Ende des Fensters (meist lukrativer) 
+                # oder du lässt ihn das Fenster einfach so nutzen:
+                target_date = available_dates[-1] # Nimmt tendenziell eher die 18-20 Tage Termine
                 continue
 
             tk = yf.Ticker(symbol)
@@ -343,6 +347,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
