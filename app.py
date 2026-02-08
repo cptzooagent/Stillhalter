@@ -81,15 +81,15 @@ if st.button("🚀 Kombi-Scan starten"):
         prog.progress((i + 1) / len(watchlist))
         price, dates, earn, rsi, _ = get_stock_data_full(t)
         
+        # --- PREIS-FILTER LOGIK ---
         if price and dates:
+            if price < min_stock_price:
+                continue # Springt zur nächsten Aktie, wenn der Preis zu niedrig ist
+            
             try:
+                # Hier geht dein normaler Code weiter (Ticker-Definition, Option-Chain etc.)
                 tk = yf.Ticker(t)
-                target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
-                chain = tk.option_chain(target_date).puts
-                T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
-                
-                chain['delta_val'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.4), axis=1)
-                safe_opts = chain[chain['delta_val'].abs() <= max_delta].copy()
+            
                 
                 if not safe_opts.empty:
                     days = max(1, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days)
@@ -235,5 +235,6 @@ if t_in:
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
 # --- ENDE DER DATEI ---
+
 
 
