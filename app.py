@@ -15,7 +15,7 @@ def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
 def calculate_rsi(data, window=14):
-    if len(data) < window + 1: return 50
+    if len(data) < window + 1: return pd.Series([50] * len(data))
     delta = data.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
@@ -26,26 +26,19 @@ def calculate_rsi(data, window=14):
 @st.cache_data(ttl=86400)
 def get_combined_watchlist():
     try:
-        # Stabilere Quelle für S&P 500 (GitHub CSV statt Wikipedia)
         url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
         df = pd.read_csv(url)
         tickers = df['Symbol'].tolist()
-        
-        # Manuelle Ergänzung wichtiger Nasdaq/Wachstumswerte, falls sie im S&P fehlen
         nasdaq_extra = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR", "HOOD", "PLTR", "SQ"]
-        
         full_list = list(set(tickers + nasdaq_extra))
-        # yfinance braucht Bindestriche statt Punkte (z.B. BRK-B)
         return [t.replace('.', '-') for t in full_list]
     except Exception as e:
-        # Dein Sicherheitsnetz, falls der Download scheitert
         return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR"]
 
 @st.cache_data(ttl=900)
 def get_stock_data_full(symbol):
     try:
         tk = yf.Ticker(symbol)
-        # Sicherere Methode: Wir ziehen die Historie, um den letzten Preis zu bekommen
         hist = tk.history(period="150d") 
         if hist.empty: return None, [], "", 50, True, False, 0
             
@@ -53,7 +46,8 @@ def get_stock_data_full(symbol):
         dates = list(tk.options)
         
         # Indikatoren
-        rsi_val = calculate_rsi(hist['Close']).iloc[-1]
+        rsi_series = calculate_rsi(hist['Close'])
+        rsi_val = rsi_series.iloc[-1]
         sma_200 = hist['Close'].mean() 
         is_uptrend = price > sma_200
         
@@ -65,7 +59,7 @@ def get_stock_data_full(symbol):
         high_low = hist['High'] - hist['Low']
         atr = high_low.rolling(window=14).mean().iloc[-1]
             
-        # Earnings-Check (stabilisiert)
+        # Earnings-Check
         earn_str = ""
         try:
             cal = tk.calendar
@@ -80,42 +74,40 @@ def get_stock_data_full(symbol):
     except:
         return None, [], "", 50, True, False, 0
 
-# --- UI: SEITENLEISTE (CLEAN VERSION) ---
+# --- UI: SIDEBAR ---
 st.sidebar.header("🛡️ Strategie-Einstellungen")
+otm_puffer_slider = st.sidebar.slider("Gewünschter Puffer (%)", 3, 25, 10, help="Abstand vom Strike zum Kurs")
+min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", 0, 100, 15)
+min_stock_price, max_stock_price = st.sidebar.slider("Aktienpreis-Spanne ($)", 0, 1000, (20, 500))
 
-# 1. Puffer-Steuerung
-otm_puffer_slider = st.sidebar.slider(
-    "Gewünschter Puffer (%)", 
-    min_value=3, 
-    max_value=25, 
-    value=10,
-    help="Wie weit muss der Strike unter dem aktuellen Kurs liegen?"
-)
-
-# 2. Rendite-Steuerung
-min_yield_pa = st.sidebar.number_input(
-    "Mindestrendite p.a. (%)", 
-    min_value=0, 
-    max_value=100, 
-    value=15
-)
-
-# 3. Aktienpreis-Filter (Range)
-min_stock_price, max_stock_price = st.sidebar.slider(
-    "Aktienpreis-Spanne ($)", 
-    0, 1000, (20, 500),
-    help="Filtert Aktien basierend auf ihrem aktuellen Kurs."
-
-)
-
-# 4. Strategie-Filter
 st.sidebar.markdown("---")
 only_uptrend = st.sidebar.checkbox("Nur Aufwärtstrend (SMA 200)", value=False)
 st.sidebar.info("Tipp: Deaktiviere den Aufwärtstrend für mehr Treffer am Wochenende.")
 
-# Konstante für Delta-Berechnungen im Hintergrund
-max_delta = 0.20
+# --- NEU: MARKT-DASHBOARD (VIX & BITCOIN) ---
+st.markdown("## 📊 Globales Marktwetter")
+m_col1, m_col2 = st.columns(2)
 
+try:
+    vix_data = yf.Ticker("^VIX").history(period="2d")
+    vix_val = vix_data['Close'].iloc[-1]
+    vix_prev = vix_data['Close'].iloc[-2]
+    v_delta = vix_val - vix_prev
+    m_col1.metric("VIX (Angst-Index)", f"{vix_val:.2f}", f"{v_delta:+.2f}", delta_color="inverse")
+except:
+    m_col1.error("VIX-Daten nicht verfügbar")
+
+try:
+    btc_data = yf.Ticker("BTC-USD").history(period="2d")
+    btc_price = btc_data['Close'].iloc[-1]
+    btc_delta = btc_price - btc_data['Close'].iloc[-2]
+    m_col2.metric("Bitcoin (Risk-On Sentiment)", f"{btc_price:,.0f} $", f"{btc_delta:+.2f} $")
+except:
+    m_col2.error("Bitcoin-Daten nicht verfügbar")
+
+st.markdown("---")
+
+# --- SEKTION 1: KOMBI-SCAN ---
 if st.button("🚀 Kombi-Scan starten"):
     puffer_limit = otm_puffer_slider / 100 
     
@@ -124,8 +116,6 @@ if st.button("🚀 Kombi-Scan starten"):
     
     status_text = st.empty()
     progress_bar = st.progress(0)
-    
-    # Liste zum Sammeln der Treffer für die Sortierung
     all_results = []
     
     for i, symbol in enumerate(ticker_liste):
@@ -138,7 +128,6 @@ if st.button("🚀 Kombi-Scan starten"):
             if res[0] is None or not res[1]: continue
             price, dates, earn, rsi, uptrend, near_lower, atr = res
             
-            # Preis-Filter (Neu mit Max-Preis)
             if not (min_stock_price <= price <= max_stock_price): continue
             if only_uptrend and not uptrend: continue
             
@@ -152,28 +141,22 @@ if st.button("🚀 Kombi-Scan starten"):
             max_strike = price * (1 - puffer_limit)
             secure_options = chain[chain['strike'] <= max_strike].sort_values('strike', ascending=False)
             
-            if secure_options.empty: continue
-            best_opt = secure_options.iloc[0]
-            
-            # Rendite & Puffer
-            bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
-            tage = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
-            y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
-            puffer_ist = ((price - best_opt['strike']) / price) * 100
-            
-            if y_pa >= min_yield_pa:
-                # Treffer in Liste speichern
-                all_results.append({
-                    'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': best_opt['strike'],
-                    'puffer': puffer_ist, 'bid': bid, 'rsi': rsi, 'uptrend': uptrend,
-                    'earn': earn, 'tage': tage, 'date': target_date
-                })
+            if not secure_options.empty:
+                best_opt = secure_options.iloc[0]
+                bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
+                tage = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
+                y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
+                puffer_ist = ((price - best_opt['strike']) / price) * 100
+                
+                if y_pa >= min_yield_pa:
+                    all_results.append({
+                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': best_opt['strike'],
+                        'puffer': puffer_ist, 'bid': bid, 'rsi': rsi, 'uptrend': uptrend,
+                        'earn': earn, 'tage': tage, 'date': target_date
+                    })
         except: continue
 
-    # Ergebnisse sortieren (Höchste Rendite zuerst)
     all_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
-    
-    # Anzeige der sortierten Ergebnisse
     status_text.empty()
     progress_bar.empty()
     
@@ -186,7 +169,6 @@ if st.button("🚀 Kombi-Scan starten"):
             with cols[idx % 4]:
                 earn_warning = f" ⚠️ <span style='color:#e67e22; font-size:0.8em;'>ER: {res['earn']}</span>" if res['earn'] else ""
                 rsi_color = "#e74c3c" if res['rsi'] > 70 else "#2ecc71" if res['rsi'] < 40 else "#555"
-                
                 with st.container(border=True):
                     st.markdown(f"**{res['symbol']}** {'✅' if res['uptrend'] else '📉'}{earn_warning}", unsafe_allow_html=True)
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
@@ -199,64 +181,41 @@ if st.button("🚀 Kombi-Scan starten"):
                     <b>Termin:</b> {res['tage']} Tage
                     </div>
                     """, unsafe_allow_html=True)
-        
-# Beispiel-Daten für dein Depot (Hier deine echten Werte eintragen!)
+
+# --- SEKTION 2: SMART DEPOT-MANAGER ---
+st.markdown("### 💼 Smart Depot-Manager")
 depot_data = [
-    {'Ticker': 'AFRM', 'Einstand': 76.00},
-    {'Ticker': 'HOOD', 'Einstand': 120.0},
-    {'Ticker': 'JKS', 'Einstand': 50.00},
-    {'Ticker': 'GTM', 'Einstand': 17.00},
-    {'Ticker': 'HIMS', 'Einstand': 37.00},
-    {'Ticker': 'NVO', 'Einstand': 97.00},
-    {'Ticker': 'RBRK', 'Einstand': 70.00},
-    {'Ticker': 'SE', 'Einstand': 170.00},
-    {'Ticker': 'ETSY', 'Einstand': 67.00},
-    {'Ticker': 'TTD', 'Einstand': 102.00},
+    {'Ticker': 'AFRM', 'Einstand': 76.00}, {'Ticker': 'HOOD', 'Einstand': 120.0},
+    {'Ticker': 'JKS', 'Einstand': 50.00}, {'Ticker': 'GTM', 'Einstand': 17.00},
+    {'Ticker': 'HIMS', 'Einstand': 37.00}, {'Ticker': 'NVO', 'Einstand': 97.00},
+    {'Ticker': 'RBRK', 'Einstand': 70.00}, {'Ticker': 'SE', 'Einstand': 170.00},
+    {'Ticker': 'ETSY', 'Einstand': 67.00}, {'Ticker': 'TTD', 'Einstand': 102.00},
     {'Ticker': 'ELF', 'Einstand': 109.00}
 ]       
 
-# --- SEKTION 2: SMART DEPOT-MANAGER (FINAL) ---
-st.markdown("### 💼 Smart Depot-Manager")
-
-if 'depot_data' in locals():
-    p_cols = st.columns(4) 
-    for i, item in enumerate(depot_data):
-        price, _, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(item['Ticker'])
-        
-        if price:
-            diff = (price / item['Einstand'] - 1) * 100
-            perf_color = "#2ecc71" if diff >= 0 else "#e74c3c"
-            
-            with p_cols[i % 4]:
-                with st.container(border=True):
-                    # Header mit korrektem HTML
-                    t_emoji = "📈" if uptrend else "📉"
-                    st.markdown(
-                        f"**{item['Ticker']}** {t_emoji} "
-                        f"<span style='float:right; color:{perf_color}; font-weight:bold;'>{diff:+.1f}%</span>", 
-                        unsafe_allow_html=True
-                    )
-                    
-                    st.markdown(f"<p style='font-size:13px; margin:0;'>Kurs: {price:.2f}$ | RSI: {rsi:.0f}</p>", unsafe_allow_html=True)
-                    
-                    # --- CALL-STRATEGIE ---
-                    if diff < -15:
-                        st.error("⚠️ Call-Gefahr!")
-                        st.caption(f"Einstand {item['Einstand']}$ zu weit weg.")
-                    elif rsi > 60:
-                        st.success("🟢 Call-Chance!")
-                        st.caption("RSI heiß. Jetzt Calls prüfen.")
-                    else:
-                        st.info("⏳ Warten")
-                        st.caption(f"Target: RSI > 60")
-
-                    # Earnings-Check
-                    if earn:
-                        st.warning(f"📅 ER: {earn}")
-else:
-    st.error("Variable 'depot_data' wurde nicht gefunden!")
+p_cols = st.columns(4) 
+for i, item in enumerate(depot_data):
+    price, _, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(item['Ticker'])
+    if price:
+        diff = (price / item['Einstand'] - 1) * 100
+        perf_color = "#2ecc71" if diff >= 0 else "#e74c3c"
+        with p_cols[i % 4]:
+            with st.container(border=True):
+                t_emoji = "📈" if uptrend else "📉"
+                st.markdown(f"**{item['Ticker']}** {t_emoji} <span style='float:right; color:{perf_color}; font-weight:bold;'>{diff:+.1f}%</span>", unsafe_allow_html=True)
+                st.markdown(f"<p style='font-size:13px; margin:0;'>Kurs: {price:.2f}$ | RSI: {rsi:.0f}</p>", unsafe_allow_html=True)
+                if diff < -15:
+                    st.error("⚠️ Call-Gefahr!")
+                    st.caption(f"Einstand {item['Einstand']}$ zu weit weg.")
+                elif rsi > 60:
+                    st.success("🟢 Call-Chance!")
+                    st.caption("RSI heiß. Jetzt Calls prüfen.")
+                else:
+                    st.info("⏳ Warten")
+                if earn: st.warning(f"📅 ER: {earn}")
 
 # --- SEKTION 3: EINZEL-CHECK (STABILE AMPEL-VERSION) ---
+st.markdown("---")
 st.subheader("🔍 Einzel-Check & Option-Chain")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
@@ -264,9 +223,7 @@ with c2: t_in = st.text_input("Ticker Symbol", value="HOOD").upper()
 
 if t_in:
     ticker_symbol = t_in.strip().upper()
-    
     with st.spinner(f"Analysiere {ticker_symbol}..."):
-        # Sicherstellen, dass die Funktion 7 Werte liefert
         price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(ticker_symbol)
     
     if price is None:
@@ -274,26 +231,21 @@ if t_in:
     elif not dates:
         st.warning(f"⚠️ Keine Optionen für {ticker_symbol} verfügbar.")
     else:
-        # 1. Dashboard-Header
         h1, h2, h3 = st.columns(3)
         h1.metric("Kurs", f"{price:.2f}$")
         h2.metric("Trend", "📈 Bullisch" if uptrend else "📉 Bärisch")
         h3.metric("RSI", f"{rsi:.0f}")
 
-        if not uptrend:
-            st.error("🛑 Achtung: Aktie notiert unter SMA 200 (Abwärtstrend)!")
+        if not uptrend: st.error("🛑 Achtung: Aktie notiert unter SMA 200!")
         
         d_sel = st.selectbox("Laufzeit wählen", dates)
-        
         try:
             tk = yf.Ticker(ticker_symbol)
             chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
-            
             expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
             days_to_expiry = max(1, (expiry_dt - datetime.now()).days)
             T = days_to_expiry / 365
             
-            # Delta-Berechnung mit Absicherung gegen fehlende Vola (None)
             chain['delta_calc'] = chain.apply(lambda opt: calculate_bsm_delta(
                 price, opt['strike'], T, (opt['impliedVolatility'] if opt['impliedVolatility'] else 0.4), option_type=mode
             ), axis=1)
@@ -305,29 +257,16 @@ if t_in:
             
             st.write("---")
             for _, opt in filtered_df.head(15).iterrows():
-                # Sicherheits-Check: Falls Bid fehlt (NaN), auf 0 setzen
                 bid_val = opt['bid'] if not pd.isna(opt['bid']) else 0.0
                 d_abs = abs(opt['delta_calc'])
-                
-                # Ampel-Logik
                 risk_emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.30 else "🔴"
-                
-                # Rendite & Puffer
                 y_pa = (bid_val / opt['strike']) * (365 / days_to_expiry) * 100
                 puffer = (abs(opt['strike'] - price) / price) * 100
-                
-                # Das funktionierende Design
                 bid_style = f"<span style='color:#2ecc71; font-weight:bold;'>{bid_val:.2f}$</span>"
                 
                 st.markdown(
-                    f"{risk_emoji} **Strike: {opt['strike']:.1f}** | "
-                    f"Bid: {bid_style} | "
-                    f"Delta: {d_abs:.2f} | "
-                    f"Puffer: {puffer:.1f}% | "
-                    f"Yield: {y_pa:.1f}% p.a.",
+                    f"{risk_emoji} **Strike: {opt['strike']:.1f}** | Bid: {bid_style} | Delta: {d_abs:.2f} | Puffer: {puffer:.1f}% | Yield: {y_pa:.1f}% p.a.",
                     unsafe_allow_html=True
                 )
-
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
-# --- ENDE DER DATEI ---
