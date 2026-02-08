@@ -196,43 +196,25 @@ p_cols = st.columns(4)
 for i, item in enumerate(depot_data):
     price, _, earn, rsi, earn_dt = get_stock_data_full(item['Ticker'])
     
-    if price:
-        diff = (price / item['Einstand'] - 1) * 100
-        perf_color = "#2ecc71" if diff >= 0 else "#e74c3c"
-        
-        with p_cols[i % 4]:
-            with st.container(border=True):
-                # Kopfzeile: Ticker und Performance in einer Zeile
-                c1, c2 = st.columns([1, 1])
-                c1.markdown(f"**{item['Ticker']}**")
-                c2.markdown(f"<p style='text-align:right; color:{perf_color}; font-weight:bold; margin:0;'>{diff:+.1f}%</p>", unsafe_allow_html=True)
-                
-                # Datenzeile: Kurs und RSI nebeneinander ohne große Abstände
-                rsi_style = "color:#3498db;" if rsi < 35 else ""
-                st.markdown(
-                    f"<p style='font-size:14px; margin:0;'>"
-                    f"💲 {price:.2f}$ | RSI: <span style='{rsi_style}'>{rsi:.0f}</span>"
-                    f"</p>", 
-                    unsafe_allow_html=True
-                )
-                
-                # Earnings & Signale in eine Zeile gepackt
-                sig = ""
-                if rsi > 65: sig = "🎯 **Call**"
-                elif rsi < 35: sig = "💎 **Hold**"
-                
-                earn_info = f"📅 {earn}" if earn else ""
-                
-                # Warnung bei nahen Earnings (Priorität)
-                if earn_dt is not None:
-                    try:
-                        days_to_earn = (earn_dt.replace(tzinfo=None) - datetime.now().replace(tzinfo=None)).days
-                        if 0 <= days_to_earn <= 5:
-                            earn_info = f"<span style='color:#e74c3c; font-weight:bold;'>⚠️ ER: {days_to_earn}d</span>"
-                    except: pass
-                
-                st.markdown(f"<p style='font-size:12px; margin:0;'>{earn_info} {sig}</p>", unsafe_allow_html=True)
+    # In der for-schleife des Depot-Managers ersetzen:
+price, _, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(item['Ticker'])
 
+if price:
+    diff = (price / item['Einstand'] - 1) * 100
+    perf_color = "#2ecc71" if diff >= 0 else "#e74c3c"
+    
+    with p_cols[i % 4]:
+        with st.container(border=True):
+            # Zeile 1: Ticker & Trend-Licht
+            trend_emoji = "📈" if uptrend else "📉"
+            st.markdown(f"**{item['Ticker']}** {trend_emoji} <span style='float:right; color:{perf_color}; font-weight:bold;'>{diff:+.1f}%</span>", unsafe_allow_html=True)
+            
+            # Zeile 2: RSI & Bollinger Signal
+            b_signal = "🎯 BB-Touch" if near_lower else ""
+            st.markdown(f"<p style='font-size:13px; margin:0;'>RSI: {rsi:.0f} | {b_signal}</p>", unsafe_allow_html=True)
+            
+            # Zeile 3: ATR (Risiko-Maß)
+            st.markdown(f"<p style='font-size:12px; color:grey; margin:0;'>Vola (ATR): {atr:.2f}$</p>", unsafe_allow_html=True)
 st.write("---") 
 
 # --- AB HIER ERSETZEN (Sektion 3 bis Ende der Datei) ---
@@ -292,6 +274,7 @@ if t_in:
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
