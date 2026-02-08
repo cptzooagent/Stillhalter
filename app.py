@@ -90,81 +90,77 @@ min_stock_price = st.sidebar.slider("Mindest-Aktienpreis ($)", 0, 500, 20)
 # --- HAUPTBEREICH ---
 st.title("🛡️ CapTrader AI Market Scanner")
 
-# --- SEKTION 1: KOMBI-SCAN (ROBUSTE VERSION) ---
+# --- SEKTION 1: KOMBI-SCAN (RELAXED VERSION) ---
 st.subheader("🎯 Profi-Einstiegs-Chancen")
 
 if st.button("🚀 Kombi-Scan starten"):
-    # Fokus-Liste (Vorschlag)
-    ticker_liste = ["AMD", "NVDA", "TSLA", "GOOGL", "AAPL", "MSFT", "META", "HOOD"]
+    # Deine Ticker-Liste
+    ticker_liste = ["AMD", "NVDA", "TSLA", "GOOGL", "AAPL", "MSFT", "META", "HOOD", "CCJ"]
     cols = st.columns(4)
     col_idx = 0
     
-    with st.spinner("Lade Marktdaten und berechne Prämien..."):
+    with st.spinner("Lade Daten..."):
         for symbol in ticker_liste:
             try:
-                # 1. Basis-Check
+                # 1. Daten holen
                 res = get_stock_data_full(symbol)
                 if not res or res[0] is None:
-                    continue # Springe zum nächsten Ticker, wenn keine Kursdaten
+                    continue
                 
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
                 
-                # 2. Options-Check
+                # 2. Options-Check (Wir nehmen einfach die erste verfügbare Kette)
                 if not dates:
                     continue
                 
                 tk = yf.Ticker(symbol)
-                d_sel = dates[0] # Nächster Verfall
-                
-                # Kette laden - Wichtig: Error-Handling für Yahoo Finance
-                opts = tk.option_chain(d_sel)
-                chain = opts.puts
+                d_sel = dates[0] 
+                chain = tk.option_chain(d_sel).puts
                 
                 if chain.empty:
                     continue
 
-                # Zeit bis Expiry
+                # Zeit & Delta
                 expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
                 tage = max(1, (expiry_dt - datetime.now()).days)
                 
-                # Delta-Berechnung (BSM)
+                # Delta-Berechnung (Wir nutzen 0.4 als Standard-Vola falls IV fehlt)
                 chain['delta_calc'] = chain.apply(lambda o: calculate_bsm_delta(
                     price, o['strike'], tage/365, o['impliedVolatility'] or 0.4, "put"
                 ), axis=1)
                 
-                # Den Strike finden (Delta ca. 0.16)
-                best_opt = chain.iloc[(chain['delta_calc'] + 0.16).abs().argsort()[:1]].iloc[0]
+                # Wir suchen den Strike, der Delta 0.16 am nächsten ist
+                # Falls kein Delta berechnet werden kann, nehmen wir einen Strike 10% unter Kurs
+                try:
+                    best_opt = chain.iloc[(chain['delta_calc'] + 0.16).abs().argsort()[:1]].iloc[0]
+                except:
+                    best_opt = chain[chain['strike'] < price * 0.9].iloc[0]
                 
-                # Kennzahlen
-                y_pa = (best_opt['bid'] / best_opt['strike']) * (365 / tage) * 100
+                # Werte berechnen
+                bid_val = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] or 0.05)
+                y_pa = (bid_val / best_opt['strike']) * (365 / tage) * 100
                 puffer = (abs(best_opt['strike'] - price) / price) * 100
                 fmt_date = expiry_dt.strftime('%d.%m.')
 
-                # 3. Die Karte rendern
-                with cols[col_idx % 4]:
-                    with st.container(border=True):
-                        st.markdown(f"### 🟡 {symbol}")
-                        # ER Check: Falls earn None ist, nichts anzeigen
-                        er_text = f"🗓️ ER: {earn}" if earn else "🗓️ ER: N/A"
-                        st.caption(er_text)
-                        
-                        st.write("Yield p.a.")
-                        st.title(f"{y_pa:.1f}%")
-                        
-                        st.markdown(f"**Strike: {best_opt['strike']:.1f}$**")
-                        st.caption(f"Laufzeit: {fmt_date} | Puffer: {puffer:.1f}%")
-                        st.caption(f"RSI: {rsi:.0f} | Bid: {best_opt['bid']:.2f}$")
-                
-                col_idx += 1
+                # 3. Karte anzeigen (Filter gelockert auf RSI < 75)
+                if rsi < 75: 
+                    with cols[col_idx % 4]:
+                        with st.container(border=True):
+                            st.markdown(f"### 🟡 {symbol}")
+                            st.caption(f"🗓️ ER: {earn if earn else 'N/A'}")
+                            st.write("Yield p.a.")
+                            st.title(f"{y_pa:.1f}%")
+                            st.markdown(f"**Strike: {best_opt['strike']:.1f}$**")
+                            st.caption(f"Laufzeit: {fmt_date} | Puffer: {puffer:.1f}%")
+                            st.caption(f"RSI: {rsi:.0f} | Bid: {bid_val:.2f}$")
+                    col_idx += 1
                 
             except Exception as e:
-                # Wir loggen den Fehler nur in der Konsole, damit die App nicht abbricht
-                print(f"Fehler bei {symbol}: {e}")
+                # Falls ein Ticker hakt, ignorieren wir ihn einfach
                 continue 
 
     if col_idx == 0:
-        st.warning("Keine passenden Optionen gefunden. Probiere es später erneut.")
- 
+        st.warning("Keine Daten empfangen. Bitte drücke den Button erneut (Yahoo Timeout).")
 # Beispiel-Daten für dein Depot (Hier deine echten Werte eintragen!)
 depot_data = [
     {'Ticker': 'AFRM', 'Einstand': 76.00},
@@ -292,6 +288,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
