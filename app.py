@@ -218,31 +218,30 @@ if 'depot_data' in locals():
 else:
     st.error("Variable 'depot_data' wurde nicht gefunden!")
 
-# --- SEKTION 3: EINZEL-CHECK (7-WERTE-FIX & PROFI-INDIKATOREN) ---
+# --- SEKTION 3: EINZEL-CHECK (STABILE AMPEL-VERSION) ---
 st.subheader("🔍 Einzel-Check & Option-Chain")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
 with c2: t_in = st.text_input("Ticker Symbol", value="HOOD").upper()
 
-# --- SEKTION 3: EINZEL-CHECK (FINALES DESIGN MIT DELTA & AMPEL) ---
 if t_in:
     ticker_symbol = t_in.strip().upper()
     
     with st.spinner(f"Analysiere {ticker_symbol}..."):
+        # Sicherstellen, dass die Funktion 7 Werte liefert
         price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(ticker_symbol)
     
     if price is None:
-        st.error(f"❌ Keine Daten für '{ticker_symbol}' gefunden. Bitte Kürzel prüfen (z.B. CCJ für Cameco).")
+        st.error(f"❌ Keine Daten für '{ticker_symbol}' gefunden.")
     elif not dates:
         st.warning(f"⚠️ Keine Optionen für {ticker_symbol} verfügbar.")
     else:
         # 1. Dashboard-Header
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Kurs", f"{price:.2f}$")
-        c2.metric("Trend", "📈 Bullisch" if uptrend else "📉 Bärisch")
-        c3.metric("RSI", f"{rsi:.0f}")
+        h1, h2, h3 = st.columns(3)
+        h1.metric("Kurs", f"{price:.2f}$")
+        h2.metric("Trend", "📈 Bullisch" if uptrend else "📉 Bärisch")
+        h3.metric("RSI", f"{rsi:.0f}")
 
-        # Trend-Warnung
         if not uptrend:
             st.error("🛑 Achtung: Aktie notiert unter SMA 200 (Abwärtstrend)!")
         
@@ -252,35 +251,35 @@ if t_in:
             tk = yf.Ticker(ticker_symbol)
             chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
             
-            # Berechnungen
             expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
             days_to_expiry = max(1, (expiry_dt - datetime.now()).days)
             T = days_to_expiry / 365
             
+            # Delta-Berechnung mit Absicherung gegen fehlende Vola (None)
             chain['delta_calc'] = chain.apply(lambda opt: calculate_bsm_delta(
-                price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode
+                price, opt['strike'], T, (opt['impliedVolatility'] if opt['impliedVolatility'] else 0.4), option_type=mode
             ), axis=1)
 
-            # Filterung für die Anzeige (Strikes nah am Geld)
             if mode == "put":
                 filtered_df = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
             else:
                 filtered_df = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
             
             st.write("---")
-            # --- DIE SCHICKE ANZEIGE (WIE IN SCREENSHOT 2) ---
             for _, opt in filtered_df.head(15).iterrows():
+                # Sicherheits-Check: Falls Bid fehlt (NaN), auf 0 setzen
+                bid_val = opt['bid'] if not pd.isna(opt['bid']) else 0.0
                 d_abs = abs(opt['delta_calc'])
                 
-                # Ampel-Emoji
+                # Ampel-Logik
                 risk_emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.30 else "🔴"
                 
                 # Rendite & Puffer
-                y_pa = (opt['bid'] / opt['strike']) * (365 / days_to_expiry) * 100
+                y_pa = (bid_val / opt['strike']) * (365 / days_to_expiry) * 100
                 puffer = (abs(opt['strike'] - price) / price) * 100
                 
-                # Sicherer HTML-String für grüne Bid-Preise
-                bid_style = f"<span style='color:#2ecc71; font-weight:bold;'>{opt['bid']:.2f}$</span>"
+                # Das funktionierende Design
+                bid_style = f"<span style='color:#2ecc71; font-weight:bold;'>{bid_val:.2f}$</span>"
                 
                 st.markdown(
                     f"{risk_emoji} **Strike: {opt['strike']:.1f}** | "
@@ -290,9 +289,9 @@ if t_in:
                     f"Yield: {y_pa:.1f}% p.a.",
                     unsafe_allow_html=True
                 )
-                
 
         except Exception as e:
-            st.error(f"Fehler bei der Berechnung: {e}")
+            st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
