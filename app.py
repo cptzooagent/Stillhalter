@@ -50,9 +50,9 @@ min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=15)
 
 st.title("🛡️ CapTrader AI Market Scanner")
 
-# --- SEKTION 1: SCANNER (FIX: PRÄMIE WIEDER DA) ---
+# --- SEKTION 1: SCANNER (Wie in Bild 15) ---
 if st.button("🚀 Markt-Scan starten", use_container_width=True):
-    watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "PLTR", "HOOD", "AFRM"]
+    watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "PLTR", "HOOD", "AFRM", "AMD", "NFLX", "COIN"]
     results = []
     
     for t in watchlist:
@@ -78,18 +78,45 @@ if st.button("🚀 Markt-Scan starten", use_container_width=True):
         cols = st.columns(3)
         for i, r in enumerate(results):
             with cols[i % 3]:
-                # Prämie wird jetzt fett in der Übersicht angezeigt
                 st.markdown(f"### {r['T']}")
-                st.metric("Rendite p.a.", f"{r['Y']:.1f}%", f"Δ {r['D']:.2f}")
-                st.write(f"💰 **Cash-Prämie: {r['B']*100:.0f}$**") # Fix für Bild 1
+                st.metric("Rendite p.a.", f"{r['Y']:.1f}%", f"↑ Δ {r['D']:.2f}")
+                st.write(f"💰 **Cash-Prämie: {r['B']*100:.0f}$**")
                 st.write(f"🎯 Strike: {r['S']}$ | RSI: {r['R']:.0f}")
                 if r['E']: st.warning(f"📅 Earnings: {r['E']}")
     else: st.info("Keine Treffer.")
 
-# --- SEKTION 2: EINZEL-CHECK (FIX: AMPELSYSTEM) ---
+# --- SEKTION 2: DEPOT-MANAGER (Deine Werte aus Bild 6) ---
 st.write("---")
-st.subheader("🔍 Einzel-Check")
-t_in = st.text_input("Symbol eingeben", "NVDA").upper()
+st.subheader("💼 Smart Depot-Manager")
+
+depot_data = [
+    {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
+    {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
+    {"Ticker": "GTM", "Einstand": 17.0}, {"Ticker": "HIMS", "Einstand": 37.0},
+    {"Ticker": "HOOD", "Einstand": 82.82}, {"Ticker": "JKS", "Einstand": 50.0},
+    {"Ticker": "NVO", "Einstand": 97.0}, {"Ticker": "RBRK", "Einstand": 70.0},
+    {"Ticker": "SE", "Einstand": 170.0}, {"Ticker": "TTD", "Einstand": 102.0}
+]
+
+p_cols = st.columns(3)
+for i, item in enumerate(depot_data):
+    price, _, earn, rsi = get_stock_data_full(item['Ticker'])
+    if price:
+        diff = (price / item['Einstand'] - 1) * 100
+        with p_cols[i % 3]:
+            with st.expander(f"{item['Ticker']} ({diff:.1f}%)", expanded=True):
+                c1, c2 = st.columns(2)
+                c1.metric("Kurs", f"{price:.2f}$")
+                c2.metric("RSI", f"{rsi:.0f}")
+                
+                if rsi < 30: st.info("💎 Oversold - Hold")
+                elif rsi > 70: st.success("🎯 Overbought - Sell Call?")
+                if earn: st.caption(f"📅 Earnings: {earn}")
+
+# --- SEKTION 3: EINZEL-CHECK (Wie in Bild 16) ---
+st.write("---")
+st.subheader("🔍 Deep-Dive Einzel-Check")
+t_in = st.text_input("Symbol eingeben", "hood").upper()
 
 if t_in:
     price, dates, earn, rsi = get_stock_data_full(t_in)
@@ -105,14 +132,14 @@ if t_in:
         for _, opt in chain[chain['delta_calc'].abs() < 0.4].sort_values('strike', ascending=False).head(6).iterrows():
             d_abs = abs(opt['delta_calc'])
             
-            # Ampelsystem-Logik (Fix für Bild 2)
-            if d_abs < 0.15: icon = "🟢 (Sicher)"
-            elif d_abs < 0.25: icon = "🟡 (Moderat)"
-            else: icon = "🔴 (Aggressiv)"
+            # Ampelsystem (Bild 16)
+            if d_abs < 0.15: risk_label = "🟢 (Sicher)"
+            elif d_abs < 0.25: risk_label = "🟡 (Moderat)"
+            else: risk_label = "🔴 (Aggressiv)"
             
-            with st.expander(f"{icon} Strike {opt['strike']:.1f}$ | Bid: {opt['bid']:.2f}$"):
-                c1, c2 = st.columns(2)
-                c1.write(f"💰 **Prämie:** {opt['bid']*100:.0f}$")
-                c1.write(f"📉 **Delta:** {d_abs:.2f}")
-                c2.write(f"🎯 **Puffer:** {abs(opt['strike']-price)/price*100:.1f}%")
-                c2.write(f"🌊 **IV:** {int((opt['impliedVolatility'] or 0)*100)}%")
+            with st.expander(f"{risk_label} Strike {opt['strike']:.1f}$"):
+                col_a, col_b = st.columns(2)
+                col_a.write(f"💰 **Cash-Einnahme:** {opt['bid']*100:.0f}$")
+                col_a.write(f"📊 **OTM:** {(1-d_abs)*100:.1f}%")
+                col_b.write(f"🎯 **Puffer zum Kurs:** {abs(opt['strike']-price)/price*100:.1f}%")
+                col_b.write(f"🌊 **Implizite Vola:** {int((opt['impliedVolatility'] or 0)*100)}%")
