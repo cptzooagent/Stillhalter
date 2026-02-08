@@ -247,17 +247,23 @@ for i, item in enumerate(depot_data):
         perf_color = "#2ecc71" if diff >= 0 else "#e74c3c"
         with p_cols[i % 4]:
             with st.container(border=True):
-                t_emoji = "📈" if uptrend else "📉"
-                st.markdown(f"**{item['Ticker']}** {t_emoji} <span style='float:right; color:{perf_color}; font-weight:bold;'>{diff:+.1f}%</span>", unsafe_allow_html=True)
-                st.markdown(f"<p style='font-size:13px; margin:0;'>Kurs: {price:.2f}$ | RSI: {rsi:.0f}</p>", unsafe_allow_html=True)
+                st.markdown(f"**{item['Ticker']}** <span style='float:right; color:{perf_color}; font-weight:bold;'>{diff:+.1f}%</span>", unsafe_allow_html=True)
+                st.markdown(f"<p style='margin:0;'>Kurs: {price:.2f}$ | RSI: {rsi:.0f}</p>", unsafe_allow_html=True)
+                
                 if diff < -15:
-                    st.error("⚠️ Call-Gefahr!")
-                    st.caption(f"Einstand {item['Einstand']}$ zu weit weg.")
-                elif rsi > 60:
+                    # Strategie bei starkem Minus
+                    if rsi > 55:
+                        st.warning("🔄 Reparatur-Chance!")
+                        st.caption("RSI erholt sich. Prüfe Covered Calls!")
+                    else:
+                        st.error("🧊 Stillhalten")
+                        st.caption("Aktie im Keller. Calls jetzt zu billig.")
+                elif rsi > 65:
                     st.success("🟢 Call-Chance!")
-                    st.caption("RSI heiß. Jetzt Calls prüfen.")
+                    st.caption("RSI heiß. Prämie für CC jetzt top.")
                 else:
                     st.info("⏳ Warten")
+                
                 if earn: st.warning(f"📅 ER: {earn}")
 
 # --- SEKTION 3: EINZEL-CHECK (STABILE AMPEL-VERSION) ---
@@ -316,6 +322,7 @@ if t_in:
                 )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
