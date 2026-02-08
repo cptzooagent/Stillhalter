@@ -95,43 +95,74 @@ import time # Wichtig für die kleine Pause
 # --- SEKTION 1: KOMBI-SCAN (KOMPAKT-DESIGN & 11 TAGE FIX) ---
 st.subheader("🎯 Profi-Einstiegs-Chancen")
 
-if st.button("🚀 Kombi-Scan starten"):
-    ticker_liste = ["AMD", "NVDA", "TSLA", "GOOGL", "AAPL", "MSFT", "META", "HOOD"]
-    
-    # Grid-Layout: 4 Spalten
+ticker_liste = ["AMD", "NVDA", "TSLA", "GOOGL", "AAPL", "MSFT", "META", "HOOD", "CCJ"]
     cols = st.columns(4)
     found_idx = 0
     
-    with st.spinner("Analysiere Märkte..."):
+    # Hier holen wir den Wert vom Slider (Stelle sicher, dass er otm_slider heißt!)
+    mindest_puffer_prozent = otm_slider / 100 
+
+    with st.spinner(f"Suche Puts mit mind. {otm_slider}% Puffer..."):
         for symbol in ticker_liste:
             try:
-                # 1. Basis-Daten (Schneller Check)
+                # 1. Daten holen
                 res = get_stock_data_full(symbol)
                 if not res or res[0] is None: continue
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
                 
-                # 2. Beste Laufzeit finden (min. 11 Tage)
-                target_date = None
-                for d in dates:
-                    diff = (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days
-                    if diff >= 11:
-                        target_date = d
-                        break
+                # 2. Laufzeit (ab 11 Tage)
+                target_date = next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
+                if not target_date: continue
                 
-                if not target_date: continue # Falls nichts passendes gefunden wurde
-                
-                # 3. Optionen abrufen (Nur Puts)
+                # 3. Optionen laden
                 tk = yf.Ticker(symbol)
                 chain = tk.option_chain(target_date).puts
-                if chain.empty: continue
+                tage = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
+
+                # --- DER ENTSCHEIDENDE FILTER (REGEL-CHECK) ---
+                # Wir filtern die Liste: Nur Strikes, die den OTM-Abstand einhalten
+                max_strike_erlaubt = price * (1 - mindest_puffer_prozent)
+                secure_chain = chain[chain['strike'] <= max_strike_erlaubt]
+
+                if secure_chain.empty:
+                    continue # Kein Strike gefunden, der weit genug weg ist
+
+                # Aus den sicheren Strikes suchen wir den mit dem besten Delta (ca. 0.16)
+                # (Zuerst Delta berechnen für die sichere Kette)
+                secure_chain['delta_calc'] = secure_chain.apply(lambda o: calculate_bsm_delta(
+                    price, o['strike'], tage/365, o['impliedVolatility'] or 0.4, "put"
+                ), axis=1)
                 
-                # Delta & Strike (Einfache Suche für Stabilität)
-                exp_dt = datetime.strptime(target_date, '%Y-%m-%d')
-                tage = (exp_dt - datetime.now()).days
+                best_opt = secure_chain.iloc[(secure_chain['delta_calc'] + 0.16).abs().argsort()[:1]].iloc[0]
                 
-                # Wir nehmen den Strike ca. 10-15% unter Kurs als Sicherheits-Check
-                best_opt = chain[chain['strike'] <= price * 0.9].sort_values('strike', ascending=False).iloc[0]
-                
+                # Werte berechnen
+                bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] or 0.05)
+                y_pa = (bid / best_opt['strike']) * (365 / tage) * 100
+                puffer_real = (abs(best_opt['strike'] - price) / price) * 100
+
+                # 4. Anzeige
+                with cols[found_idx % 4]:
+                    with st.container(border=True):
+                        st.markdown(f"**{symbol}**")
+                        st.metric("Yield p.a.", f"{y_pa:.1f}%")
+                        st.markdown(f"""
+                        <div style="font-size: 0.8em; line-height: 1.2;">
+                        <b>Strike:</b> {best_opt['strike']:.1f}$ <br>
+                        <b>Puffer:</b> <span style="color:#2ecc71;">{puffer_real:.1f}%</span> <br>
+                        <b>Prämie:</b> {bid:.2f}$ <br>
+                        <b>Termin:</b> {target_date} ({tage}d)
+                        </div>
+                        """, unsafe_allow_html=True)
+                found_idx += 1
+                time.sleep(0.1) # Kleine Pause für Yahoo
+
+            except Exception as e:
+                # Das hier hat im Screenshot gefehlt!
+                print(f"Fehler bei {symbol}: {e}")
+                continue 
+
+    if found_idx == 0:
+        st.warning(f"Keine Puts mit {otm_slider}% Puffer gefunden. Regler evtl. zu hoch?")
                 # --- LOGIK: REGLER-BASIERTE STRIKE-WAHL ---
 
 # 1. Wir holen uns den Wert vom Slider (achte darauf, dass der Name stimmt!)
@@ -300,6 +331,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
