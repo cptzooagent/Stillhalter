@@ -103,23 +103,38 @@ if st.button("🚀 Kombi-Scan starten"):
                         })
             except: continue
 
-    status.text("Kombinations-Scan abgeschlossen!")
+    # --- NEUER ANZEIGE-BLOCK FÜR MARKT-SCAN ---
     if results:
+        st.subheader("🎯 Top Einstiegs-Chancen")
         df_res = pd.DataFrame(results)
-        sort_col = 'rsi' if sort_by_rsi else 'yield'
-        opp_df = df_res.sort_values(sort_col, ascending=False).head(12)
         
-        cols = st.columns(4)
+        # Sortierung (RSI niedrig = überverkauft = gute Kaufchance)
+        sort_col = 'rsi' if sort_by_rsi else 'yield'
+        opp_df = df_res.sort_values(sort_col, ascending=(sort_col == 'rsi')).head(12)
+        
+        cols = st.columns(4) # Erstellt 4 Spalten für die Kacheln
         for idx, row in enumerate(opp_df.to_dict('records')):
             with cols[idx % 4]:
-                st.markdown(f"### {row['ticker']}")
-                st.caption(f"RSI: {row['rsi']:.0f}")
-                if row['earn']: st.warning(f"⚠️ ER: {row['earn']}")
-                st.metric("Rendite p.a.", f"{row['yield']:.1f}%")
-                st.write(f"💰 Bid: **{row['bid']:.2f}$** | Puffer: **{row['puffer']:.1f}%**")
-                st.write(f"🎯 Strike: **{row['strike']:.1f}$** (Δ {row['delta']:.2f})")
+                # Ampel für das Delta des Scanner-Ergebnisses
+                scan_color = "🟢" if row['delta'] < 0.16 else "🟡" if row['delta'] <= 0.30 else "🔴"
+                
+                with st.container(border=True): # Erzeugt einen Kasten um jede Aktie
+                    st.markdown(f"### {scan_color} {row['ticker']}")
+                    st.metric("Rendite p.a.", f"{row['yield']:.1f}%")
+                    
+                    st.write(f"💰 Bid: **{row['bid']:.2f}$**")
+                    st.write(f"🎯 Strike: **{row['strike']:.1f}$**")
+                    st.write(f"🛡️ Puffer: **{row['puffer']:.1f}%**")
+                    
+                    # RSI Info mit kleiner Farbe
+                    rsi_color = "blue" if row['rsi'] < 35 else "grey"
+                    st.markdown(f"RSI: <span style='color:{rsi_color};'>{row['rsi']:.0f}</span>", unsafe_allow_html=True)
+                    
+                    if row['earn']:
+                        st.warning(f"⚠️ ER: {row['earn']}")
     else:
-        st.warning(f"Keine Treffer.")
+        st.warning("Keine Treffer mit den aktuellen Filtern.")
+    # --- ENDE DES ANZEIGE-BLOCKS ---
 
 st.write("---") 
 
@@ -218,3 +233,4 @@ if t_in:
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
 # --- ENDE DER DATEI ---
+
