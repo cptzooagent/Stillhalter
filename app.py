@@ -241,28 +241,30 @@ depot_data = [
 
 p_cols = st.columns(4) 
 for i, item in enumerate(depot_data):
-    price, _, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(item['Ticker'])
+    price, dates, earn, rsi, uptrend, _, _ = get_stock_data_full(item['Ticker'])
     if price:
         diff = (price / item['Einstand'] - 1) * 100
         perf_color = "#2ecc71" if diff >= 0 else "#e74c3c"
         with p_cols[i % 4]:
             with st.container(border=True):
                 st.markdown(f"**{item['Ticker']}** <span style='float:right; color:{perf_color}; font-weight:bold;'>{diff:+.1f}%</span>", unsafe_allow_html=True)
-                st.markdown(f"<p style='margin:0;'>Kurs: {price:.2f}$ | RSI: {rsi:.0f}</p>", unsafe_allow_html=True)
                 
-                if diff < -15:
-                    # Strategie bei starkem Minus
-                    if rsi > 55:
-                        st.warning("🔄 Reparatur-Chance!")
-                        st.caption("RSI erholt sich. Prüfe Covered Calls!")
+                # Berechnung für "Sicheren Call" (z.B. 10% über aktuellem Kurs)
+                safe_call_strike = price * 1.10
+                
+                if diff < -10:
+                    if rsi > 50:
+                        st.success("🎯 CC-REPARATUR")
+                        st.caption(f"Call bei {safe_call_strike:.1f}$ prüfen.")
+                        st.write(f"Senkt Einstand!")
                     else:
-                        st.error("🧊 Stillhalten")
-                        st.caption("Aktie im Keller. Calls jetzt zu billig.")
+                        st.info("⌛ Seitwärts")
+                        st.caption("Prämie aktuell zu gering.")
                 elif rsi > 65:
-                    st.success("🟢 Call-Chance!")
-                    st.caption("RSI heiß. Prämie für CC jetzt top.")
+                    st.success("🟢 CALL-CHANCE")
+                    st.caption("Aktie heiß gelaufen. Melken!")
                 else:
-                    st.info("⏳ Warten")
+                    st.write("Neutral")
                 
                 if earn: st.warning(f"📅 ER: {earn}")
 
@@ -322,6 +324,7 @@ if t_in:
                 )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
