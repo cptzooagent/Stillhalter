@@ -217,82 +217,82 @@ if 'depot_data' in locals():
                         st.warning(f"📅 ER: {earn}")
 else:
     st.error("Variable 'depot_data' wurde nicht gefunden!")
-# --- SEKTION 3: EINZEL-CHECK (ULTRA-ROBUST) ---
-st.divider()
+
+# --- SEKTION 3: EINZEL-CHECK (7-WERTE-FIX & PROFI-INDIKATOREN) ---
 st.subheader("🔍 Einzel-Check & Option-Chain")
+c1, c2 = st.columns([1, 2])
+with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
+with c2: t_in = st.text_input("Ticker Symbol", value="HOOD").upper()
 
-# Eingabe-Layout
-c_ui1, c_ui2 = st.columns([1, 2])
-with c_ui1: 
-    s_mode = st.radio("Optionstyp", ["put", "call"], horizontal=True)
-with c_ui2: 
-    t_input = st.text_input("Ticker Symbol", value="HOOD").upper().strip()
+# --- SEKTION 3: EINZEL-CHECK (FINALES DESIGN MIT DELTA & AMPEL) ---
+if t_in:
+    ticker_symbol = t_in.strip().upper()
+    
+    with st.spinner(f"Analysiere {ticker_symbol}..."):
+        price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(ticker_symbol)
+    
+    if price is None:
+        st.error(f"❌ Keine Daten für '{ticker_symbol}' gefunden. Bitte Kürzel prüfen (z.B. CCJ für Cameco).")
+    elif not dates:
+        st.warning(f"⚠️ Keine Optionen für {ticker_symbol} verfügbar.")
+    else:
+        # 1. Dashboard-Header
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Kurs", f"{price:.2f}$")
+        c2.metric("Trend", "📈 Bullisch" if uptrend else "📉 Bärisch")
+        c3.metric("RSI", f"{rsi:.0f}")
 
-if t_input:
-    # 1. Daten abrufen
-    res = get_stock_data_full(t_input)
-    # Entpacken (Sicherheits-Check falls Funktion None liefert)
-    if res and len(res) == 7:
-        price, dates, earn, rsi, uptrend, near_lower, atr = res
+        # Trend-Warnung
+        if not uptrend:
+            st.error("🛑 Achtung: Aktie notiert unter SMA 200 (Abwärtstrend)!")
         
-        # Depot-Check
-        mein_einstand = next((item['Einstand'] for item in depot_data if item['Ticker'] == t_input), None)
+        d_sel = st.selectbox("Laufzeit wählen", dates)
         
-        # Metriken-Header (Keine String-Addition!)
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Kurs", f"{price:.2f}$")
-        m2.metric("RSI", f"{rsi:.0f}")
-        m3.write(f"Trend: {'📈 Up' if uptrend else '📉 Down'}")
-        m4.write(f"ATR: {atr:.2f}$")
-        
-        if mein_einstand:
-            st.info(f"Einstand für {t_input}: {mein_einstand:.2f}$")
-
-        if dates:
-            d_sel = st.selectbox("Laufzeit wählen", dates)
+        try:
+            tk = yf.Ticker(ticker_symbol)
+            chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
             
-            try:
-                # 2. Optionsdaten
-                tk = yf.Ticker(t_input)
-                chain = tk.option_chain(d_sel).puts if s_mode == "put" else tk.option_chain(d_sel).calls
-                
-                exp_dt = datetime.strptime(d_sel, '%Y-%m-%d')
-                tage = max(1, (exp_dt - datetime.now()).days)
-                
-                # Delta-Berechnung
-                chain['delta_c'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], tage/365, o['impliedVolatility'] or 0.4, s_mode), axis=1)
-                
-                # Filtern
-                if s_mode == "put":
-                    df_v = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
-                else:
-                    df_v = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
+            # Berechnungen
+            expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
+            days_to_expiry = max(1, (expiry_dt - datetime.now()).days)
+            T = days_to_expiry / 365
+            
+            chain['delta_calc'] = chain.apply(lambda opt: calculate_bsm_delta(
+                price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode
+            ), axis=1)
 
-                st.write("---")
-                # 3. DIE ANZEIGE (Nutzt Kommas statt '+', das ist unkaputtbar)
-                for _, row in df_v.head(15).iterrows():
-                    d_abs = abs(row['delta_c'])
-                    y_pa = (row['bid'] / row['strike']) * (365 / tage) * 100
-                    puf = (abs(row['strike'] - price) / price) * 100
-                    
-                    # Ampel
-                    emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.30 else "🔴"
-                    
-                    # Safe-Tag
-                    safe = "✅ SAFE" if (s_mode == "call" and mein_einstand and row['strike'] >= mein_einstand) else ""
-                    
-                    # WICHTIG: st.write mit Kommas verbindet Elemente OHNE Fehler-Risiko
-                    st.write(
-                        emoji, 
-                        f"**Strike: {row['strike']:.1f}**", "|",
-                        f"Bid: {row['bid']:.2f}$", "|",
-                        f"D: {d_abs:.2f}", "|",
-                        f"P: {puf:.1f}%", "|",
-                        f"Y: {y_pa:.1f}%", 
-                        safe
-                    )
+            # Filterung für die Anzeige (Strikes nah am Geld)
+            if mode == "put":
+                filtered_df = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
+            else:
+                filtered_df = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
+            
+            st.write("---")
+            # --- DIE SCHICKE ANZEIGE (WIE IN SCREENSHOT 2) ---
+            for _, opt in filtered_df.head(15).iterrows():
+                d_abs = abs(opt['delta_calc'])
+                
+                # Ampel-Emoji
+                risk_emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.30 else "🔴"
+                
+                # Rendite & Puffer
+                y_pa = (opt['bid'] / opt['strike']) * (365 / days_to_expiry) * 100
+                puffer = (abs(opt['strike'] - price) / price) * 100
+                
+                # Sicherer HTML-String für grüne Bid-Preise
+                bid_style = f"<span style='color:#2ecc71; font-weight:bold;'>{opt['bid']:.2f}$</span>"
+                
+                st.markdown(
+                    f"{risk_emoji} **Strike: {opt['strike']:.1f}** | "
+                    f"Bid: {bid_style} | "
+                    f"Delta: {d_abs:.2f} | "
+                    f"Puffer: {puffer:.1f}% | "
+                    f"Yield: {y_pa:.1f}% p.a.",
+                    unsafe_allow_html=True
+                )
+                
 
-            except Exception as e:
-                st.error(f"Fehler in der Kette: {e}")
-        else:
-            st.warning("Keine Verfallsdaten gefunden.")
+        except Exception as e:
+            st.error(f"Fehler bei der Berechnung: {e}")
+# --- ENDE DER DATEI ---
+
