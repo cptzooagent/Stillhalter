@@ -4,6 +4,7 @@ import numpy as np
 from scipy.stats import norm
 from datetime import datetime
 
+# --- MATHEMATIK & LOGIK ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     """Berechnet das Delta zur Risikoeinschätzung."""
     if T <= 0 or sigma <= 0: return 0
@@ -20,7 +21,7 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 def get_clean_earnings(tk):
-    """Sicherer Abruf von Earnings-Daten."""
+    """Sicherer Abruf von Earnings-Daten ohne Zeitzonen-Konflikte."""
     try:
         cal = tk.calendar
         if isinstance(cal, dict) and 'Earnings Date' in cal:
@@ -32,7 +33,7 @@ def get_clean_earnings(tk):
     return None
 
 def get_watchlist():
-    """Zentrale Liste der zu scannenden Aktien."""
+    """Zentrale Watchlist der zu scannenden Ticker."""
     return [
         "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "AVGO", "ADBE", "NFLX", 
         "AMD", "INTC", "QCOM", "AMAT", "TXN", "MU", "ISRG", "LRCX", "PANW", "SNPS",
