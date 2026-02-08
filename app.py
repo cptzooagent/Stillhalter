@@ -12,7 +12,10 @@ st.set_page_config(page_title="CapTrader Pro Scanner", layout="wide")
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     if T <= 0 or sigma <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
+    if option_type == 'call':
+        return norm.cdf(d1)
+    else:
+        return norm.cdf(d1) - 1
 
 def calculate_rsi(data, window=14):
     if len(data) < window + 1: return 50
@@ -50,7 +53,7 @@ min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
 
 st.title("🛡️ CapTrader AI Market Scanner")
 
-# --- SEKTION 1: KOMBI-SCAN (Wie Bild 15) ---
+# --- SEKTION 1: KOMBI-SCAN ---
 if st.button("🚀 Markt-Scan starten", use_container_width=True):
     watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "PLTR", "HOOD", "AFRM", "AMD", "NFLX", "COIN"]
     results = []
@@ -64,7 +67,7 @@ if st.button("🚀 Markt-Scan starten", use_container_width=True):
                 chain = tk.option_chain(target_date).puts
                 T = max(1/365, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365)
                 
-                chain['delta_val'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.4), axis=1)
+                chain['delta_val'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.4, option_type='put'), axis=1)
                 safe_opts = chain[chain['delta_val'].abs() <= max_delta].copy()
                 
                 if not safe_opts.empty:
@@ -85,7 +88,7 @@ if st.button("🚀 Markt-Scan starten", use_container_width=True):
                 if r['E']: st.warning(f"📅 Earnings: {r['E']}")
     else: st.info("Keine Treffer unter den aktuellen Einstellungen.")
 
-# --- SEKTION 2: DEPOT-MANAGER (Wie Bild 6) ---
+# --- SEKTION 2: DEPOT-MANAGER ---
 st.write("---")
 st.subheader("💼 Smart Depot-Manager")
 
@@ -108,41 +111,28 @@ for i, item in enumerate(depot_data):
                 c1, c2 = st.columns(2)
                 c1.metric("Kurs", f"{price:.2f}$")
                 c2.metric("RSI", f"{rsi:.0f}")
-                if rsi < 30: st.info("💎 Oversold - Hold")
-                elif rsi > 70: st.success("🎯 Overbought - Sell Call?")
-                if earn: st.caption(f"📅 Earnings: {earn}")
+                if rsi < 30: st.info("💎 Oversold")
+                elif rsi > 70: st.success("🎯 Overbought")
 
-# --- SEKTION 3: EINZEL-CHECK (Inklusive Delta-Fix) ---
+# --- SEKTION 3: EINZEL-CHECK (Fix: Put/Call Auswahl zurück) ---
 st.write("---")
 st.subheader("🔍 Deep-Dive Einzel-Check")
-t_in = st.text_input("Symbol eingeben", "hood").upper()
+
+col_type, col_ticker = st.columns([1, 3])
+opt_type = col_type.radio("Typ", ["put", "call"], horizontal=True)
+t_in = col_ticker.text_input("Symbol eingeben", "HOOD").upper()
 
 if t_in:
     price, dates, earn, rsi = get_stock_data_full(t_in)
     if price:
-        st.write(f"Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}**")
+        st.write(f"Aktueller Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}**")
         expiry = st.selectbox("Laufzeit wählen", dates)
         tk = yf.Ticker(t_in)
-        chain = tk.option_chain(expiry).puts
+        chain = tk.option_chain(expiry).calls if opt_type == "call" else tk.option_chain(expiry).puts
         T = max(1/365, (datetime.strptime(expiry, '%Y-%m-%d') - datetime.now()).days / 365)
         
-        # Delta-Berechnung für die Liste
-        chain['delta_calc'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4), axis=1)
+        chain['delta_calc'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4, option_type=opt_type), axis=1)
         
-        for _, opt in chain[chain['delta_calc'].abs() < 0.45].sort_values('strike', ascending=False).head(8).iterrows():
-            d_abs = abs(opt['delta_calc'])
-            
-            # Risiko-Ampel
-            if d_abs < 0.15: risk_icon = "🟢 (Sicher)"
-            elif d_abs < 0.25: risk_icon = "🟡 (Moderat)"
-            else: risk_icon = "🔴 (Aggressiv)"
-            
-            # DELTA wieder im Titel und in den Details integriert
-            with st.expander(f"{risk_icon} Strike {opt['strike']:.1f}$ | Delta: {d_abs:.2f}"):
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    st.write(f"💰 **Cash-Einnahme:** {opt['bid']*100:.0f}$")
-                    st.write(f"📉 **Delta:** {d_abs:.2f}")
-                with col_b:
-                    st.write(f"🎯 **Puffer zum Kurs:** {abs(opt['strike']-price)/price*100:.1f}%")
-                    st.write(f"🌊 **Implizite Vola:** {int((opt['impliedVolatility'] or 0)*100)}%")
+        # Sortierung: Puts absteigend, Calls aufsteigend vom Geld weg
+        sort_order = opt_type == "call"
+        for _, opt in chain.sort_values('strike', ascending=sort_order).head(8).
