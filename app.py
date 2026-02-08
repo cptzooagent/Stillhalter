@@ -11,6 +11,7 @@ st.set_page_config(page_title="CapTrader Pro Scanner", layout="wide")
 # --- 1. MATHE: DELTA & RSI ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     if T <= 0 or sigma <= 0: return 0
+    # Black-Scholes Formel für Delta
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     if option_type == 'call':
         return norm.cdf(d1)
@@ -25,7 +26,7 @@ def calculate_rsi(data, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-# --- 2. DATEN-FUNKTIONEN ---
+# --- 2. DATEN-FUNKTION (Vereinheitlicht für Bild 25) ---
 @st.cache_data(ttl=900)
 def get_stock_data_full(symbol):
     try:
@@ -91,7 +92,7 @@ if st.button("🚀 Markt-Scan starten", use_container_width=True):
     else:
         st.info("Keine Treffer unter den aktuellen Einstellungen.")
 
-# --- SEKTION 2: DEPOT-MANAGER ---
+# --- SEKTION 2: DEPOT-MANAGER (Deine Werte aus Bild 6) ---
 st.write("---")
 st.subheader("💼 Smart Depot-Manager")
 
@@ -117,14 +118,44 @@ for i, item in enumerate(depot_data):
                 if rsi < 30: st.info("💎 Oversold")
                 elif rsi > 70: st.success("🎯 Overbought")
 
-# --- SEKTION 3: EINZEL-CHECK (Fix für Bild 21, 23, 24) ---
+# --- SEKTION 3: EINZEL-CHECK (Fix für Bilder 21, 23, 24, 25) ---
 st.write("---")
 st.subheader("🔍 Deep-Dive Einzel-Check")
 
 c_type, c_tick = st.columns([1, 3])
 opt_type = c_type.radio("Typ", ["put", "call"], horizontal=True)
-# Fix Bild 24: Klammer korrekt geschlossen
+# Fix Bild 24: Klammer geschlossen
 t_in = c_tick.text_input("Symbol", "HOOD").upper()
 
 if t_in:
-    price, dates, earn, rsi = get
+    # Fix Bild 25: Funktionsname vereinheitlicht
+    price, dates, earn, rsi = get_stock_data_full(t_in)
+    if price:
+        st.write(f"Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}**")
+        expiry = st.selectbox("Laufzeit", dates)
+        tk = yf.Ticker(t_in)
+        chain = tk.option_chain(expiry).calls if opt_type == "call" else tk.option_chain(expiry).puts
+        T = max(1/365, (datetime.strptime(expiry, '%Y-%m-%d') - datetime.now()).days / 365)
+        
+        chain['delta_calc'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4, option_type=opt_type), axis=1)
+        
+        # Fix Bild 21: Syntax der Sortierung korrigiert
+        sort_order = (opt_type == "call")
+        filtered_chain = chain.sort_values('strike', ascending=sort_order).head(8)
+        
+        for _, opt in filtered_chain.iterrows():
+            d_abs = abs(opt['delta_calc'])
+            
+            if d_abs < 0.15: risk_label = "🟢 (Sicher)"
+            elif d_abs < 0.25: risk_label = "🟡 (Moderat)"
+            else: risk_label = "🔴 (Aggressiv)"
+            
+            # Fix Bild 23: Einrückung unter 'with' korrigiert
+            with st.expander(f"{risk_label} Strike {opt['strike']:.1f}$ | Delta: {d_abs:.2f}"):
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.write(f"💰 **Cash-Prämie:** {opt['bid']*100:.0f}$")
+                    st.write(f"📉 **Delta:** {d_abs:.2f}")
+                with col_b:
+                    st.write(f"🎯 **Puffer zum Kurs:** {abs(opt['strike']-price)/price*100:.1f}%")
+                    st.write(f"🌊 **Implizite Vola:** {int((opt['impliedVolatility'] or 0)*100)}%")
