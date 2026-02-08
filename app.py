@@ -218,28 +218,30 @@ if 'depot_data' in locals():
 else:
     st.error("Variable 'depot_data' wurde nicht gefunden!")
 
-# --- SEKTION 3: EINZEL-CHECK (ULTIMATIVE FEHLERFREIE VERSION) ---
+# --- SEKTION 3: EINZEL-CHECK (RADIKAL VEREINFACHT) ---
 st.divider()
 st.subheader("🔍 Einzel-Check & Option-Chain")
 
-c1, c2 = st.columns([1, 2])
-with c1: mode = st.radio("Optionstyp", ["put", "call"], horizontal=True)
-with c2: t_in = st.text_input("Ticker Symbol (z.B. HOOD, NVDA, CCJ)", value="HOOD").upper()
+col_t1, col_t2 = st.columns([1, 2])
+with col_t1: 
+    mode = st.radio("Optionstyp", ["put", "call"], horizontal=True)
+with col_t2: 
+    t_in = st.text_input("Ticker Symbol", value="HOOD").upper().strip()
 
 if t_in:
-    # Daten abrufen
+    # Daten-Zentrale
     price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(t_in)
     
     if price and dates:
-        # Depot-Abgleich
+        # Depot-Check
         mein_einstand = next((item['Einstand'] for item in depot_data if item['Ticker'] == t_in), None)
         
-        # Dashboard-Header
-        res_cols = st.columns(4)
-        res_cols[0].metric("Kurs", f"{price:.2f}$")
-        res_cols[1].metric("RSI", f"{rsi:.0f}")
-        res_cols[2].write(f"**Trend:** {'📈 Up' if uptrend else '📉 Down'}")
-        res_cols[3].write(f"**Vola (ATR):** {atr:.2f}$")
+        # Header-Metriken
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Kurs", f"{price:.2f}$")
+        m2.metric("RSI", f"{rsi:.0f}")
+        m3.write(f"**Trend:** {'📈 Up' if uptrend else '📉 Down'}")
+        m4.write(f"**ATR:** {atr:.2f}$")
         
         if mein_einstand:
             st.info(f"📌 Dein Einstand für {t_in}: {mein_einstand:.2f}$")
@@ -248,46 +250,47 @@ if t_in:
         
         try:
             tk = yf.Ticker(t_in)
-            chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
+            opts = tk.option_chain(d_sel)
+            chain = opts.puts if mode == "put" else opts.calls
             
-            # Zeit bis Expiry
             expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
-            tage = max(1, (expiry_dt - datetime.now()).days)
-            T = tage / 365
+            tage_rest = max(1, (expiry_dt - datetime.now()).days)
+            T_jahr = tage_rest / 365
             
-            # Delta-Berechnung (BSM)
-            chain['delta_c'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4, mode), axis=1)
+            # Delta Berechnung
+            chain['delta_c'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T_jahr, o['impliedVolatility'] or 0.4, mode), axis=1)
             
-            # Filterung für die Anzeige
+            # Filterung
             if mode == "put":
                 df_view = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
             else:
                 df_view = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
 
             st.write("---")
+            
+            # DIE ANZEIGE-SCHLEIFE (OHNE MANUELLE STRING-ADDITION)
             for _, opt in df_view.head(15).iterrows():
-                # Kennzahlen
                 d_abs = abs(opt['delta_c'])
-                y_pa = (opt['bid'] / opt['strike']) * (365 / tage) * 100
+                y_pa = (opt['bid'] / opt['strike']) * (365 / tage_rest) * 100
                 puffer = (abs(opt['strike'] - price) / price) * 100
                 
-                # Call-Safe Check
-                safe_tag = ""
-                if mode == "call" and mein_einstand and opt['strike'] >= mein_einstand:
-                    safe_tag = " ✅ **SAFE**"
+                # Ampel-Logik
+                emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.30 else "🔴"
                 
-                # Design-Elemente
-                color = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.30 else "🔴"
-                bid_text = f"{opt['bid']:.2f}$"
-                
-                # REINER F-STRING (KEIN + VERWENDET)
-                st.markdown(
-                    f"{color} **Strike: {opt['strike']:.1f}** | "
-                    f"Bid: <span style='color:#2ecc71; font-weight:bold;'>{bid_text}</span> | "
-                    f"D: {d_abs:.2f} | P: {puffer:.1f}% | Y: {y_pa:.1f}%{safe_tag}",
-                    unsafe_allow_html=True
+                # Wir bauen die Zeile komplett über einen f-string ohne "+"
+                zeile = (
+                    f"{emoji} **Strike: {opt['strike']:.1f}** | "
+                    f"Bid: {opt['bid']:.2f}$ | "
+                    f"D: {d_abs:.2f} | "
+                    f"P: {puffer:.1f}% | "
+                    f"Yield: {y_pa:.1f}% p.a."
                 )
+                
+                # Falls es ein sicherer Call ist, hängen wir das Tag an
+                if mode == "call" and mein_einstand and opt['strike'] >= mein_einstand:
+                    zeile += " ✅ SAFE"
+                
+                st.markdown(zeile)
+                
         except Exception as e:
-            st.error(f"Fehler bei Options-Daten: {e}")
-
-
+            st.error(f"Fehler in der Optionskette: {e}")
