@@ -50,7 +50,7 @@ def get_stock_data_full(symbol):
 st.sidebar.header("Strategie-Einstellungen")
 target_prob = st.sidebar.slider("Sicherheit (OTM %)", 70, 99, 83)
 max_delta = (100 - target_prob) / 100
-min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
+min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=15)
 
 st.title("🛡️ CapTrader AI Market Scanner")
 
@@ -73,11 +73,10 @@ if st.button("🚀 Markt-Scan starten", use_container_width=True):
                 
                 if not safe_opts.empty:
                     safe_opts['y_pa'] = (safe_opts['bid'] / safe_opts['strike']) * (1/T) * 100
-                    # Fix: Sortierung und iloc[0] jetzt sicher innerhalb des try-Blocks
                     best = safe_opts.sort_values('y_pa', ascending=False).iloc[0]
                     if best['y_pa'] >= min_yield_pa:
                         results.append({'T': t, 'Y': best['y_pa'], 'S': best['strike'], 'B': best['bid'], 'D': abs(best['delta_val']), 'R': rsi, 'E': earn})
-            except Exception:
+            except:
                 continue
 
     if results:
@@ -92,7 +91,7 @@ if st.button("🚀 Markt-Scan starten", use_container_width=True):
     else:
         st.info("Keine Treffer unter den aktuellen Einstellungen.")
 
-# --- SEKTION 2: DEPOT-MANAGER ---
+# --- SEKTION 2: DEPOT-MANAGER (Deine Werte aus Bild 6) ---
 st.write("---")
 st.subheader("💼 Smart Depot-Manager")
 
@@ -119,34 +118,10 @@ for i, item in enumerate(depot_data):
                 elif rsi > 70: st.success("🎯 Overbought")
                 if earn: st.caption(f"📅 Earnings: {earn}")
 
-# --- SEKTION 3: EINZEL-CHECK (Fix für Bild 21) ---
+# --- SEKTION 3: EINZEL-CHECK (Fix für Bilder 21, 23) ---
 st.write("---")
 st.subheader("🔍 Deep-Dive Einzel-Check")
 
 c_type, c_tick = st.columns([1, 3])
-opt_type = c_type.radio("Optionstyp", ["put", "call"], horizontal=True)
-t_in = c_tick.text_input("Symbol prüfen", "HOOD").upper()
-
-if t_in:
-    price, dates, earn, rsi = get_stock_data_full(t_in)
-    if price:
-        st.write(f"Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}**")
-        expiry = st.selectbox("Optionen-Laufzeit", dates)
-        tk = yf.Ticker(t_in)
-        chain = tk.option_chain(expiry).calls if opt_type == "call" else tk.option_chain(expiry).puts
-        T = max(1/365, (datetime.strptime(expiry, '%Y-%m-%d') - datetime.now()).days / 365)
-        
-        chain['delta_calc'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4, option_type=opt_type), axis=1)
-        
-        # Fix für Bild 21: Korrekte Syntax für die Schleife
-        sort_order = (opt_type == "call")
-        filtered_chain = chain.sort_values('strike', ascending=sort_order).head(8)
-        
-        for _, opt in filtered_chain.iterrows():
-            d_abs = abs(opt['delta_calc'])
-            
-            if d_abs < 0.15: risk_label = "🟢 (Sicher)"
-            elif d_abs < 0.25: risk_label = "🟡 (Moderat)"
-            else: risk_label = "🔴 (Aggressiv)"
-            
-            with st.expander(f"{risk_label} Strike {opt['strike']:.1f}$ | Delta: {d_abs:.2f}"):
+opt_type = c_type.radio("Typ", ["put", "call"], horizontal=True)
+t_in = c_tick.text_input("Symbol",
