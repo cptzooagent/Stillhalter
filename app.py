@@ -84,41 +84,43 @@ st.sidebar.markdown("---")
 only_uptrend = st.sidebar.checkbox("Nur Aufwärtstrend (SMA 200)", value=False)
 st.sidebar.info("Tipp: Deaktiviere den Aufwärtstrend für mehr Treffer am Wochenende.")
 
-# --- ERWEITERTES MARKT-DASHBOARD ---
+# --- DAS ULTIMATIVE MARKT-DASHBOARD (4 SPALTEN) ---
 st.markdown("## 📊 Globales Marktwetter")
-m_col1, m_col2, m_col3 = st.columns(3)
+m_col1, m_col2, m_col3, m_col4 = st.columns(4)
 
-# 1. Fear & Greed Index (NEU)
+# 1. Klasisscher Fear & Greed (Aktienmarkt) - Näherungswert über Marktdaten
+# Da CNN keine API hat, nutzen wir ein stabiles Sentiment-Modell oder eine Platzhalter-Logik
+with m_col1:
+    # Hinweis: Da der CNN Index schwer zu scrapen ist, hier ein Indikator-Feld
+    # Du kannst hier manuell den Wert prüfen oder wir nutzen RSI des SPY als Proxy
+    spy_hist = yf.Ticker("SPY").history(period="20d")
+    spy_rsi = calculate_rsi(spy_hist['Close']).iloc[-1]
+    fng_status = "Neutral" if 40 < spy_rsi < 60 else "Greed" if spy_rsi >= 60 else "Fear"
+    st.metric("Stock Fear & Greed", f"{spy_rsi:.0f}/100", f"Status: {fng_status}")
+
+# 2. Crypto Fear & Greed (Der aus dem letzten Schritt)
 try:
-    # Nutzung einer freien API für den Fear & Greed Index
     import requests
     fg_data = requests.get("https://api.alternative.me/fng/").json()
-    fg_val = int(fg_data['data'][0]['value'])
-    fg_text = fg_data['data'][0]['value_classification']
-    
-    # Farbe basierend auf Status
-    fg_color = "inverse" if fg_val < 30 else "normal" # Rot bei Fear, Grün bei Greed
-    m_col1.metric("Fear & Greed Index", f"{fg_val}/100", fg_text, delta_color=fg_color)
+    fg_crypto = int(fg_data['data'][0]['value'])
+    fg_c_text = fg_data['data'][0]['value_classification']
+    m_col2.metric("Crypto Fear & Greed", f"{fg_crypto}/100", fg_c_text)
 except:
-    m_col1.error("Fear & Greed n.a.")
+    m_col2.error("Crypto F&G n.a.")
 
-# 2. VIX Abfrage
+# 3. VIX Abfrage
 try:
-    vix_data = yf.Ticker("^VIX").history(period="2d")
-    vix_val = vix_data['Close'].iloc[-1]
-    v_delta = vix_val - vix_data['Close'].iloc[-2]
-    m_col2.metric("VIX (Angst-Index)", f"{vix_val:.2f}", f"{v_delta:+.2f}", delta_color="inverse")
+    vix_val = yf.Ticker("^VIX").history(period="1d")['Close'].iloc[-1]
+    m_col3.metric("VIX (Angst-Index)", f"{vix_val:.2f}", delta_color="inverse")
 except:
-    m_col2.error("VIX n.a.")
+    m_col3.error("VIX n.a.")
 
-# 3. Bitcoin Abfrage
+# 4. Bitcoin Abfrage
 try:
-    btc_data = yf.Ticker("BTC-USD").history(period="2d")
-    btc_price = btc_data['Close'].iloc[-1]
-    btc_delta = btc_price - btc_data['Close'].iloc[-2]
-    m_col3.metric("Bitcoin (Risk-On)", f"{btc_price:,.0f} $", f"{btc_delta:+.2f} $")
+    btc_price = yf.Ticker("BTC-USD").history(period="1d")['Close'].iloc[-1]
+    m_col4.metric("Bitcoin (Risk-On)", f"{btc_price:,.0f} $")
 except:
-    m_col3.error("Bitcoin n.a.")
+    m_col4.error("BTC n.a.")
 
 st.markdown("---")
 
@@ -285,4 +287,5 @@ if t_in:
                 )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
