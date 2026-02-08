@@ -33,7 +33,6 @@ def get_stock_data_full(symbol):
         rsi_val = calculate_rsi(hist['Close']).iloc[-1] if not hist.empty else 50
         
         earn_str = ""
-        earn_dt = None
         try:
             cal = tk.calendar
             if cal is not None and 'Earnings Date' in cal:
@@ -41,9 +40,9 @@ def get_stock_data_full(symbol):
                 earn_str = earn_dt.strftime('%d.%m.')
         except: pass
         
-        return price, dates, earn_str, rsi_val, earn_dt
+        return price, dates, earn_str, rsi_val
     except:
-        return None, [], "", 50, None
+        return None, [], "", 50
 
 # --- SIDEBAR ---
 st.sidebar.header("🛡️ Strategie-Einstellungen")
@@ -60,7 +59,7 @@ if st.button("🚀 Kombi-Scan starten"):
     prog = st.progress(0)
     for i, t in enumerate(watchlist):
         prog.progress((i + 1) / len(watchlist))
-        price, dates, earn, rsi, _ = get_stock_data_full(t)
+        price, dates, earn, rsi = get_stock_data_full(t)
         if price and dates:
             try:
                 target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
@@ -81,49 +80,60 @@ st.divider()
 
 # --- SEKTION 2: DEPOT ---
 st.subheader("💼 Smart Depot-Manager")
-depot = [{"T": "AFRM", "E": 76.0}, {"T": "HOOD", "E": 82.82}, {"T": "PLTR", "E": 25.0}, {"T": "MSTR", "E": 1500.0}]
+depot = [
+    {"T": "AFRM", "E": 76.0}, {"T": "HOOD", "E": 82.82}, 
+    {"T": "PLTR", "E": 25.0}, {"T": "MSTR", "E": 1500.0}
+]
 d_cols = st.columns(len(depot))
 for idx, item in enumerate(depot):
-    price, _, earn, rsi, earn_dt = get_stock_data_full(item['T'])
+    price, _, earn, rsi = get_stock_data_full(item['T'])
     if price:
         diff = (price/item['E']-1)*100
         with d_cols[idx]:
             st.metric(item['T'], f"{price:.2f}$", f"{diff:.1f}%")
-            if rsi > 65: st.success("Call?")
-            if rsi < 35: st.info("Hold")
+            st.caption(f"RSI: {rsi:.0f} | ER: {earn}")
 
 st.divider()
 
-# --- SEKTION 3: EINZEL-CHECK (FIXED) ---
+# --- SEKTION 3: EINZEL-CHECK (DIE AMPEL) ---
 st.subheader("🔍 Einzel-Check")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
 with c2: t_in = st.text_input("Ticker", value="HOOD").upper()
 
 if t_in:
-    price, dates, earn, rsi, _ = get_stock_data_full(t_in)
+    price, dates, earn, rsi = get_stock_data_full(t_in)
     if price and dates:
-        st.write(f"Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}** | ER: {earn}")
-        d_sel = st.selectbox("Laufzeit", dates)
+        st.info(f"Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}** | Ernte: {earn}")
+        d_sel = st.selectbox("Laufzeit wählen", dates)
         try:
             tk = yf.Ticker(t_in)
             chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
             T = (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days / 365
+            
+            # Delta-Berechnung
             chain['delta_calc'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4, mode), axis=1)
             
-            # Anzeige-Filter
-            df = chain[chain['strike'] <= price * 1.1] if mode == "put" else chain[chain['strike'] >= price * 0.9]
-            for _, opt in df.sort_values('strike', ascending=(mode == "call")).head(15).iterrows():
+            # Filter für die Anzeige
+            if mode == "put":
+                df_disp = chain[chain['strike'] <= price * 1.1].sort_values('strike', ascending=False)
+            else:
+                df_disp = chain[chain['strike'] >= price * 0.9].sort_values('strike', ascending=True)
+
+            st.write("---")
+            for _, opt in df_disp.head(15).iterrows():
                 d_abs = abs(opt['delta_calc'])
+                # Ampel-Logik
                 color = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.30 else "🔴"
                 y_pa = (opt['bid'] / opt['strike']) * (365 / max(1, T*365)) * 100
-                puffer = (abs(opt['strike']-price)/price)*100
+                puffer = (abs(opt['strike'] - price) / price) * 100
                 
-                # DER FIX: Sauber geschlossene f-strings
+                # Formatierte Ausgabe (KEIN SYNTAX FEHLER MEHR)
                 st.markdown(
                     f"{color} **Strike: {opt['strike']:.1f}** | "
                     f"Bid: <span style='color:#2ecc71;'>{opt['bid']:.2f}$</span> | "
                     f"Delta: {d_abs:.2f} | Puffer: {puffer:.1f}% | Rendite: {y_pa:.1f}% p.a.",
                     unsafe_allow_html=True
                 )
-        except Exception as e: st.error(f"Fehler: {e}")
+        except Exception as e:
+            st.error(f"Fehler in der Optionskette: {e}")
