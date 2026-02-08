@@ -161,87 +161,60 @@ for i, item in enumerate(depot_data):
 
 st.write("---") 
 
-# SEKTION 3: EINZEL-CHECK (FIX: DELTA WIEDER DA)
-st.subheader("🔍 Einzel-Check")
+# --- AB HIER ERSETZEN (Sektion 3 bis Ende der Datei) ---
+st.subheader("🔍 Einzel-Check & Option-Chain")
 c1, c2 = st.columns([1, 2])
 with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
-with c2: t_in = st.text_input("Ticker", value="NVDA").upper()
+with c2: t_in = st.text_input("Ticker Symbol", value="HOOD").upper()
 
 if t_in:
     price, dates, earn, rsi, _ = get_stock_data_full(t_in)
     if price and dates:
-        st.write(f"Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}**")
+        st.info(f"Aktueller Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}** | Nächste Ernte: {earn}")
         d_sel = st.selectbox("Laufzeit wählen", dates)
-        tk = yf.Ticker(t_in)
         
         try:
+            tk = yf.Ticker(t_in)
             chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
-            T = (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days / 365
             
-            # Delta für die Filterung und Anzeige berechnen
+            # Zeit bis Verfall berechnen
+            expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
+            days_to_expiry = max(1, (expiry_dt - datetime.now()).days)
+            T = days_to_expiry / 365
+            
+            # Delta-Berechnung (Nutzt deine bestehende Funktion)
             chain['delta_calc'] = chain.apply(lambda opt: calculate_bsm_delta(
                 price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode
             ), axis=1)
 
-            # --- START DES ERSATZ-BLOCKS ---
-            # Filterung für die Anzeige (Strikes nah am Kurs)
+            # Filterung für die Anzeige (Wunsch-Design)
             if mode == "put":
                 filtered_df = chain[chain['strike'] <= price * 1.1].sort_values('strike', ascending=False)
             else:
                 filtered_df = chain[chain['strike'] >= price * 0.9].sort_values('strike', ascending=True)
             
             st.write("---")
-            for _, opt in filtered_df.head(15).iterrows():
-                d_abs = abs(opt['delta_calc'])
-                
-                # 1. Ampel-Logik (🟢 bis 0.16, 🟡 bis 0.30, 🔴 darüber)
-                color = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.30 else "🔴"
-                
-                # 2. Rendite p.a. & Puffer
-                days = max(1, (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days)
-                y_pa = (opt['bid'] / opt['strike']) * (365 / days) * 100
-                puffer = (abs(opt['strike'] - price) / price) * 100
-                
-                # 3. Die Anzeige im Wunsch-Design (Screenshot 2.png)
-                # Wir nutzen ein einfaches Format, um Syntax-Fehler zu vermeiden
-                bid_html = f"<span style='color:#2ecc71; font-weight:bold;'>{opt['bid']:.2f}$</span>"
-                
-                st.markdown(
-                    f"{color} **Strike: {opt['strike']:.1f}$** | "
-                    f"Bid: {bid_html} | "
-                    f"Delta: {d_abs:.2f} | "
-                    f"Puffer: {puffer:.1f}% | "
-                    f"Yield: {y_pa:.1f}% p.a.",
-                    unsafe_allow_html=True
-                )
-            # --- ENDE DES ERSATZ-BLOCKS ---
-           # --- NEUER VERBESSERTER AMPEL-BLOCK ---
-            st.write("---")
             for _, opt in filtered_df.head(20).iterrows():
                 d_abs = abs(opt['delta_calc'])
                 
-                # 1. Ampel-Logik
-                risk_color = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.30 else "🔴"
+                # AMPEL LOGIK
+                risk_emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.30 else "🔴"
                 
-                # 2. Rendite p.a. Berechnung
-                # Wir nutzen die Tage bis zum Verfall für die p.a. Rechnung
-                days_to_expiry = max(1, (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days)
-                yield_pa = (opt['bid'] / opt['strike']) * (365 / days_to_expiry) * 100
-                
-                # 3. Puffer Berechnung
+                # RENDITE & PUFFER
+                y_pa = (opt['bid'] / opt['strike']) * (365 / days_to_expiry) * 100
                 puffer = (abs(opt['strike'] - price) / price) * 100
                 
-                # 4. Saubere Anzeige (vermeidet Syntax-Fehler durch einfache HTML-Struktur)
-                # Die Prämie (Bid) wird hier direkt grün gefärbt
-                st.markdown(
-                    f"{risk_color} **Strike: {opt['strike']:.1f}$** | "
-                    f"Bid: <span style='color:#2ecc71; font-weight:bold;'>{opt['bid']:.2f}$</span> | "
-                    f"Delta: {d_abs:.2f} | "
-                    f"Puffer: {puffer:.1f}% | "
-                    f"Yield: {yield_pa:.1f}% p.a.",
-                    unsafe_allow_html=True
-                )
-            # --- ENDE DES BLOCKS ---
-
-
-
+                # ANZEIGE (Identisch zu Screenshot 2.png)
+                # Wir bauen den String sicher zusammen, um f-string Fehler zu vermeiden
+                bid_val = f"{opt['bid']:.2f}$"
+                line = (f"{risk_emoji} **Strike: {opt['strike']:.1f}** | "
+                        f"Bid: <span style='color:#2ecc71; font-weight:bold;'>{bid_val}</span> | "
+                        f"Delta: {d_abs:.2f} | "
+                        f"Puffer: {puffer:.1f}% | "
+                        f"Rendite: {y_pa:.1f}% p.a.")
+                
+                st.markdown(line, unsafe_allow_html=True)
+                
+        except Exception as e:
+            st.error(f"Ein Fehler ist aufgetreten: {e}")
+# --- ENDE DER DATEI ---
