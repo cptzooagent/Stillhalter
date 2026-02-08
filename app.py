@@ -39,7 +39,8 @@ def get_stock_data_full(symbol):
             cal = tk.calendar
             if cal is not None and 'Earnings Date' in cal:
                 earn_str = cal['Earnings Date'][0].strftime('%d.%m.')
-        except: pass
+        except: 
+            earn_str = ""
         
         return price, list(tk.options), earn_str, rsi_val
     except:
@@ -53,7 +54,7 @@ min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
 
 st.title("🛡️ CapTrader AI Market Scanner")
 
-# --- SEKTION 1: MARKT-SCAN (Wie Bild 15) ---
+# --- SEKTION 1: MARKT-SCAN (Fix für Bild 22) ---
 if st.button("🚀 Markt-Scan starten", use_container_width=True):
     watchlist = ["AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA", "PLTR", "HOOD", "AFRM", "AMD", "NFLX", "COIN"]
     results = []
@@ -72,4 +73,80 @@ if st.button("🚀 Markt-Scan starten", use_container_width=True):
                 
                 if not safe_opts.empty:
                     safe_opts['y_pa'] = (safe_opts['bid'] / safe_opts['strike']) * (1/T) * 100
+                    # Fix: Sortierung und iloc[0] jetzt sicher innerhalb des try-Blocks
                     best = safe_opts.sort_values('y_pa', ascending=False).iloc[0]
+                    if best['y_pa'] >= min_yield_pa:
+                        results.append({'T': t, 'Y': best['y_pa'], 'S': best['strike'], 'B': best['bid'], 'D': abs(best['delta_val']), 'R': rsi, 'E': earn})
+            except Exception:
+                continue
+
+    if results:
+        cols = st.columns(3)
+        for i, r in enumerate(results):
+            with cols[i % 3]:
+                st.markdown(f"### {r['T']}")
+                st.metric("Rendite p.a.", f"{r['Y']:.1f}%", f"↑ Δ {r['D']:.2f}")
+                st.write(f"💰 **Cash-Prämie: {r['B']*100:.0f}$**")
+                st.write(f"🎯 Strike: {r['S']}$ | RSI: {r['R']:.0f}")
+                if r['E']: st.warning(f"📅 Earnings: {r['E']}")
+    else:
+        st.info("Keine Treffer unter den aktuellen Einstellungen.")
+
+# --- SEKTION 2: DEPOT-MANAGER ---
+st.write("---")
+st.subheader("💼 Smart Depot-Manager")
+
+depot_data = [
+    {"Ticker": "AFRM", "Einstand": 76.0}, {"Ticker": "ELF", "Einstand": 109.0},
+    {"Ticker": "ETSY", "Einstand": 67.0}, {"Ticker": "GTLB", "Einstand": 41.0},
+    {"Ticker": "GTM", "Einstand": 17.0}, {"Ticker": "HIMS", "Einstand": 37.0},
+    {"Ticker": "HOOD", "Einstand": 82.82}, {"Ticker": "JKS", "Einstand": 50.0},
+    {"Ticker": "NVO", "Einstand": 97.0}, {"Ticker": "RBRK", "Einstand": 70.0},
+    {"Ticker": "SE", "Einstand": 170.0}, {"Ticker": "TTD", "Einstand": 102.0}
+]
+
+p_cols = st.columns(3)
+for i, item in enumerate(depot_data):
+    price, _, earn, rsi = get_stock_data_full(item['Ticker'])
+    if price:
+        diff = (price / item['Einstand'] - 1) * 100
+        with p_cols[i % 3]:
+            with st.expander(f"{item['Ticker']} ({diff:.1f}%)", expanded=True):
+                c1, c2 = st.columns(2)
+                c1.metric("Kurs", f"{price:.2f}$")
+                c2.metric("RSI", f"{rsi:.0f}")
+                if rsi < 30: st.info("💎 Oversold")
+                elif rsi > 70: st.success("🎯 Overbought")
+                if earn: st.caption(f"📅 Earnings: {earn}")
+
+# --- SEKTION 3: EINZEL-CHECK (Fix für Bild 21) ---
+st.write("---")
+st.subheader("🔍 Deep-Dive Einzel-Check")
+
+c_type, c_tick = st.columns([1, 3])
+opt_type = c_type.radio("Optionstyp", ["put", "call"], horizontal=True)
+t_in = c_tick.text_input("Symbol prüfen", "HOOD").upper()
+
+if t_in:
+    price, dates, earn, rsi = get_stock_data_full(t_in)
+    if price:
+        st.write(f"Kurs: **{price:.2f}$** | RSI: **{rsi:.0f}**")
+        expiry = st.selectbox("Optionen-Laufzeit", dates)
+        tk = yf.Ticker(t_in)
+        chain = tk.option_chain(expiry).calls if opt_type == "call" else tk.option_chain(expiry).puts
+        T = max(1/365, (datetime.strptime(expiry, '%Y-%m-%d') - datetime.now()).days / 365)
+        
+        chain['delta_calc'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4, option_type=opt_type), axis=1)
+        
+        # Fix für Bild 21: Korrekte Syntax für die Schleife
+        sort_order = (opt_type == "call")
+        filtered_chain = chain.sort_values('strike', ascending=sort_order).head(8)
+        
+        for _, opt in filtered_chain.iterrows():
+            d_abs = abs(opt['delta_calc'])
+            
+            if d_abs < 0.15: risk_label = "🟢 (Sicher)"
+            elif d_abs < 0.25: risk_label = "🟡 (Moderat)"
+            else: risk_label = "🔴 (Aggressiv)"
+            
+            with st.expander(f"{risk_label} Strike {opt['strike']:.1f}$ | Delta: {d_abs:.2f}"):
