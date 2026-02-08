@@ -35,43 +35,38 @@ def get_combined_watchlist():
     return list(set(sp500_nasdaq_mix))
 
 @st.cache_data(ttl=900)
-@st.cache_data(ttl=900)
 def get_stock_data_full(symbol):
     try:
         tk = yf.Ticker(symbol)
-        # Basis-Daten
-        price = tk.fast_info['last_price']
+        # Sicherere Methode: Wir ziehen die Historie, um den letzten Preis zu bekommen
+        hist = tk.history(period="150d") 
+        if hist.empty: return None, [], "", 50, True, False, 0
+            
+        price = hist['Close'].iloc[-1] 
         dates = list(tk.options)
         
-        # Historie für Indikatoren (6 Monate für SMA 200)
-        hist = tk.history(period="150d") # 150 Handelstage (~7 Monate)
+        # Indikatoren
+        rsi_val = calculate_rsi(hist['Close']).iloc[-1]
+        sma_200 = hist['Close'].mean() 
+        is_uptrend = price > sma_200
         
-        if not hist.empty and len(hist) > 20:
-            # 1. RSI
-            rsi_val = calculate_rsi(hist['Close']).iloc[-1]
+        # Bollinger & ATR
+        sma_20 = hist['Close'].rolling(window=20).mean()
+        std_20 = hist['Close'].rolling(window=20).std()
+        lower_band = (sma_20 - 2 * std_20).iloc[-1]
+        is_near_lower = price <= (lower_band * 1.02)
+        high_low = hist['High'] - hist['Low']
+        atr = high_low.rolling(window=14).mean().iloc[-1]
             
-            # 2. SMA 200 (Trend-Check) - wir nehmen hier den verfügbaren Max-Zeitraum
-            sma_200 = hist['Close'].mean() 
-            is_uptrend = price > sma_200
-            
-            # 3. Bollinger Bänder (20 Tage, 2 Standardabweichungen)
-            sma_20 = hist['Close'].rolling(window=20).mean()
-            std_20 = hist['Close'].rolling(window=20).std()
-            lower_band = (sma_20 - 2 * std_20).iloc[-1]
-            is_near_lower = price <= (lower_band * 1.02) # Innerhalb 2% vom Band
-            
-            # 4. ATR (einfache Version für die Vola)
-            high_low = hist['High'] - hist['Low']
-            atr = high_low.rolling(window=14).mean().iloc[-1]
-        else:
-            rsi_val, is_uptrend, is_near_lower, atr = 50, True, False, 0
-            
-        # Earnings
+        # Earnings-Check (stabilisiert)
         earn_str = ""
         try:
             cal = tk.calendar
-            if cal is not None and 'Earnings Date' in cal:
-                earn_str = cal['Earnings Date'][0].strftime('%d.%m.')
+            if cal is not None:
+                if isinstance(cal, dict) and 'Earnings Date' in cal:
+                    earn_str = cal['Earnings Date'][0].strftime('%d.%m.')
+                elif hasattr(cal, 'columns') and 'Earnings Date' in cal.columns:
+                    earn_str = cal['Earnings Date'].iloc[0].strftime('%d.%m.')
         except: pass
         
         return price, dates, earn_str, rsi_val, is_uptrend, is_near_lower, atr
@@ -98,89 +93,60 @@ min_stock_price = st.sidebar.slider("Mindest-Aktienpreis ($)", 0, 500, 20)
 # Das max_delta setzen wir fest auf einen sicheren Wert (0.20)
 max_delta = 0.20
 
-st.subheader("🎯 Profi-Einstiegs-Chancen")
-
 if st.button("🚀 Kombi-Scan starten"):
-    # WICHTIG: Wir nutzen jetzt direkt deinen neuen Slider-Wert
-    # puffer_limit wird z.B. 0.05 bei 5% Slider-Einstellung
     puffer_limit = otm_puffer_slider / 100 
-    
     ticker_liste = ["AMD", "NVDA", "TSLA", "GOOGL", "AAPL", "MSFT", "META", "HOOD", "CCJ"]
     cols = st.columns(4)
     found_idx = 0
     
-    with st.spinner(f"Suche Puts mit mind. {otm_puffer_slider}% Puffer..."):
+    with st.spinner(f"Scanne {len(ticker_liste)} Symbole..."):
         for symbol in ticker_liste:
             try:
-                # 1. Kursdaten laden
                 res = get_stock_data_full(symbol)
-                if not res or res[0] is None: continue
+                if res[0] is None: continue
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
                 
-                # Filter: Mindest-Aktienpreis aus Sidebar
+                # Check: Mindestpreis aus Sidebar
                 if price < min_stock_price: continue
                 
-                # 2. Laufzeit (ab 11 Tage)
+                # Laufzeit finden (mind. 11 Tage)
                 target_date = next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
                 if not target_date: continue
-                
-                # 3. Optionsdaten
+
                 tk = yf.Ticker(symbol)
                 chain = tk.option_chain(target_date).puts
-                if chain.empty: continue
-
-                # --- DER KORREKTE PUFFER-FILTER ---
-                # Wir suchen Strikes, die UNTER (Preis * (1 - 0.05)) liegen
+                
+                # Puffer-Filter (HIER LAG DER FEHLER)
                 max_strike = price * (1 - puffer_limit)
                 secure_chain = chain[chain['strike'] <= max_strike].copy()
-
                 if secure_chain.empty: continue
 
-                # 4. Zeit & Delta (BSM Modell)
+                # Zeit & Delta
                 expiry_dt = datetime.strptime(target_date, '%Y-%m-%d')
-                tage = max(1, (expiry_dt - datetime.now()).days)
-
+                tage = (expiry_dt - datetime.now()).days
                 secure_chain['delta_calc'] = secure_chain.apply(lambda o: calculate_bsm_delta(
                     price, o['strike'], tage/365, o['impliedVolatility'] or 0.4, "put"
                 ), axis=1)
                 
-                # Besten Strike wählen (nahe Delta 0.15 für Stabilität)
+                # Strike wählen
                 best_opt = secure_chain.iloc[(secure_chain['delta_calc'] + 0.15).abs().argsort()[:1]].iloc[0]
-                
-                # Kennzahlen
                 bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] or 0.05)
-                y_pa = (bid / best_opt['strike']) * (365 / tage) * 100
+                y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
                 puffer_ist = ((price - best_opt['strike']) / price) * 100
                 
-                # --- ZUSÄTZLICHER FILTER: MINDESTRENDITE ---
-                # Nur anzeigen, wenn die Rendite >= deinem Sidebar-Wert ist
+                # Check: Mindestrendite aus Sidebar
                 if y_pa < min_yield_pa: continue
                 
-                # --- ANZEIGE ---
                 with cols[found_idx % 4]:
                     with st.container(border=True):
-                        # Icon: Zeigt an ob Delta im Profi-Bereich (<= 0.20)
-                        status = "✅" if abs(best_opt['delta_calc']) <= 0.20 else "⚠️"
-                        
-                        st.markdown(f"**{status} {symbol}**")
+                        st.markdown(f"**{'✅' if abs(best_opt['delta_calc']) <= 0.20 else '⚠️'} {symbol}**")
                         st.metric("Yield p.a.", f"{y_pa:.1f}%")
-                        
-                        st.markdown(f"""
-                        <div style="font-size: 0.85em; line-height: 1.3;">
-                        <b>Strike:</b> {best_opt['strike']:.1f}$ <br>
-                        <b>Puffer:</b> <span style="color:#2ecc71; font-weight:bold;">{puffer_ist:.1f}%</span> <br>
-                        <b>Prämie:</b> {bid:.2f}$ <br>
-                        <b>Termin:</b> {expiry_dt.strftime('%d.%m.')} ({tage}d)
-                        </div>
-                        """, unsafe_allow_html=True)
-                
+                        st.markdown(f"<small>Strike: {best_opt['strike']:.1f}$ ({puffer_ist:.1f}% Puffer)<br>Termin: {expiry_dt.strftime('%d.%m.')} ({tage}d)</small>", unsafe_allow_html=True)
                 found_idx += 1
-                time.sleep(0.05)
-            except:
-                continue
+            except: continue
 
     if found_idx == 0:
-        st.warning(f"Keine Puts mit {otm_puffer_slider}% Puffer und {min_yield_pa}% Rendite gefunden.")
+        st.warning(f"Keine Treffer mit {otm_puffer_slider}% Puffer.")
         
 # Beispiel-Daten für dein Depot (Hier deine echten Werte eintragen!)
 depot_data = [
@@ -309,6 +275,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
