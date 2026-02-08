@@ -90,61 +90,80 @@ min_stock_price = st.sidebar.slider("Mindest-Aktienpreis ($)", 0, 500, 20)
 # --- HAUPTBEREICH ---
 st.title("🛡️ CapTrader AI Market Scanner")
 
-# --- SEKTION 1: PROFI-EINSTIEGS-CHANCEN (ECHTE OPTIONSDATEN) ---
+# --- SEKTION 1: KOMBI-SCAN (ROBUSTE VERSION) ---
 st.subheader("🎯 Profi-Einstiegs-Chancen")
 
 if st.button("🚀 Kombi-Scan starten"):
-    # Deine Fokus-Liste
-    ticker_liste = ["AMD", "NVDA", "TSLA", "GOOGL", "AAPL", "MSFT", "META", "AFRM", "HOOD"]
+    # Fokus-Liste (Vorschlag)
+    ticker_liste = ["AMD", "NVDA", "TSLA", "GOOGL", "AAPL", "MSFT", "META", "HOOD"]
     cols = st.columns(4)
     col_idx = 0
     
-    with st.spinner("Scanne Märkte nach Prämien..."):
+    with st.spinner("Lade Marktdaten und berechne Prämien..."):
         for symbol in ticker_liste:
-            # 1. Basis-Check (Kurs, RSI, Trend)
-            res = get_stock_data_full(symbol)
-            if not res or res[0] is None: continue
-            
-            price, dates, earn, rsi, uptrend, near_lower, atr = res
-            
-            # Filter: Nur anzeigen, wenn Aktie nicht völlig überkauft (RSI < 65)
-            if price and dates and rsi < 65:
-                try:
-                    # 2. Options-Logik (wie in Sektion 3)
-                    tk = yf.Ticker(symbol)
-                    d_sel = dates[0] # Wir nehmen die nächste fällige Laufzeit
-                    chain = tk.option_chain(d_sel).puts
-                    
-                    expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
-                    tage = max(1, (expiry_dt - datetime.now()).days)
-                    
-                    # Delta berechnen, um den sichersten Strike (ca. 0.16) zu finden
-                    chain['delta_calc'] = chain.apply(lambda o: calculate_bsm_delta(
-                        price, o['strike'], tage/365, o['impliedVolatility'] or 0.4, "put"
-                    ), axis=1)
-                    
-                    # Den Strike finden, der Delta 0.16 am nächsten ist
-                    best_opt = chain.iloc[(chain['delta_calc'] + 0.16).abs().argsort()[:1]].iloc[0]
-                    
-                    # Rendite & Puffer
-                    y_pa = (best_opt['bid'] / best_opt['strike']) * (365 / tage) * 100
-                    puffer = (abs(best_opt['strike'] - price) / price) * 100
-                    fmt_date = expiry_dt.strftime('%d.%m.')
+            try:
+                # 1. Basis-Check
+                res = get_stock_data_full(symbol)
+                if not res or res[0] is None:
+                    continue # Springe zum nächsten Ticker, wenn keine Kursdaten
+                
+                price, dates, earn, rsi, uptrend, near_lower, atr = res
+                
+                # 2. Options-Check
+                if not dates:
+                    continue
+                
+                tk = yf.Ticker(symbol)
+                d_sel = dates[0] # Nächster Verfall
+                
+                # Kette laden - Wichtig: Error-Handling für Yahoo Finance
+                opts = tk.option_chain(d_sel)
+                chain = opts.puts
+                
+                if chain.empty:
+                    continue
 
-                    # 3. Die Karte (Design wie in Bild 1.png)
-                    with cols[col_idx % 4]:
-                        with st.container(border=True):
-                            st.markdown(f"### 🟡 {symbol}")
-                            st.markdown(f"🗓️ ER: {earn if earn else 'N/A'}")
-                            st.write(f"Yield p.a.")
-                            st.title(f"{y_pa:.1f}%")
-                            st.markdown(f"**Strike: {best_opt['strike']:.1f}$**")
-                            st.caption(f"Laufzeit: {fmt_date} | Puffer: {puffer:.1f}%")
-                            st.caption(f"RSI: {rsi:.0f} | Bid: {best_opt['bid']:.2f}$")
-                    
-                    col_idx += 1
-                except:
-                    continue # Überspringen, falls Yahoo mal keine Kette liefert
+                # Zeit bis Expiry
+                expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
+                tage = max(1, (expiry_dt - datetime.now()).days)
+                
+                # Delta-Berechnung (BSM)
+                chain['delta_calc'] = chain.apply(lambda o: calculate_bsm_delta(
+                    price, o['strike'], tage/365, o['impliedVolatility'] or 0.4, "put"
+                ), axis=1)
+                
+                # Den Strike finden (Delta ca. 0.16)
+                best_opt = chain.iloc[(chain['delta_calc'] + 0.16).abs().argsort()[:1]].iloc[0]
+                
+                # Kennzahlen
+                y_pa = (best_opt['bid'] / best_opt['strike']) * (365 / tage) * 100
+                puffer = (abs(best_opt['strike'] - price) / price) * 100
+                fmt_date = expiry_dt.strftime('%d.%m.')
+
+                # 3. Die Karte rendern
+                with cols[col_idx % 4]:
+                    with st.container(border=True):
+                        st.markdown(f"### 🟡 {symbol}")
+                        # ER Check: Falls earn None ist, nichts anzeigen
+                        er_text = f"🗓️ ER: {earn}" if earn else "🗓️ ER: N/A"
+                        st.caption(er_text)
+                        
+                        st.write("Yield p.a.")
+                        st.title(f"{y_pa:.1f}%")
+                        
+                        st.markdown(f"**Strike: {best_opt['strike']:.1f}$**")
+                        st.caption(f"Laufzeit: {fmt_date} | Puffer: {puffer:.1f}%")
+                        st.caption(f"RSI: {rsi:.0f} | Bid: {best_opt['bid']:.2f}$")
+                
+                col_idx += 1
+                
+            except Exception as e:
+                # Wir loggen den Fehler nur in der Konsole, damit die App nicht abbricht
+                print(f"Fehler bei {symbol}: {e}")
+                continue 
+
+    if col_idx == 0:
+        st.warning("Keine passenden Optionen gefunden. Probiere es später erneut.")
  
 # Beispiel-Daten für dein Depot (Hier deine echten Werte eintragen!)
 depot_data = [
@@ -273,6 +292,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
