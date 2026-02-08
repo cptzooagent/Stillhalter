@@ -35,27 +35,48 @@ def get_combined_watchlist():
     return list(set(sp500_nasdaq_mix))
 
 @st.cache_data(ttl=900)
+@st.cache_data(ttl=900)
 def get_stock_data_full(symbol):
     try:
         tk = yf.Ticker(symbol)
+        # Basis-Daten
         price = tk.fast_info['last_price']
         dates = list(tk.options)
         
-        hist = tk.history(period="1mo")
-        rsi_val = calculate_rsi(hist['Close']).iloc[-1] if not hist.empty else 50
+        # Historie für Indikatoren (6 Monate für SMA 200)
+        hist = tk.history(period="150d") # 150 Handelstage (~7 Monate)
         
-        earn_date = None
+        if not hist.empty and len(hist) > 20:
+            # 1. RSI
+            rsi_val = calculate_rsi(hist['Close']).iloc[-1]
+            
+            # 2. SMA 200 (Trend-Check) - wir nehmen hier den verfügbaren Max-Zeitraum
+            sma_200 = hist['Close'].mean() 
+            is_uptrend = price > sma_200
+            
+            # 3. Bollinger Bänder (20 Tage, 2 Standardabweichungen)
+            sma_20 = hist['Close'].rolling(window=20).mean()
+            std_20 = hist['Close'].rolling(window=20).std()
+            lower_band = (sma_20 - 2 * std_20).iloc[-1]
+            is_near_lower = price <= (lower_band * 1.02) # Innerhalb 2% vom Band
+            
+            # 4. ATR (einfache Version für die Vola)
+            high_low = hist['High'] - hist['Low']
+            atr = high_low.rolling(window=14).mean().iloc[-1]
+        else:
+            rsi_val, is_uptrend, is_near_lower, atr = 50, True, False, 0
+            
+        # Earnings
         earn_str = ""
         try:
             cal = tk.calendar
             if cal is not None and 'Earnings Date' in cal:
-                earn_date = cal['Earnings Date'][0]
-                earn_str = earn_date.strftime('%d.%m.')
+                earn_str = cal['Earnings Date'][0].strftime('%d.%m.')
         except: pass
         
-        return price, dates, earn_str, rsi_val, earn_date
+        return price, dates, earn_str, rsi_val, is_uptrend, is_near_lower, atr
     except:
-        return None, [], "", 50, None
+        return None, [], "", 50, True, False, 0
 
 # --- UI: SEITENLEISTE ---
 st.sidebar.header("🛡️ Strategie-Einstellungen")
@@ -271,6 +292,7 @@ if t_in:
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
