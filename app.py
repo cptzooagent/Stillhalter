@@ -183,11 +183,38 @@ if t_in:
                 price, opt['strike'], T, opt['impliedVolatility'] or 0.4, option_type=mode
             ), axis=1)
 
+            # --- START DES ERSATZ-BLOCKS ---
+            # Filterung für die Anzeige (Strikes nah am Kurs)
             if mode == "put":
-                filtered_df = chain[(chain['delta_calc'] <= -0.10) & (chain['strike'] < price)].sort_values('strike', ascending=False)
+                filtered_df = chain[chain['strike'] <= price * 1.1].sort_values('strike', ascending=False)
             else:
-                filtered_df = chain[(chain['delta_calc'] >= 0.10) & (chain['strike'] > price)].sort_values('strike', ascending=True)
+                filtered_df = chain[chain['strike'] >= price * 0.9].sort_values('strike', ascending=True)
             
+            st.write("---")
+            for _, opt in filtered_df.head(15).iterrows():
+                d_abs = abs(opt['delta_calc'])
+                
+                # 1. Ampel-Logik (🟢 bis 0.16, 🟡 bis 0.30, 🔴 darüber)
+                color = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.30 else "🔴"
+                
+                # 2. Rendite p.a. & Puffer
+                days = max(1, (datetime.strptime(d_sel, '%Y-%m-%d') - datetime.now()).days)
+                y_pa = (opt['bid'] / opt['strike']) * (365 / days) * 100
+                puffer = (abs(opt['strike'] - price) / price) * 100
+                
+                # 3. Die Anzeige im Wunsch-Design (Screenshot 2.png)
+                # Wir nutzen ein einfaches Format, um Syntax-Fehler zu vermeiden
+                bid_html = f"<span style='color:#2ecc71; font-weight:bold;'>{opt['bid']:.2f}$</span>"
+                
+                st.markdown(
+                    f"{color} **Strike: {opt['strike']:.1f}$** | "
+                    f"Bid: {bid_html} | "
+                    f"Delta: {d_abs:.2f} | "
+                    f"Puffer: {puffer:.1f}% | "
+                    f"Yield: {y_pa:.1f}% p.a.",
+                    unsafe_allow_html=True
+                )
+            # --- ENDE DES ERSATZ-BLOCKS ---
            # --- NEUER VERBESSERTER AMPEL-BLOCK ---
             st.write("---")
             for _, opt in filtered_df.head(20).iterrows():
@@ -215,5 +242,6 @@ if t_in:
                     unsafe_allow_html=True
                 )
             # --- ENDE DES BLOCKS ---
+
 
 
