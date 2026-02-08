@@ -218,74 +218,81 @@ if 'depot_data' in locals():
 else:
     st.error("Variable 'depot_data' wurde nicht gefunden!")
 
-# --- SEKTION 3: EINZEL-CHECK (FORMAT-STABIL) ---
+# --- SEKTION 3: EINZEL-CHECK (KOMPLETT-RESET) ---
 st.divider()
 st.subheader("🔍 Einzel-Check & Option-Chain")
 
-col_left, col_right = st.columns([1, 2])
-with col_left: 
-    mode = st.radio("Optionstyp", ["put", "call"], horizontal=True)
-with col_right: 
+# Eingabe-Bereich
+c1, c2 = st.columns([1, 2])
+with c1: 
+    sel_mode = st.radio("Optionstyp", ["put", "call"], horizontal=True)
+with c2: 
     t_in = st.text_input("Ticker Symbol", value="HOOD").upper().strip()
 
 if t_in:
-    # Daten abrufen
+    # 1. Daten abrufen
     price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(t_in)
     
     if price and dates:
-        # Depot-Abgleich
-        mein_einstand = next((item['Einstand'] for item in depot_data if item['Ticker'] == t_in), None)
+        # Depot-Info finden
+        einstand = next((item['Einstand'] for item in depot_data if item['Ticker'] == t_in), None)
         
-        # Dashboard oben
+        # Header Metriken (Sicher ausgegeben)
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Kurs", "{:.2f}$".format(price))
-        m2.metric("RSI", "{:.0f}".format(rsi))
-        m3.write("Trend: {}".format('📈 Up' if uptrend else '📉 Down'))
-        m4.write("ATR: {:.2f}$".format(atr))
+        m1.metric("Kurs", f"{price:.2f}$")
+        m2.metric("RSI", f"{rsi:.0f}")
+        m3.write(f"Trend: {'📈 Up' if uptrend else '📉 Down'}")
+        m4.write(f"ATR: {atr:.2f}$")
         
-        if mein_einstand:
-            st.info("📌 Dein Einstand für {}: {:.2f}$".format(t_in, mein_einstand))
+        if einstand:
+            st.info(f"📌 Dein Einstand für {t_in}: {einstand:.2f}$")
 
         d_sel = st.selectbox("Laufzeit wählen", dates)
         
         try:
+            # 2. Optionsdaten holen
             tk = yf.Ticker(t_in)
-            opts = tk.option_chain(d_sel)
-            chain = opts.puts if mode == "put" else opts.calls
+            oc = tk.option_chain(d_sel)
+            chain = oc.puts if sel_mode == "put" else oc.calls
             
-            expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
-            tage = max(1, (expiry_dt - datetime.now()).days)
-            T_yr = tage / 365
+            # Zeit berechnen
+            exp_dt = datetime.strptime(d_sel, '%Y-%m-%d')
+            tage_v = max(1, (exp_dt - datetime.now()).days)
+            T_val = tage_v / 365
             
-            # Delta-Berechnung
-            chain['delta_c'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T_yr, o['impliedVolatility'] or 0.4, mode), axis=1)
+            # Delta berechnen
+            chain['delta_c'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T_val, o['impliedVolatility'] or 0.4, sel_mode), axis=1)
             
-            # Filterung
-            if mode == "put":
-                df_view = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
+            # Filtern
+            if sel_mode == "put":
+                df_res = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
             else:
-                df_view = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
+                df_res = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
 
             st.write("---")
             
-            # DIE ANZEIGE-SCHLEIFE (Null-Risiko für Concat-Fehler)
-            for _, opt in df_view.head(15).iterrows():
-                d_abs = abs(opt['delta_c'])
-                y_pa = (opt['bid'] / opt['strike']) * (365 / tage) * 100
-                puf = (abs(opt['strike'] - price) / price) * 100
+            # 3. DIE ANZEIGE (Ohne jede Text-Verknüpfung)
+            for _, row in df_res.head(15).iterrows():
+                d_abs = abs(row['delta_c'])
+                yield_pa = (row['bid'] / row['strike']) * (365 / tage_v) * 100
+                dist = (abs(row['strike'] - price) / price) * 100
                 
-                # Ampel-Logik
-                emo = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.30 else "🔴"
+                # Ampel
+                icon = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.30 else "🔴"
                 
-                # Safe-Check
-                safe = " ✅ **SAFE**" if (mode == "call" and mein_einstand and opt['strike'] >= mein_einstand) else ""
+                # Check ob Call sicher
+                safe = " ✅ SAFE" if (sel_mode == "call" and einstand and row['strike'] >= einstand) else ""
                 
-                # WIR NUTZEN NUR .format() -> KEIN "+" ZEICHEN!
-                zeile = "{} **Strike: {:.1f}** | Bid: {:.2f}$ | D: {:.2f} | P: {:.1f}% | Y: {:.1f}%{}".format(
-                    emo, opt['strike'], opt['bid'], d_abs, puf, y_pa, safe
+                # DER TRICK: st.write mit mehreren Argumenten nutzen (verhindert + Fehler)
+                st.write(
+                    icon, 
+                    f"**Strike: {row['strike']:.1f}**", "|",
+                    f"Bid: {row['bid']:.2f}$", "|",
+                    f"D: {d_abs:.2f}", "|",
+                    f"P: {dist:.1f}%", "|",
+                    f"Y: {yield_pa:.1f}% p.a.",
+                    safe
                 )
-                
-                st.markdown(zeile)
 
         except Exception as e:
-            st.error("Options-Fehler: {}".format(e))
+            st.error(f"Fehler in der Kette: {e}")
