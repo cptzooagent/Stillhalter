@@ -69,7 +69,7 @@ min_stock_price = st.sidebar.slider("Mindest-Aktienpreis ($)", 0, 500, 20)
 # --- HAUPTBEREICH ---
 st.title("🛡️ CapTrader AI Market Scanner")
 
-# SEKTION 1: SCANNER
+# --- SEKTION 1: SCANNER (KOMPLETT) ---
 if st.button("🚀 Kombi-Scan starten"):
     watchlist = get_combined_watchlist()
     results = []
@@ -79,65 +79,83 @@ if st.button("🚀 Kombi-Scan starten"):
     for i, t in enumerate(watchlist):
         status.text(f"Analysiere {t}...")
         prog.progress((i + 1) / len(watchlist))
+        
+        # Daten abrufen
         price, dates, earn, rsi, _ = get_stock_data_full(t)
         
-        # --- PREIS-FILTER LOGIK ---
+        # Filter: Preis & Verfügbarkeit
         if price and dates:
+            # NEU: Überspringe Aktien, die billiger sind als im Schieberegler eingestellt
             if price < min_stock_price:
-                continue # Springt zur nächsten Aktie, wenn der Preis zu niedrig ist
-            
+                continue
+                
             try:
-                # Hier geht dein normaler Code weiter (Ticker-Definition, Option-Chain etc.)
                 tk = yf.Ticker(t)
-            
+                # Suche Laufzeit nah an 30 Tagen
+                target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - 30))
+                chain = tk.option_chain(target_date).puts
+                T = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days / 365
+                
+                # Delta berechnen
+                chain['delta_val'] = chain.apply(lambda r: calculate_bsm_delta(price, r['strike'], T, r['impliedVolatility'] or 0.4), axis=1)
+                
+                # Filter nach Delta (Sicherheit)
+                safe_opts = chain[chain['delta_val'].abs() <= max_delta].copy()
                 
                 if not safe_opts.empty:
                     days = max(1, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days)
+                    # Rendite p.a. berechnen
                     safe_opts['y_pa'] = (safe_opts['bid'] / safe_opts['strike']) * (365 / days) * 100
+                    
+                    # Filter nach Mindestrendite
                     matches = safe_opts[safe_opts['y_pa'] >= min_yield_pa]
                     
                     if not matches.empty:
                         best = matches.sort_values('y_pa', ascending=False).iloc[0]
                         results.append({
-                            'ticker': t, 'yield': best['y_pa'], 'strike': best['strike'], 
-                            'bid': best['bid'], 'puffer': (abs(best['strike'] - price) / price) * 100, 
-                            'delta': abs(best['delta_val']), 'earn': earn, 'rsi': rsi
+                            'ticker': t, 
+                            'yield': best['y_pa'], 
+                            'strike': best['strike'], 
+                            'bid': best['bid'], 
+                            'puffer': (abs(best['strike'] - price) / price) * 100, 
+                            'delta': abs(best['delta_val']), 
+                            'earn': earn, 
+                            'rsi': rsi
                         })
-            except: continue
+            except:
+                continue
 
-    # --- NEUER ANZEIGE-BLOCK FÜR MARKT-SCAN ---
+    status.text("Scan abgeschlossen!")
+    
+    # --- ANZEIGE DER ERGEBNISSE IN KACHELN ---
     if results:
         st.subheader("🎯 Top Einstiegs-Chancen")
         df_res = pd.DataFrame(results)
         
-        # Sortierung (RSI niedrig = überverkauft = gute Kaufchance)
+        # Sortierung
         sort_col = 'rsi' if sort_by_rsi else 'yield'
         opp_df = df_res.sort_values(sort_col, ascending=(sort_col == 'rsi')).head(12)
         
-        cols = st.columns(4) # Erstellt 4 Spalten für die Kacheln
+        cols = st.columns(4) 
         for idx, row in enumerate(opp_df.to_dict('records')):
             with cols[idx % 4]:
-                # Ampel für das Delta des Scanner-Ergebnisses
-                scan_color = "🟢" if row['delta'] < 0.16 else "🟡" if row['delta'] <= 0.30 else "🔴"
+                # Ampel-Logik für Scanner
+                s_color = "🟢" if row['delta'] < 0.16 else "🟡" if row['delta'] <= 0.30 else "🔴"
                 
-                with st.container(border=True): # Erzeugt einen Kasten um jede Aktie
-                    st.markdown(f"### {scan_color} {row['ticker']}")
+                with st.container(border=True):
+                    st.markdown(f"### {s_color} {row['ticker']}")
                     st.metric("Rendite p.a.", f"{row['yield']:.1f}%")
-                    
                     st.write(f"💰 Bid: **{row['bid']:.2f}$**")
                     st.write(f"🎯 Strike: **{row['strike']:.1f}$**")
                     st.write(f"🛡️ Puffer: **{row['puffer']:.1f}%**")
                     
-                    # RSI Info mit kleiner Farbe
-                    rsi_color = "blue" if row['rsi'] < 35 else "grey"
-                    st.markdown(f"RSI: <span style='color:{rsi_color};'>{row['rsi']:.0f}</span>", unsafe_allow_html=True)
-                    
+                    # RSI & Earnings
+                    st.caption(f"RSI: {row['rsi']:.0f}")
                     if row['earn']:
                         st.warning(f"⚠️ ER: {row['earn']}")
     else:
-        st.warning("Keine Treffer mit den aktuellen Filtern.")
-    # --- ENDE DES ANZEIGE-BLOCKS ---
-
+        st.warning(f"Keine Treffer über {min_stock_price}$ gefunden.")
+# --- ENDE SEKTION 1 ---
 st.write("---") 
 
 # SEKTION 2: DEPOT STATUS
@@ -235,6 +253,7 @@ if t_in:
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
