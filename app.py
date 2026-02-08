@@ -218,7 +218,7 @@ if 'depot_data' in locals():
 else:
     st.error("Variable 'depot_data' wurde nicht gefunden!")
 
-# --- SEKTION 3: EINZEL-CHECK (DIE SICHERE AMPEL-VERSION) ---
+# --- SEKTION 3: DER FINALE AMPEL-CHECK (STR+FLOAT SAFE) ---
 st.divider()
 st.subheader("🔍 Einzel-Check & Option-Chain")
 
@@ -232,7 +232,7 @@ if t_in:
     if price and dates:
         mein_einstand = next((item['Einstand'] for item in depot_data if item['Ticker'] == t_in), None)
         
-        # Dashboard-Header
+        # Header-Metriken
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Kurs", f"{price:.2f}$")
         m2.metric("RSI", f"{rsi:.0f}")
@@ -255,6 +255,7 @@ if t_in:
             # Delta-Berechnung
             chain['delta_c'] = chain.apply(lambda o: calculate_bsm_delta(price, o['strike'], T, o['impliedVolatility'] or 0.4, mode), axis=1)
             
+            # Sortierung & Filterung
             if mode == "put":
                 df_view = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
             else:
@@ -262,26 +263,31 @@ if t_in:
 
             st.write("---")
             for _, opt in df_view.head(15).iterrows():
-                # Kennzahlen berechnen
+                # Kennzahlen
                 d_abs = abs(opt['delta_c'])
                 y_pa = (opt['bid'] / opt['strike']) * (365 / tage) * 100
                 puffer = (abs(opt['strike'] - price) / price) * 100
                 
-                # Ampel-Farbe
+                # Ampel-Logik
                 color = "🟢" if d_abs < 0.16 else "🟡" if d_abs < 0.30 else "🔴"
                 
-                # Safe-Tag für Calls
-                safe_tag = ""
-                if mode == "call" and mein_einstand and opt['strike'] >= mein_einstand:
-                    safe_tag = " ✅ **SAFE**"
+                # Safe-Tag (Call-Verkaufs-Schutz)
+                safe_tag = " ✅ **SAFE**" if (mode == "call" and mein_einstand and opt['strike'] >= mein_einstand) else ""
                 
-                # DIE SICHERE ANZEIGE (f-Strings verhindern den str+float Fehler)
-                st.markdown(
+                # DIE SICHERE ANZEIGE: 
+                # Wir bauen die Zeile rein über f-Strings. 
+                # Jede Variable wird innerhalb der Klammern {} direkt formatiert.
+                # Wichtig: Keine "+" Zeichen außerhalb der Anführungszeichen!
+                
+                anzeige_text = (
                     f"{color} **Strike: {opt['strike']:.1f}** | "
-                    f"Bid: <span style='color:#2ecc71; font-weight:bold;'>{opt['bid']:.2f}$</span> | "
-                    f"D: {d_abs:.2f} | P: {puffer:.1f}% | Y: {y_pa:.1f}%{safe_tag}",
-                    unsafe_allow_html=True
+                    f"Bid: {opt['bid']:.2f}$ | "
+                    f"Delta: {d_abs:.2f} | "
+                    f"Puffer: {puffer:.1f}% | "
+                    f"Yield: {y_pa:.1f}% p.a.{safe_tag}"
                 )
+                
+                st.markdown(anzeige_text)
 
         except Exception as e:
-            st.error(f"Fehler in der Anzeige: {e}")
+            st.error(f"Fehler in der Datenverarbeitung: {e}")
