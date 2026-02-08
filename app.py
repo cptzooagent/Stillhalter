@@ -90,37 +90,46 @@ min_stock_price = st.sidebar.slider("Mindest-Aktienpreis ($)", 0, 500, 20)
 # --- HAUPTBEREICH ---
 st.title("🛡️ CapTrader AI Market Scanner")
 
-# --- SEKTION 1: KOMBI-SCAN (KOMPAKT & MIN. 25 TAGE LAUFZEIT) ---
+import time # Wichtig für die kleine Pause
+
+# --- SEKTION 1: KOMBI-SCAN (STABILISIERT & KOMPAKT) ---
 st.subheader("🎯 Profi-Einstiegs-Chancen")
 
 if st.button("🚀 Kombi-Scan starten"):
     ticker_liste = ["AMD", "NVDA", "TSLA", "GOOGL", "AAPL", "MSFT", "META", "HOOD", "CCJ"]
     
-    with st.spinner("Suche optimale Laufzeiten (min. 25 Tage)..."):
-        # Wir erstellen ein Raster für die kompakten Kacheln
-        rows = [st.columns(4) for _ in range((len(ticker_liste) + 3) // 4)]
-        col_idx = 0
+    with st.spinner("Suche optimale Laufzeiten (min. 11 Tage)..."):
+        # Layout vorbereiten
+        cols = st.columns(4)
+        found_idx = 0
         
         for symbol in ticker_liste:
             try:
+                # 1. Kursdaten holen
                 res = get_stock_data_full(symbol)
                 if not res or res[0] is None: continue
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
                 
-                # --- NEU: FILTER FÜR MINDESTLAUFZEIT (25 TAGE) ---
+                # Kurze Pause, um Yahoo-Sperre zu vermeiden
+                time.sleep(0.2) 
+                
+                # 2. Laufzeit suchen (Ab 11 Tage)
                 target_date = None
                 for d in dates:
-                    diff = (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days
-                    if diff >= 25: # Wir suchen Laufzeiten ab 25 Tagen
+                    tage_diff = (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days
+                    if tage_diff >= 11:
                         target_date = d
                         break
                 
-                if not target_date: target_date = dates[-1] # Fallback auf letzte verfügbare
+                if not target_date: continue
                 
+                # 3. Option laden
                 tk = yf.Ticker(symbol)
                 chain = tk.option_chain(target_date).puts
+                if chain.empty: continue
+                
                 expiry_dt = datetime.strptime(target_date, '%Y-%m-%d')
-                tage = (expiry_dt - datetime.now()).days
+                tage = max(1, (expiry_dt - datetime.now()).days)
                 
                 # Delta-Suche ca. 0.16
                 chain['delta_calc'] = chain.apply(lambda o: calculate_bsm_delta(
@@ -129,28 +138,35 @@ if st.button("🚀 Kombi-Scan starten"):
                 best_opt = chain.iloc[(chain['delta_calc'] + 0.16).abs().argsort()[:1]].iloc[0]
                 
                 # Kennzahlen
-                bid = best_opt['bid'] if best_opt['bid'] > 0 else best_opt['lastPrice']
+                bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] or 0.05)
                 y_pa = (bid / best_opt['strike']) * (365 / tage) * 100
-                fmt_date = expiry_dt.strftime('%d.%m.%y')
+                puffer = (abs(best_opt['strike'] - price) / price) * 100
+                fmt_date = expiry_dt.strftime('%d.%m.')
 
-                # --- KOMPAKT-ANZEIGE (WIE DEPOT-MANAGER) ---
-                with rows[col_idx // 4][col_idx % 4]:
+                # 4. KOMPAKTE ANZEIGE (Design wie Depot-Manager)
+                with cols[found_idx % 4]:
                     with st.container(border=True):
                         st.markdown(f"**{symbol}**")
                         st.metric("Yield p.a.", f"{y_pa:.1f}%")
                         
-                        # Kleine Details darunter
                         st.markdown(f"""
-                        <div style="font-size: 0.8em; line-height: 1.2;">
+                        <div style="font-size: 0.85em; line-height: 1.3; color: #555;">
                         <b>Strike:</b> {best_opt['strike']:.1f}$ <br>
-                        <b>Prämie:</b> {bid:.2f}$ <br>
-                        <b>Termin:</b> {fmt_date} ({tage}d)
+                        <b>Prämie:</b> <span style="color:#2ecc71; font-weight:bold;">{bid:.2f}$</span> <br>
+                        <b>Termin:</b> {fmt_date} ({tage}d) <br>
+                        <span style="font-size: 0.9em;">Puffer: {puffer:.1f}% | RSI: {rsi:.0f}</span>
                         </div>
                         """, unsafe_allow_html=True)
                 
-                col_idx += 1
-            except:
+                found_idx += 1
+                
+            except Exception as e:
+                # Falls ein Ticker fehlschlägt, einfach weitermachen
                 continue
+
+    if found_idx == 0:
+        st.warning("Keine Daten gefunden. Bitte klicke noch einmal (Yahoo Timeout).")
+        
 # Beispiel-Daten für dein Depot (Hier deine echten Werte eintragen!)
 depot_data = [
     {'Ticker': 'AFRM', 'Einstand': 76.00},
@@ -278,6 +294,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
