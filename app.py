@@ -73,24 +73,38 @@ def get_stock_data_full(symbol):
     except:
         return None, [], "", 50, True, False, 0
 
-# --- UI: SEITENLEISTE ---
+# --- UI: SEITENLEISTE (CLEAN VERSION) ---
 st.sidebar.header("🛡️ Strategie-Einstellungen")
 
-# Hier definieren wir den Slider neu: 5% bis 20% Puffer
-# WICHTIG: Wir nutzen den Namen 'otm_puffer_slider'
+# 1. Puffer-Steuerung
 otm_puffer_slider = st.sidebar.slider(
     "Gewünschter Puffer (%)", 
-    min_value=5, 
-    max_value=20, 
+    min_value=3, 
+    max_value=25, 
     value=10,
-    key="otm_puffer_slider_key" # Ein eindeutiger Key verhindert Speicherfehler
+    help="Wie weit muss der Strike unter dem aktuellen Kurs liegen?"
 )
 
-min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", value=20)
-sort_by_rsi = st.sidebar.checkbox("Nach RSI sortieren (Tief -> Hoch)")
-min_stock_price = st.sidebar.slider("Mindest-Aktienpreis ($)", 0, 500, 20)
+# 2. Rendite-Steuerung
+min_yield_pa = st.sidebar.number_input(
+    "Mindestrendite p.a. (%)", 
+    min_value=0, 
+    max_value=100, 
+    value=15
+)
 
-# Das max_delta setzen wir fest auf einen sicheren Wert (0.20)
+# 3. Aktienpreis-Filter
+min_stock_price = st.sidebar.slider(
+    "Mindest-Aktienpreis ($)", 
+    0, 500, 20
+)
+
+# 4. Strategie-Filter
+st.sidebar.markdown("---")
+only_uptrend = st.sidebar.checkbox("Nur Aufwärtstrend (SMA 200)", value=False)
+st.sidebar.info("Tipp: Deaktiviere den Aufwärtstrend für mehr Treffer am Wochenende.")
+
+# Konstante für Delta-Berechnungen im Hintergrund
 max_delta = 0.20
 
 if st.button("🚀 Kombi-Scan starten"):
@@ -275,6 +289,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
