@@ -119,103 +119,86 @@ max_delta = 0.20
 if st.button("🚀 Kombi-Scan starten"):
     puffer_limit = otm_puffer_slider / 100 
     
-    with st.spinner("Lade aktuelle Marktliste..."):
+    with st.spinner("Lade Marktliste..."):
         ticker_liste = get_combined_watchlist()
     
-    st.info(f"Suche in {len(ticker_liste)} Symbolen...")
-    
-    cols = st.columns(4)
-    found_idx = 0
     status_text = st.empty()
     progress_bar = st.progress(0)
+    
+    # Liste zum Sammeln der Treffer für die Sortierung
+    all_results = []
     
     for i, symbol in enumerate(ticker_liste):
         if i % 5 == 0 or i == len(ticker_liste)-1:
             progress_bar.progress((i + 1) / len(ticker_liste))
-            status_text.text(f"Analysiere {i+1}/{len(ticker_liste)}: {symbol}...")
+            status_text.text(f"Scanne {i+1}/{len(ticker_liste)}: {symbol}...")
         
         try:
             res = get_stock_data_full(symbol)
-            if res[0] is None or not res[1]: 
-                continue
-            
+            if res[0] is None or not res[1]: continue
             price, dates, earn, rsi, uptrend, near_lower, atr = res
             
-            if price < min_stock_price: 
-                continue
-            if only_uptrend and not uptrend: 
-                continue
+            # Preis-Filter (Neu mit Max-Preis)
+            if not (min_stock_price <= price <= max_stock_price): continue
+            if only_uptrend and not uptrend: continue
             
-            # 1. Alle verfügbaren Daten im Fenster 11-20 Tage sammeln
+            # Datums-Logik (11-20 Tage)
             available_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 20]
-            
-            if not available_dates:
-                # Fallback: Erstes Datum ab 11 Tagen
-                target_date = next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
-            else:
-                # Wir nehmen das Datum am Ende des Fensters (meist lukrativer) 
-                # oder du lässt ihn das Fenster einfach so nutzen:
-                target_date = available_dates[-1] # Nimmt tendenziell eher die 18-20 Tage Termine
+            target_date = available_dates[-1] if available_dates else next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
+            if not target_date: continue
 
             tk = yf.Ticker(symbol)
             chain = tk.option_chain(target_date).puts
-            
             max_strike = price * (1 - puffer_limit)
             secure_options = chain[chain['strike'] <= max_strike].sort_values('strike', ascending=False)
             
-            if secure_options.empty: 
-                continue
-            
+            if secure_options.empty: continue
             best_opt = secure_options.iloc[0]
-            bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
             
-            expiry_dt = datetime.strptime(target_date, '%Y-%m-%d')
-            tage = (expiry_dt - datetime.now()).days
+            # Rendite & Puffer
+            bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
+            tage = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
             y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
             puffer_ist = ((price - best_opt['strike']) / price) * 100
             
-            if y_pa < min_yield_pa: 
-                continue
+            if y_pa >= min_yield_pa:
+                # Treffer in Liste speichern
+                all_results.append({
+                    'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': best_opt['strike'],
+                    'puffer': puffer_ist, 'bid': bid, 'rsi': rsi, 'uptrend': uptrend,
+                    'earn': earn, 'tage': tage, 'date': target_date
+                })
+        except: continue
 
-            # --- NEU: EARNINGS CHECK LOGIK ---
-            earn_warning = ""
-            if earn:
-                try:
-                    # Wir prüfen, ob das Earnings-Datum (DD.MM.) nahe liegt
-                    # Da yfinance oft nur Strings liefert, zeigen wir es als Warnung an
-                    earn_warning = f" ⚠️ <span style='color:#e67e22; font-size:0.8em;'>ER: {earn}</span>"
-                except: pass
-
-            # --- ANZEIGE ---
-            with cols[found_idx % 4]:
-                rsi_color = "#e74c3c" if rsi > 70 else "#2ecc71" if rsi < 40 else "#555"
-                rsi_weight = "bold" if rsi > 70 or rsi < 40 else "normal"
-                
-                with st.container(border=True):
-                    # Header: Symbol, Trend und EARNINGS-WARNUNG
-                    st.markdown(f"**{symbol}** {'✅' if uptrend else '📉'}{earn_warning}", unsafe_allow_html=True)
-                    st.metric("Yield p.a.", f"{y_pa:.1f}%")
-                    
-                    st.markdown(f"""
-                    <div style="font-size: 0.85em; line-height: 1.4; background-color: #f1f3f6; padding: 10px; border-radius: 8px; border-left: 5px solid #2ecc71;">
-                    <b style="color: #1e7e34; font-size: 1.1em;">Prämie: {bid:.2f}$</b><br>
-                    <span style="color: #666;">(Einnahme: {bid*100:.0f}$ pro Kontrakt)</span><hr style="margin: 8px 0;">
-                    <b>Strike:</b> {best_opt['strike']:.1f}$ ({puffer_ist:.1f}% Puffer)<br>
-                    <b>Kurs:</b> {price:.2f}$ | <b>RSI:</b> <span style="color:{rsi_color}; font-weight:{rsi_weight};">{rsi:.0f}</span><br>
-                    <b>Datum:</b> {expiry_dt.strftime('%d.%m.')} ({tage} Tage)
-                    </div>
-                    """, unsafe_allow_html=True)
-            
-            found_idx += 1
-        except:
-            continue
-
+    # Ergebnisse sortieren (Höchste Rendite zuerst)
+    all_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
+    
+    # Anzeige der sortierten Ergebnisse
     status_text.empty()
     progress_bar.empty()
-    if found_idx == 0:
+    
+    if not all_results:
         st.warning("Keine Treffer gefunden.")
     else:
-        st.success(f"Scan beendet. {found_idx} Chancen identifiziert!")
+        st.success(f"Scan beendet. {len(all_results)} Chancen sortiert nach Rendite identifiziert!")
+        cols = st.columns(4)
+        for idx, res in enumerate(all_results):
+            with cols[idx % 4]:
+                earn_warning = f" ⚠️ <span style='color:#e67e22; font-size:0.8em;'>ER: {res['earn']}</span>" if res['earn'] else ""
+                rsi_color = "#e74c3c" if res['rsi'] > 70 else "#2ecc71" if res['rsi'] < 40 else "#555"
+                
+                with st.container(border=True):
+                    st.markdown(f"**{res['symbol']}** {'✅' if res['uptrend'] else '📉'}{earn_warning}", unsafe_allow_html=True)
+                    st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
+                    st.markdown(f"""
+                    <div style="font-size: 0.85em; line-height: 1.4; background-color: #f1f3f6; padding: 10px; border-radius: 8px; border-left: 5px solid #2ecc71;">
+                    <b style="color: #1e7e34; font-size: 1.1em;">Prämie: {res['bid']:.2f}$</b><br>
+                    <span style="color: #666;">({res['bid']*100:.0f}$ pro Kontrakt)</span><hr style="margin: 8px 0;">
+                    <b>Strike:</b> {res['strike']:.1f}$ ({res['puffer']:.1f}% Puffer)<br>
+                    <b>Kurs:</b> {res['price']:.2f}$ | <b>RSI:</b> <span style="color:{rsi_color}; font-weight:bold;">{res['rsi']:.0f}</span><br>
+                    <b>Termin:</b> {res['tage']} Tage
+                    </div>
+                    """, unsafe_allow_html=True)
         
 # Beispiel-Daten für dein Depot (Hier deine echten Werte eintragen!)
 depot_data = [
@@ -348,6 +331,7 @@ if t_in:
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
 # --- ENDE DER DATEI ---
+
 
 
 
