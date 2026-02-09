@@ -221,7 +221,17 @@ if st.button("🚀 Kombi-Scan starten", key="kombi_scan_math"):
                 val_earn = res.get('earn', "")
                 val_rsi = res.get('rsi', 50)
                 
-                earn_warning = f" ⚠️ <span style='color:#e67e22; font-size:0.8em;'>ER: {val_earn}</span>" if val_earn else ""
+                # --- VERBESSERTE EARNINGS-ANZEIGE ---
+                val_earn = res.get('earn') # Wir holen den Rohwert
+                
+                if val_earn and val_earn != "N/A":
+                    # Wenn ein Datum da ist, knallig anzeigen
+                    earn_warning = f" <span style='background-color:#fff3cd; color:#856404; padding:2px 5px; border-radius:4px; font-size:0.75em; border:1px solid #ffeeba;'>⚠️ ER: {val_earn}</span>"
+                else:
+                    earn_warning = ""
+                
+                # RSI Farbe bleibt wie gehabt
+                val_rsi = res.get('rsi', 50)
                 rsi_color = "#e74c3c" if val_rsi > 70 else "#2ecc71" if val_rsi < 40 else "#555"
                 
                 with st.container(border=True):
@@ -351,6 +361,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
