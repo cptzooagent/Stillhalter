@@ -97,6 +97,9 @@ otm_puffer_slider = st.sidebar.slider("Gewünschter Puffer (%)", 3, 25, 10, help
 min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", 0, 100, 15)
 min_stock_price, max_stock_price = st.sidebar.slider("Aktienpreis-Spanne ($)", 0, 1000, (20, 500))
 
+# In der Sidebar oder im Einstellungs-Bereich
+only_etfs = st.checkbox("Nur ETFs anzeigen", value=False)
+
 st.sidebar.markdown("---")
 only_uptrend = st.sidebar.checkbox("Nur Aufwärtstrend (SMA 200)", value=False)
 st.sidebar.info("Tipp: Deaktiviere den Aufwärtstrend für mehr Treffer am Wochenende.")
@@ -166,7 +169,17 @@ if st.button("🚀 Kombi-Scan starten"):
         if i % 5 == 0 or i == len(ticker_liste)-1:
             progress_bar.progress((i + 1) / len(ticker_liste))
             status_text.text(f"Scanne {i+1}/{len(ticker_liste)}: {symbol}...")
-        
+            
+        # Innerhalb deines Scanner-Loops (for symbol in watchlist):
+        tk = yf.Ticker(symbol)
+        info = tk.info
+        q_type = info.get('quoteType', 'EQUITY') # Standardmäßig gehen wir von Aktie aus
+
+        # Wenn der Button aktiv ist, überspringe alles, was kein ETF ist
+        if only_etfs and q_type != 'ETF':
+        continue 
+
+# Ab hier folgt dein normaler RSI- und Qualitäts-Check...
         try:
             res = get_stock_data_full(symbol)
             if res[0] is None or not res[1]: continue
@@ -383,6 +396,7 @@ if t_in:
                         )
                 except Exception as e:
                     st.error(f"Fehler in Chain: {e}")
+
 
 
 
