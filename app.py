@@ -138,14 +138,14 @@ except:
 st.markdown("---")
 
 
-# --- SEKTION 1: KOMBI-SCAN (FINALE EARNINGS-SPERRE) ---
+# --- SEKTION 1: KOMBI-SCAN (ULTRA-SAFE & KURZE LAUFZEIT) ---
 st.markdown("---")
-st.header("🔍 Kombi-Scan: Ultra-Safe (Harter Earnings-Stop)")
+st.header("🔍 Kombi-Scan: Ultra-Safe (Max. 24 Tage)")
 
-if st.button("🚀 Safe-Scan starten", key="kombi_scan_final_safe"):
+if st.button("🚀 Safe-Scan starten", key="kombi_scan_final_v4"):
     puffer_limit = otm_puffer_slider / 100 
     
-    with st.spinner("Prüfe Termine... Trades werden streng vor Earnings begrenzt!"):
+    with st.spinner("Filtere nach kurzen & sicheren Laufzeiten..."):
         ticker_liste = get_combined_watchlist()
     
     status_text = st.empty()
@@ -161,38 +161,32 @@ if st.button("🚀 Safe-Scan starten", key="kombi_scan_final_safe"):
             if res[0] is None: continue
             price, dates, earn, rsi, uptrend, near_lower, lower_band = res
             
-            # --- DER HARTE FILTER ---
-            max_days_allowed = 24 
-            er_info_text = ""
+            # --- 1. ZEIT-LIMITS BERECHNEN ---
+            # Wir wollen immer zwischen 11 und 24 Tagen bleiben
+            absolute_max_days = 24 
             
-            # WICHTIG: Wir prüfen, ob 'earn' ein Datum enthält (z.B. "11.02.")
             if earn and isinstance(earn, str) and "." in earn:
                 try:
-                    # Wir bauen das Datum korrekt zusammen (Tag.Monat.Jahr)
                     heute = datetime.now()
                     tag, monat = earn.split(".")[:2]
                     er_datum = datetime(heute.year, int(monat), int(tag))
-                    
-                    # Falls das Datum im Januar liegt, wir aber im Dezember sind -> nächstes Jahr
                     if er_datum < heute - timedelta(days=1):
                         er_datum = datetime(heute.year + 1, int(monat), int(tag))
                     
                     days_until_earn = (er_datum - heute).days
-                    
-                    # REGEL: Exit muss 2 Tage VOR ER sein
-                    max_days_allowed = days_until_earn - 2
-                    er_info_text = f"ER: {earn}"
-                    
-                    # Wenn weniger als 11 Tage Zeit bleiben bis zum Safe-Exit -> Ticker weg!
-                    if max_days_allowed < 11:
-                        continue 
+                    # Wenn Earnings anstehen, ist das neue Limit: Entweder 24 Tage ODER 2 Tage vor ER
+                    absolute_max_days = min(24, days_until_earn - 2)
                 except:
-                    er_info_text = "" # Falls Format-Fehler, keine Sperre (Fallback)
+                    absolute_max_days = 24
 
-            # Suche Laufzeiten nur im "Safe-Fenster"
+            # Wenn durch die Earnings-Sperre weniger als 11 Tage übrig bleiben -> Ticker überspringen
+            if absolute_max_days < 11:
+                continue
+
+            # --- 2. OPTIONSSUCHE INNERHALB DES FENSTERS (11-24 TAGE) ---
             valid_dates = [
                 d for d in dates 
-                if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= max_days_allowed
+                if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= absolute_max_days
             ]
             
             if not valid_dates: continue
@@ -208,10 +202,11 @@ if st.button("🚀 Safe-Scan starten", key="kombi_scan_final_safe"):
                 
                 if not opts.empty:
                     o = opts.iloc[0]
-                    d_days = (datetime.strptime(d_str, '%Y-%m-%d') - heute).days
+                    d_days = (datetime.strptime(d_str, '%Y-%m-%d') - datetime.now()).days
                     d_bid = o['bid'] if o['bid'] > 0 else o['lastPrice']
                     
-                    if d_bid > (price * 0.04): continue # Split-Schutz
+                    # Split-Schutz
+                    if d_bid > (price * 0.05): continue 
                     
                     curr_y = (d_bid / o['strike']) * (365 / max(1, d_days)) * 100
                     if curr_y > max_y:
@@ -219,7 +214,6 @@ if st.button("🚀 Safe-Scan starten", key="kombi_scan_final_safe"):
                         best_opt = {'o': o, 'days': d_days, 'date': d_str}
 
             if best_opt:
-                # Rating
                 score = 0
                 if best_opt['o']['strike'] < lower_band: score += 1
                 if 35 <= rsi <= 60: score += 1
@@ -230,8 +224,8 @@ if st.button("🚀 Safe-Scan starten", key="kombi_scan_final_safe"):
                     'strike': best_opt['o']['strike'],
                     'puffer': ((price - best_opt['o']['strike']) / price) * 100,
                     'bid': best_opt['o']['bid'] if best_opt['o']['bid'] > 0 else best_opt['o']['lastPrice'],
-                    'rsi': rsi, 'earn': er_info_text, 'tage': best_opt['days'], 
-                    'score': score, 'stars': "⭐" * score if score > 0 else "⚪"
+                    'rsi': rsi, 'earn': earn if (earn and "." in str(earn)) else "", 
+                    'tage': best_opt['days'], 'score': score
                 })
         except: continue
 
@@ -240,26 +234,25 @@ if st.button("🚀 Safe-Scan starten", key="kombi_scan_final_safe"):
     progress_bar.empty()
 
     if not all_results:
-        st.warning("Keine sicheren Trades vor Earnings gefunden.")
+        st.warning("Keine Chancen im Bereich 11-24 Tage gefunden (oder Earnings blockieren alles).")
     else:
         all_results = sorted(all_results, key=lambda x: (x['score'], x['y_pa']), reverse=True)
-        st.success(f"Scan fertig: {len(all_results)} 'Safe-Exit' Trades gefunden!")
+        st.success(f"Scan fertig: {len(all_results)} passende Trades gefunden!")
         
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
-                # Visualisierung
-                safe_label = f"<div style='color:#27ae60; font-weight:bold; font-size:0.75em;'>🛡️ Exit vor {res['earn']}</div>" if res['earn'] else "<div style='color:#7f8c8d; font-size:0.75em;'>Keine ER im Zeitfenster</div>"
+                er_label = f"<div style='color:#27ae60; font-weight:bold; font-size:0.75em;'>🛡️ Exit vor ER ({res['earn']})</div>" if res['earn'] else "<div style='color:#7f8c8d; font-size:0.75em;'>Keine ER im Fenster</div>"
                 rsi_c = "#e74c3c" if res['rsi'] > 70 else "#2ecc71" if res['rsi'] < 40 else "#555"
                 
                 with st.container(border=True):
-                    st.markdown(f"**{res['symbol']}** {res['stars']}{safe_label}", unsafe_allow_html=True)
+                    st.markdown(f"**{res['symbol']}** {'⭐'*res['score'] if res['score']>0 else '⚪'}{er_label}", unsafe_allow_html=True)
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
                     st.markdown(f"""
                     <div style="font-size: 0.85em; background:#f0fff0; padding:10px; border-radius:8px; border-left:5px solid #27ae60;">
                     Kurs: <b>{res['price']:.2f}$</b> | Strike: <b>{res['strike']:.1f}$</b><br>
                     <hr style="margin:5px 0; border-top:1px solid #c8e6c9;">
-                    <b>Laufzeit: {res['tage']} Tage (Safe)</b><br>
+                    <b>Laufzeit: {res['tage']} Tage</b><br>
                     Puffer: {res['puffer']:.1f}% | Bid: {res['bid']:.2f}$<br>
                     RSI: <span style="color:{rsi_c}; font-weight:bold;">{res['rsi']:.0f}</span>
                     </div>
@@ -373,6 +366,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
