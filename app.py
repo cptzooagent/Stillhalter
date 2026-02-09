@@ -11,21 +11,27 @@ st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 # --- 1. MATHE: DELTA-BERECHNUNG ---
 
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
-    # Sicherheits-Check: Falls IV fehlt, nutzen wir 0.4 (40%) als Schätzung
-    if sigma is None or sigma <= 0:
+    # Sicherheitsnetz für die Volatilität (IV)
+    # Wenn IV 0 ist, kann man kein Delta berechnen -> wir nehmen 40% Standard
+    if sigma is None or sigma < 0.01:
         sigma = 0.4 
     
-    # Restlaufzeit darf nicht 0 sein
+    # Sicherheitsnetz für die Zeit
+    # Wenn T (Jahre) zu klein ist, crasht die Formel -> wir setzen ein Minimum von 1 Tag
     if T <= 0:
-        return 0.0
+        T = 1/365
 
     try:
-        # Standard Black-Scholes Formel für d1
+        # Die d1-Formel nach Black-Scholes
         d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+        
         if option_type == 'call':
-            return float(norm.cdf(d1))
+            delta_val = norm.cdf(d1)
         else:
-            return float(norm.cdf(d1) - 1)
+            # Für Puts ist das Delta negativ
+            delta_val = norm.cdf(d1) - 1
+            
+        return float(delta_val)
     except Exception:
         return 0.0
 
@@ -348,10 +354,15 @@ if t_in:
                         # Falls Bid 0 ist (Börse zu), nimm den letzten Preis
                         display_bid = opt['bid'] if opt['bid'] > 0 else opt['lastPrice']
                         
-                        # IV sicherstellen
-                        iv_val = opt['impliedVolatility'] if opt['impliedVolatility'] else 0.4
-                        
-                        # Delta berechnen (Hier lag oft der Klammerfehler)
+                        # In der for-Schleife der Option-Chain:
+                        iv_val = opt['impliedVolatility']
+
+                        # WICHTIG: Falls die IV über 2.0 liegt (z.B. 40.0%), dividieren wir durch 100
+                        # Yahoo liefert IV oft unterschiedlich aus.
+                        if iv_val > 5.0: 
+                        iv_val = iv_val / 100
+
+                        # Delta berechnen
                         calc_delta = calculate_bsm_delta(price, opt['strike'], T_val, iv_val, option_type=mode)
                         d_abs = abs(calc_delta)
                         
@@ -371,5 +382,6 @@ if t_in:
                         )
                 except Exception as e:
                     st.error(f"Fehler in Chain: {e}")
+
 
 
