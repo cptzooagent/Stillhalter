@@ -138,117 +138,115 @@ except:
 st.markdown("---")
 
 
-# --- SEKTION 1: KOMBI-SCAN (MATHEMATISCHE BERECHNUNG) ---
-if st.button("🚀 Kombi-Scan starten", key="kombi_scan_math"):
+# --- SEKTION 1: KOMBI-SCAN (VOLLSTÄNDIGE NEUFASSUNG) ---
+st.markdown("---")
+st.header("🔍 Kombi-Scan: Beste Put-Optionen finden")
+
+if st.button("🚀 Kombi-Scan starten", key="kombi_scan_v3"):
     puffer_limit = otm_puffer_slider / 100 
     
-    with st.spinner("Berechne faire Prämien mathematisch..."):
+    with st.spinner("Märkte werden gescannt..."):
         ticker_liste = get_combined_watchlist()
     
     status_text = st.empty()
     progress_bar = st.progress(0)
     all_results = []
     
+    # --- TEIL A: DATENSAMMLUNG & BERECHNUNG ---
     for i, symbol in enumerate(ticker_liste):
-        # Progress Update
+        # Fortschrittsanzeige
         progress_bar.progress((i + 1) / len(ticker_liste))
+        status_text.text(f"Analysiere {symbol} ({i+1}/{len(ticker_liste)})")
         
         try:
-            # 1. Basis-Daten holen
-            tk = yf.Ticker(symbol)
-            hist = tk.history(period="60d")
-            if hist.empty: continue
+            res = get_stock_data_full(symbol)
+            if res[0] is None: continue
+            price, dates, earn, rsi, uptrend, near_lower, lower_band = res
             
-            price = hist['Close'].iloc[-1]
-            # Historische Volatilität berechnen (Annualisiert)
-            log_return = np.log(hist['Close'] / hist['Close'].shift(1))
-            volatility = log_return.std() * np.sqrt(252) 
-            
-            # Filter: Preis & SMA Check
+            # Basis-Filter (Preis & Trend)
             if not (min_stock_price <= price <= max_stock_price): continue
-            sma200 = tk.history(period="250d")['Close'].mean()
-            uptrend = price > sma200
             if only_uptrend and not uptrend: continue
-
-            # 2. Strike & Laufzeit festlegen (ca. 15-20 Tage)
-            target_strike = round(price * (1 - puffer_limit), 0)
-            t_days = 18 # Wir nehmen einen Standard-Wert für den Vergleich
-            T = t_days / 365
-            r = 0.04 # Risikofreier Zins 4%
-
-            # 3. BLACK-SCHOLES MATHEMATIK (Faire Prämie berechnen)
-            d1 = (np.log(price / target_strike) + (r + 0.5 * volatility**2) * T) / (volatility * np.sqrt(T))
-            d2 = d1 - volatility * np.sqrt(T)
-            # Fairer Put-Preis
-            fair_premium = target_strike * np.exp(-r * T) * norm.cdf(-d2) - price * norm.cdf(-d1)
-
-            # 4. Safety Score & Anzeige
-            # Wir holen RSI für das Rating
-            delta_rsi = hist['Close'].diff()
-            up = delta_rsi.clip(lower=0).rolling(window=14).mean()
-            down = -1 * delta_rsi.clip(upper=0).rolling(window=14).mean()
-            rsi = 100 - (100 / (1 + up/down)).iloc[-1]
-
-            score = 0
-            if fair_premium > (price * 0.005): score += 1 # Mindestprämie vorhanden
-            if rsi < 50: score += 1
-            if uptrend: score += 1
-            stars = "⭐" * score if score > 0 else "⚪"
-
-            y_pa = (fair_premium / target_strike) * (365 / t_days) * 100
             
-            if y_pa >= min_yield_pa:
-                all_results.append({
-                    'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': target_strike,
-                    'puffer': puffer_limit*100, 'bid': fair_premium, 'rsi': rsi,
-                    'stars': stars, 'tage': t_days, 'score': score
-                })
+            # Laufzeit-Filter (ca. 2-3 Wochen)
+            available_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 25]
+            target_date = available_dates[-1] if available_dates else None
+            if not target_date: continue
+
+            tk = yf.Ticker(symbol)
+            chain = tk.option_chain(target_date).puts
+            
+            # Strike finden (maximal Kurs minus Wunschpuffer)
+            max_strike = price * (1 - puffer_limit)
+            secure_options = chain[chain['strike'] <= max_strike].sort_values('strike', ascending=False)
+            
+            if not secure_options.empty:
+                opt = secure_options.iloc[0]
+                tage = max(1, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days)
+                
+                # PLAUSIBILITÄTS-CHECK (Verhindert DECK-Fehler)
+                market_bid = opt['bid'] if opt['bid'] > 0 else opt['lastPrice']
+                if market_bid > (price * 0.035): continue # Prämie > 3.5% des Kurses bei 2 Wochen OTM ist fast immer ein Datenfehler
+                
+                final_premium = market_bid
+                y_pa = (final_premium / opt['strike']) * (365 / tage) * 100
+                puffer_ist = ((price - opt['strike']) / price) * 100
+                
+                if y_pa >= min_yield_pa:
+                    # Sterne-Rating (Sicherheits-Score)
+                    score = 0
+                    if opt['strike'] < lower_band: score += 1
+                    if 35 <= rsi <= 60: score += 1
+                    if uptrend: score += 1
+                    
+                    # Earnings-String säubern
+                    clean_earn = str(earn) if (earn and earn != "N/A") else ""
+                    
+                    all_results.append({
+                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': opt['strike'],
+                        'puffer': puffer_ist, 'bid': final_premium, 'rsi': rsi,
+                        'earn': clean_earn, 'tage': tage, 'score': score, 
+                        'stars': "⭐" * score if score > 0 else "⚪"
+                    })
         except: continue
 
-    # --- FEHLERFREIE ANZEIGE-LOGIK ---
+    status_text.empty()
+    progress_bar.empty()
+
+    # --- TEIL B: VISUELLE AUSGABE ---
     if not all_results:
-        st.warning("Keine Treffer gefunden, die den Sicherheitskriterien entsprechen.")
+        st.warning("Keine Treffer gefunden. Versuche den Puffer zu senken oder mehr Ticker zur Watchlist hinzuzufügen.")
     else:
-        # Sortierung: Erst nach Safety-Score (Sterne), dann nach Rendite
+        # Sortierung: Qualität (Sterne) zuerst, dann Rendite
         all_results = sorted(all_results, key=lambda x: (x.get('score', 0), x.get('y_pa', 0)), reverse=True)
         
-        st.success(f"Scan beendet. {len(all_results)} Chancen sortiert!")
+        st.success(f"Scan beendet. {len(all_results)} verifizierte Chancen gefunden!")
         
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
-                # Sicherer Zugriff auf Earnings & RSI
+                # Earnings-Warnung (Gelber Badge)
                 val_earn = res.get('earn', "")
-                val_rsi = res.get('rsi', 50)
+                earn_warning = f"<span style='background-color:#fff3cd; color:#856404; padding:2px 6px; border-radius:10px; font-size:0.7em; font-weight:bold; border:1px solid #ffeeba; margin-left:5px;'>⚠️ ER: {val_earn}</span>" if val_earn else ""
                 
-                # --- VERBESSERTE EARNINGS-ANZEIGE ---
-                val_earn = res.get('earn') # Wir holen den Rohwert
-                
-                if val_earn and val_earn != "N/A":
-                    # Wenn ein Datum da ist, knallig anzeigen
-                    earn_warning = f" <span style='background-color:#fff3cd; color:#856404; padding:2px 5px; border-radius:4px; font-size:0.75em; border:1px solid #ffeeba;'>⚠️ ER: {val_earn}</span>"
-                else:
-                    earn_warning = ""
-                
-                # RSI Farbe bleibt wie gehabt
+                # RSI-Farbe (Rot bei Gier/Überkauft)
                 val_rsi = res.get('rsi', 50)
                 rsi_color = "#e74c3c" if val_rsi > 70 else "#2ecc71" if val_rsi < 40 else "#555"
                 
                 with st.container(border=True):
-                    # Titel-Zeile mit Sternen
+                    # Header mit Ticker, Sternen und ER-Warnung
                     st.markdown(f"**{res['symbol']}** {res.get('stars', '⚪')} {earn_warning}", unsafe_allow_html=True)
                     
-                    # Rendite als Hauptzahl
+                    # Rendite-Anzeige
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
                     
-                    # Preis-Details (Jetzt mit sicherem Zugriff)
+                    # Blaue Info-Box für den schnellen Kurs-Check
                     st.markdown(f"""
                     <div style="font-size: 0.85em; line-height: 1.5; background-color: #f8f9fa; padding: 10px; border-radius: 8px; border-left: 5px solid #3498db;">
-                    <span style="color: #555;">Aktueller Kurs:</span> <b style="font-size: 1.1em;">{res.get('price', 0):.2f}$</b><br>
+                    <span style="color: #555;">Aktueller Kurs:</span> <b style="font-size: 1.1em; color:#2c3e50;">{res.get('price', 0):.2f}$</b><br>
                     <span style="color: #555;">Gewählter Strike:</span> <b style="color: #2c3e50;">{res.get('strike', 0):.1f}$</b><br>
-                    <hr style="margin: 5px 0;">
+                    <hr style="margin: 5px 0; border:0; border-top:1px solid #ddd;">
                     <b>Puffer:</b> {res.get('puffer', 0):.1f}% | <b>Tage:</b> {res.get('tage', 0)}<br>
-                    <b>Prämie:</b> {res.get('bid', 0):.2f}$ ({res.get('bid', 0)*100:.0f}$ pro Lot)<br>
+                    <b>Prämie:</b> {res.get('bid', 0):.2f}$ ({res.get('bid', 0)*100:.0f}$ p. Lot)<br>
                     <b>RSI:</b> <span style="color:{rsi_color}; font-weight:bold;">{val_rsi:.0f}</span>
                     </div>
                     """, unsafe_allow_html=True)
@@ -361,6 +359,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
