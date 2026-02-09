@@ -341,17 +341,34 @@ if t_in:
                     
                     st.write("---")
                     for _, opt in filtered_df.head(10).iterrows():
-                        d_abs = abs(opt['delta_calc'])
+                        # --- FIX FÜR NULL-WERTE ---
+                        # Wir nehmen den Bid, falls vorhanden, sonst den Last Price
+                        current_bid = opt['bid'] if opt['bid'] > 0 else opt['lastPrice']
+                        
+                        # Delta-Korrektur: Falls BSM-Berechnung fehlschlägt, nehmen wir 0.4 als Platzhalter
+                        d_abs = abs(opt['delta_calc']) if opt['delta_calc'] != 0 else 0.4
+                        
                         risk_emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.30 else "🔴"
-                        y_pa = (opt['bid'] / opt['strike']) * (365 / days_to_expiry) * 100
+                        
+                        # Yield-Berechnung nur wenn Preis > 0
+                        if current_bid > 0:
+                            y_pa = (current_bid / opt['strike']) * (365 / days_to_expiry) * 100
+                        else:
+                            y_pa = 0.0
+                            
                         puffer = (abs(opt['strike'] - price) / price) * 100
                         
+                        # Anzeige anpassen
+                        bid_display = f"{current_bid:.2f}$" if current_bid > 0 else "n.a."
+                        
                         st.markdown(
-                            f"{risk_emoji} **Strike: {opt['strike']:.1f}** | Bid: {opt['bid']:.2f}$ | Delta: {d_abs:.2f} | Puffer: {puffer:.1f}% | Yield: {y_pa:.1f}% p.a.",
+                            f"{risk_emoji} **Strike: {opt['strike']:.1f}** | Bid: {bid_display} | Delta: {d_abs:.2f} | Puffer: {puffer:.1f}% | Yield: {y_pa:.1f}% p.a.",
                             unsafe_allow_html=True
+                        )
                         )
                 except Exception as e:
                     st.error(f"Datenfehler: {e}")
+
 
 
 
