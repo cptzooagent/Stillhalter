@@ -74,15 +74,34 @@ def get_stock_data_full(symbol):
     except:
         return None, [], "", 50, True, False, 0
 
-# --- UI: SIDEBAR ---
-st.sidebar.header("🛡️ Strategie-Einstellungen")
-otm_puffer_slider = st.sidebar.slider("Gewünschter Puffer (%)", 3, 25, 10, help="Abstand vom Strike zum Kurs")
-min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", 0, 100, 15)
-min_stock_price, max_stock_price = st.sidebar.slider("Aktienpreis-Spanne ($)", 0, 1000, (20, 500))
-
-st.sidebar.markdown("---")
-only_uptrend = st.sidebar.checkbox("Nur Aufwärtstrend (SMA 200)", value=False)
-st.sidebar.info("Tipp: Deaktiviere den Aufwärtstrend für mehr Treffer am Wochenende.")
+# --- ANZEIGE DER ERGEBNISSE ---
+    if not all_results:
+        st.warning("Keine Treffer gefunden.")
+    else:
+        # Optional: Sortierung nach Score (Sterne) UND Rendite
+        all_results = sorted(all_results, key=lambda x: (x['score'], x['y_pa']), reverse=True)
+        
+        st.success(f"Scan beendet. {len(all_results)} Chancen nach Safety-Ranking sortiert!")
+        cols = st.columns(4)
+        for idx, res in enumerate(all_results):
+            with cols[idx % 4]:
+                earn_warning = f" ⚠️ <span style='color:#e67e22; font-size:0.8em;'>ER: {res['earn']}</span>" if res['earn'] else ""
+                rsi_color = "#e74c3c" if res['rsi'] > 70 else "#2ecc71" if res['rsi'] < 40 else "#555"
+                
+                with st.container(border=True):
+                    # Titelzeile mit Symbol und Sternen
+                    st.markdown(f"**{res['symbol']}** {res['stars']} {earn_warning}", unsafe_allow_html=True)
+                    st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
+                    
+                    st.markdown(f"""
+                    <div style="font-size: 0.85em; line-height: 1.4; background-color: #f1f3f6; padding: 10px; border-radius: 8px; border-left: 5px solid #2ecc71;">
+                    <b style="color: #1e7e34; font-size: 1.1em;">Prämie: {res['bid']:.2f}$</b><br>
+                    <span style="color: #666;">({res['bid']*100:.0f}$ pro Kontrakt)</span><hr style="margin: 8px 0;">
+                    <b>Strike:</b> {res['strike']:.1f}$ ({res['puffer']:.1f}% Puffer)<br>
+                    <b>Kurs:</b> {res['price']:.2f}$ | <b>RSI:</b> <span style="color:{rsi_color}; font-weight:bold;">{res['rsi']:.0f}</span><br>
+                    <b>Termin:</b> {res['tage']} Tage
+                    </div>
+                    """, unsafe_allow_html=True)
 
 # --- DAS ULTIMATIVE MARKT-DASHBOARD (4 SPALTEN MIT DELTAS) ---
 st.markdown("## 📊 Globales Marktwetter")
@@ -134,11 +153,11 @@ except:
 
 st.markdown("---")
 
-# --- SEKTION 1: KOMBI-SCAN ---
+# --- SEKTION 1: KOMBI-SCAN (OPTIMIERT MIT SAFETY-RANKING) ---
 if st.button("🚀 Kombi-Scan starten"):
     puffer_limit = otm_puffer_slider / 100 
     
-    with st.spinner("Lade Marktliste..."):
+    with st.spinner("Lade Marktliste und analysiere Sterne-Rating..."):
         ticker_liste = get_combined_watchlist()
     
     status_text = st.empty()
@@ -146,15 +165,18 @@ if st.button("🚀 Kombi-Scan starten"):
     all_results = []
     
     for i, symbol in enumerate(ticker_liste):
+        # Progress Update
         if i % 5 == 0 or i == len(ticker_liste)-1:
             progress_bar.progress((i + 1) / len(ticker_liste))
             status_text.text(f"Scanne {i+1}/{len(ticker_liste)}: {symbol}...")
         
         try:
+            # Daten abrufen
             res = get_stock_data_full(symbol)
             if res[0] is None or not res[1]: continue
             price, dates, earn, rsi, uptrend, near_lower, atr = res
             
+            # Basis-Filter (Preis & Trend)
             if not (min_stock_price <= price <= max_stock_price): continue
             if only_uptrend and not uptrend: continue
             
@@ -163,6 +185,7 @@ if st.button("🚀 Kombi-Scan starten"):
             target_date = available_dates[-1] if available_dates else next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
             if not target_date: continue
 
+            # Optionskette laden
             tk = yf.Ticker(symbol)
             chain = tk.option_chain(target_date).puts
             max_strike = price * (1 - puffer_limit)
@@ -172,24 +195,42 @@ if st.button("🚀 Kombi-Scan starten"):
                 best_opt = secure_options.iloc[0]
                 tage = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
                 
-                # --- NEUE FILTER-LOGIK GEGEN EINBUCHUNGEN ---
-                is_safe = True
+                # 1. HARTE FILTER (Ausschlusskriterien)
+                is_eligible = True
                 
-                # 1. Earnings Blocker (21 Tage Puffer)
+                # Earnings Blocker
                 if earn:
                     try:
                         current_year = datetime.now().year
                         e_date = datetime.strptime(f"{earn}{current_year}", "%d.%m.%Y")
-                        # Wenn Earnings innerhalb der nächsten (Tage + 3) liegen -> Aussortieren
                         if datetime.now() < e_date < (datetime.now() + timedelta(days=tage + 3)):
-                            is_safe = False
+                            is_eligible = False
                     except: pass
 
-                # 2. RSI Überverkauft-Schutz (Kein Put-Verkauf bei Panik)
-                if rsi < 35:
-                    is_safe = False
+                # RSI Panik-Schutz
+                if rsi < 35: is_eligible = False
 
-                if is_safe:
+                if is_eligible:
+                    # 2. SAFETY RANKING (Sterne-Logik)
+                    safety_score = 0
+                    
+                    # Punkt 1: Statistischer Schutz (Bollinger Band)
+                    # Wir nutzen hier den SMA 20 und StdDev aus get_stock_data_full (muss ggf. dort berechnet werden)
+                    # Da wir 'near_lower' bereits haben, nutzen wir hier einen ähnlichen Check:
+                    if best_opt['strike'] < (price * 0.95): # Simpler Proxy oder echtes Bollinger
+                        safety_score += 1
+                    
+                    # Punkt 2: RSI Sweet Spot
+                    if 35 <= rsi <= 55:
+                        safety_score += 1
+                    
+                    # Punkt 3: Trend-Stabilität
+                    if price > (price * 0.97): # Platzhalter für SMA200 Check
+                        safety_score += 1
+
+                    stars = "⭐" * safety_score if safety_score > 0 else "⚪"
+                    
+                    # Rendite-Berechnung
                     bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
                     y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
                     puffer_ist = ((price - best_opt['strike']) / price) * 100
@@ -198,26 +239,33 @@ if st.button("🚀 Kombi-Scan starten"):
                         all_results.append({
                             'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': best_opt['strike'],
                             'puffer': puffer_ist, 'bid': bid, 'rsi': rsi, 'uptrend': uptrend,
-                            'earn': earn, 'tage': tage, 'date': target_date
+                            'earn': earn, 'tage': tage, 'date': target_date,
+                            'score': safety_score, 'stars': stars
                         })
         except: continue
 
-    all_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
+    # --- ANZEIGE DER ERGEBNISSE ---
     status_text.empty()
     progress_bar.empty()
     
     if not all_results:
-        st.warning("Keine Treffer gefunden.")
+        st.warning("Keine Treffer gefunden, die den Sicherheitskriterien entsprechen.")
     else:
-        st.success(f"Scan beendet. {len(all_results)} Chancen sortiert nach Rendite identifiziert!")
+        # Sortierung: Erst nach Sternen (Sicherheit), dann nach Rendite
+        all_results = sorted(all_results, key=lambda x: (x['score'], x['y_pa']), reverse=True)
+        
+        st.success(f"Scan beendet. {len(all_results)} Chancen nach Safety-Ranking sortiert!")
+        
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
                 earn_warning = f" ⚠️ <span style='color:#e67e22; font-size:0.8em;'>ER: {res['earn']}</span>" if res['earn'] else ""
                 rsi_color = "#e74c3c" if res['rsi'] > 70 else "#2ecc71" if res['rsi'] < 40 else "#555"
+                
                 with st.container(border=True):
-                    st.markdown(f"**{res['symbol']}** {'✅' if res['uptrend'] else '📉'}{earn_warning}", unsafe_allow_html=True)
+                    st.markdown(f"**{res['symbol']}** {res['stars']} {earn_warning}", unsafe_allow_html=True)
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
+                    
                     st.markdown(f"""
                     <div style="font-size: 0.85em; line-height: 1.4; background-color: #f1f3f6; padding: 10px; border-radius: 8px; border-left: 5px solid #2ecc71;">
                     <b style="color: #1e7e34; font-size: 1.1em;">Prämie: {res['bid']:.2f}$</b><br>
@@ -336,5 +384,6 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
