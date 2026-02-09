@@ -170,36 +170,17 @@ if st.button("🚀 Kombi-Scan starten"):
             
             if not secure_options.empty:
                 best_opt = secure_options.iloc[0]
+                bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
                 tage = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
+                y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
+                puffer_ist = ((price - best_opt['strike']) / price) * 100
                 
-                # --- NEUE FILTER-LOGIK GEGEN EINBUCHUNGEN ---
-                is_safe = True
-                
-                # 1. Earnings Blocker (21 Tage Puffer)
-                if earn:
-                    try:
-                        current_year = datetime.now().year
-                        e_date = datetime.strptime(f"{earn}{current_year}", "%d.%m.%Y")
-                        # Wenn Earnings innerhalb der nächsten (Tage + 3) liegen -> Aussortieren
-                        if datetime.now() < e_date < (datetime.now() + timedelta(days=tage + 3)):
-                            is_safe = False
-                    except: pass
-
-                # 2. RSI Überverkauft-Schutz (Kein Put-Verkauf bei Panik)
-                if rsi < 35:
-                    is_safe = False
-
-                if is_safe:
-                    bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
-                    y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
-                    puffer_ist = ((price - best_opt['strike']) / price) * 100
-                    
-                    if y_pa >= min_yield_pa:
-                        all_results.append({
-                            'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': best_opt['strike'],
-                            'puffer': puffer_ist, 'bid': bid, 'rsi': rsi, 'uptrend': uptrend,
-                            'earn': earn, 'tage': tage, 'date': target_date
-                        })
+                if y_pa >= min_yield_pa:
+                    all_results.append({
+                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': best_opt['strike'],
+                        'puffer': puffer_ist, 'bid': bid, 'rsi': rsi, 'uptrend': uptrend,
+                        'earn': earn, 'tage': tage, 'date': target_date
+                    })
         except: continue
 
     all_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
@@ -228,8 +209,8 @@ if st.button("🚀 Kombi-Scan starten"):
                     </div>
                     """, unsafe_allow_html=True)
 
-# --- SEKTION 2: SMART DEPOT-MANAGER (REPAIR VERSION) ---
-st.markdown("### 💼 Smart Depot-Manager (Aktiv)")
+# --- SEKTION 2: SMART DEPOT-MANAGER ---
+st.markdown("### 💼 Smart Depot-Manager")
 depot_data = [
     {'Ticker': 'AFRM', 'Einstand': 76.00}, {'Ticker': 'HOOD', 'Einstand': 120.0},
     {'Ticker': 'JKS', 'Einstand': 50.00}, {'Ticker': 'GTM', 'Einstand': 17.00},
@@ -241,29 +222,23 @@ depot_data = [
 
 p_cols = st.columns(4) 
 for i, item in enumerate(depot_data):
-    price, _, earn, rsi, uptrend, _, _ = get_stock_data_full(item['Ticker'])
+    price, _, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(item['Ticker'])
     if price:
         diff = (price / item['Einstand'] - 1) * 100
         perf_color = "#2ecc71" if diff >= 0 else "#e74c3c"
         with p_cols[i % 4]:
             with st.container(border=True):
-                st.markdown(f"**{item['Ticker']}** <span style='float:right; color:{perf_color}; font-weight:bold;'>{diff:+.1f}%</span>", unsafe_allow_html=True)
-                
-                # Strategie-Logik
-                if diff < -20:
-                    # Repair-Ansatz: Call 15% über aktuellem Kurs, egal wo der Einstand ist
-                    repair_strike = price * 1.15
-                    st.warning("🛠️ Repair-Modus")
-                    st.caption(f"Call @{repair_strike:.1f}$ senkt Einstand.")
-                    if rsi < 40: 
-                        st.info("Wait: RSI zu tief")
-                    else:
-                        st.success(f"Prämie einsammeln!")
-                elif rsi > 65:
+                t_emoji = "📈" if uptrend else "📉"
+                st.markdown(f"**{item['Ticker']}** {t_emoji} <span style='float:right; color:{perf_color}; font-weight:bold;'>{diff:+.1f}%</span>", unsafe_allow_html=True)
+                st.markdown(f"<p style='font-size:13px; margin:0;'>Kurs: {price:.2f}$ | RSI: {rsi:.0f}</p>", unsafe_allow_html=True)
+                if diff < -15:
+                    st.error("⚠️ Call-Gefahr!")
+                    st.caption(f"Einstand {item['Einstand']}$ zu weit weg.")
+                elif rsi > 60:
                     st.success("🟢 Call-Chance!")
+                    st.caption("RSI heiß. Jetzt Calls prüfen.")
                 else:
-                    st.info("⏳ Seitwärts")
-                
+                    st.info("⏳ Warten")
                 if earn: st.warning(f"📅 ER: {earn}")
 
 # --- SEKTION 3: EINZEL-CHECK (STABILE AMPEL-VERSION) ---
@@ -322,3 +297,4 @@ if t_in:
                 )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
