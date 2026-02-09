@@ -340,11 +340,18 @@ if t_in:
                     T_val = days_to_expiry / 365
                     
                     st.write("---")
-                    # Filtern für Übersicht
+                    # In der Option-Chain Sektion (Einzel-Check):
+
                     if mode == "put":
-                        df_view = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
+                        # Wir zeigen nur Strikes, die MAXIMAL 2% über dem Kurs liegen (Puffer nach oben)
+                        # Aber primär wollen wir alles darunter sehen.
+                        df_view = chain[chain['strike'] <= price * 1.02].sort_values('strike', ascending=False)
                     else:
-                        df_view = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
+                        # Für Calls: Nur Strikes über dem aktuellen Kurs
+                        df_view = chain[chain['strike'] >= price * 0.98].sort_values('strike', ascending=True)
+
+                    # Um nur echte "Out-of-the-Money" Puts zu sehen, nimm diesen Filter:
+                    # df_view = chain[chain['strike'] < price].sort_values('strike', ascending=False)
                     
                     for _, opt in df_view.head(10).iterrows():
                         # Preis-Fix für Wochenende
@@ -376,6 +383,7 @@ if t_in:
                         )
                 except Exception as e:
                     st.error(f"Fehler in Chain: {e}")
+
 
 
 
