@@ -10,9 +10,27 @@ st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
 # --- 1. MATHE: DELTA-BERECHNUNG ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
-    if T <= 0 or sigma <= 0: return 0
-    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
+    """
+    Berechnet das Delta nach Black-Scholes.
+    S: Aktienkurs, K: Strike, T: Restlaufzeit in Jahren, 
+    sigma: Volatilität, r: risikofreier Zins (4%)
+    """
+    # Sicherheits-Check: Falls IV 0 oder n.a. ist, nutzen wir 0.4 (40%) als Schätzwert
+    if sigma is None or sigma <= 0:
+        sigma = 0.4 
+    
+    # Restlaufzeit darf nicht 0 sein (für Division)
+    if T <= 0:
+        return 0.0
+
+    try:
+        d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+        if option_type == 'call':
+            return norm.cdf(d1)
+        else:
+            return norm.cdf(d1) - 1
+    except:
+        return 0.0
 
 def calculate_rsi(data, window=14):
     if len(data) < window + 1: return pd.Series([50] * len(data))
@@ -333,14 +351,16 @@ if t_in:
                         # FIX: Nutze lastPrice wenn Bid 0 ist (Wochenende/Pre-Market)
                         display_bid = opt['bid'] if opt['bid'] > 0 else opt['lastPrice']
                         
-                        # Delta neu berechnen (BSM)
-                        iv = opt['impliedVolatility'] if opt['impliedVolatility'] and opt['impliedVolatility'] > 0 else 0.4
+                        # Delta neu berechnen mit Sicherheitsnetz
+                        # Wir ziehen die IV aus der Option-Chain
+                        iv = opt['impliedVolatility']
+
+                        # Berechne Delta (S=Preis, K=Strike, T_val=Zeit, iv=Volatilität)
                         calc_delta = calculate_bsm_delta(price, opt['strike'], T_val, iv, option_type=mode)
                         d_abs = abs(calc_delta)
-                        
+
+                        # Anzeige-Logik
                         risk_emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.30 else "🔴"
-                        y_pa = (display_bid / opt['strike']) * (365 / days_to_expiry) * 100 if display_bid > 0 else 0
-                        puffer = (abs(opt['strike'] - price) / price) * 100
                         
                         st.markdown(
                             f"{risk_emoji} **Strike: {opt['strike']:.1f}** | Bid (Last): {display_bid:.2f}$ | Delta: {d_abs:.2f} | Puffer: {puffer:.1f}% | Yield: {y_pa:.1f}% p.a.",
@@ -348,3 +368,4 @@ if t_in:
                         )
                 except Exception as e:
                     st.error(f"Fehler in Chain: {e}")
+
