@@ -138,14 +138,14 @@ except:
 st.markdown("---")
 
 
-# --- SEKTION 1: KOMBI-SCAN (INTELLIGENTE LAUFZEIT-OPTIMIERUNG) ---
+# --- SEKTION 1: KOMBI-SCAN (EARNINGS-SAFE EDITION) ---
 st.markdown("---")
-st.header("🔍 Kombi-Scan: Optimierte Laufzeiten (11-24 Tage)")
+st.header("🔍 Kombi-Scan: Safety First (Exit vor Earnings)")
 
-if st.button("🚀 Kombi-Scan starten", key="kombi_scan_v_flex"):
+if st.button("🚀 Safe-Scan starten", key="kombi_scan_safe"):
     puffer_limit = otm_puffer_slider / 100 
     
-    with st.spinner("Suche nach den besten Laufzeiten..."):
+    with st.spinner("Prüfe Termine und Laufzeiten..."):
         ticker_liste = get_combined_watchlist()
     
     status_text = st.empty()
@@ -154,29 +154,47 @@ if st.button("🚀 Kombi-Scan starten", key="kombi_scan_v_flex"):
     
     for i, symbol in enumerate(ticker_liste):
         progress_bar.progress((i + 1) / len(ticker_liste))
-        status_text.text(f"Analysiere {symbol}...")
+        status_text.text(f"Checke {symbol} auf Earnings-Konflikte...")
         
         try:
             res = get_stock_data_full(symbol)
             if res[0] is None: continue
             price, dates, earn, rsi, uptrend, near_lower, lower_band = res
             
-            if not (min_stock_price <= price <= max_stock_price): continue
-            if only_uptrend and not uptrend: continue
+            # 1. EARNINGS-LOGIK: Wann ist der spätestmögliche Ausstieg?
+            max_days_allowed = 24 # Standard-Maximum
             
-            # --- FLEXIBLE DATUMS-SUCHE ---
-            valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 24]
+            if earn and earn != "N/A":
+                try:
+                    # Wir wandeln das Earnings-Datum um (Format meist DD.MM.)
+                    current_year = datetime.now().year
+                    earn_date = datetime.strptime(f"{earn}.{current_year}", "%d.%m.%Y")
+                    days_until_earn = (earn_date - datetime.now()).days
+                    
+                    # Sicherheits-Puffer: Wir wollen 2 Tage VOR den Earnings raus sein
+                    max_days_allowed = days_until_earn - 2
+                    
+                    # Wenn Earnings schon in weniger als 11 Tagen sind, ist kein Safe-Trade möglich
+                    if max_days_allowed < 11:
+                        continue 
+                except:
+                    pass # Bei Fehlern im Datumsformat bleiben wir bei 24 Tagen
+
+            # 2. FLEXIBLE DATUMS-SUCHE (Jetzt begrenzt durch Earnings)
+            valid_dates = [
+                d for d in dates 
+                if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= max_days_allowed
+            ]
             
+            if not valid_dates: continue
+
             best_opt_for_ticker = None
             max_yield_for_ticker = -1
-            
             tk = yf.Ticker(symbol)
             
-            # Wir loopen durch alle validen Daten und suchen das Rendite-Maximum
             for d_str in valid_dates:
                 chain = tk.option_chain(d_str).puts
                 max_strike = price * (1 - puffer_limit)
-                # Den Strike wählen, der am nächsten am gewünschten Puffer liegt
                 opts = chain[chain['strike'] <= max_strike].sort_values('strike', ascending=False)
                 
                 if not opts.empty:
@@ -184,33 +202,26 @@ if st.button("🚀 Kombi-Scan starten", key="kombi_scan_v_flex"):
                     d_days = max(1, (datetime.strptime(d_str, '%Y-%m-%d') - datetime.now()).days)
                     d_bid = o['bid'] if o['bid'] > 0 else o['lastPrice']
                     
-                    # Plausibilitäts-Check (Mondpreise filtern)
                     if d_bid > (price * 0.04): continue 
                     
                     d_yield = (d_bid / o['strike']) * (365 / d_days) * 100
                     
                     if d_yield > max_yield_for_ticker:
                         max_yield_for_ticker = d_yield
-                        best_opt_for_ticker = {
-                            'opt': o, 'days': d_days, 'yield': d_yield, 'date': d_str
-                        }
+                        best_opt_for_ticker = {'opt': o, 'days': d_days, 'yield': d_yield, 'date': d_str}
 
-            # Wenn ein passender Trade gefunden wurde, speichern
             if best_opt_for_ticker:
-                # Sterne-Rating
                 score = 0
                 if best_opt_for_ticker['opt']['strike'] < lower_band: score += 1
                 if 35 <= rsi <= 60: score += 1
                 if uptrend: score += 1
-                
-                clean_earn = str(earn) if (earn and earn != "N/A") else ""
                 
                 all_results.append({
                     'symbol': symbol, 'price': price, 'y_pa': best_opt_for_ticker['yield'], 
                     'strike': best_opt_for_ticker['opt']['strike'],
                     'puffer': ((price - best_opt_for_ticker['opt']['strike']) / price) * 100,
                     'bid': best_opt_for_ticker['opt']['bid'] if best_opt_for_ticker['opt']['bid'] > 0 else best_opt_for_ticker['opt']['lastPrice'],
-                    'rsi': rsi, 'earn': clean_earn, 'tage': best_opt_for_ticker['days'], 
+                    'rsi': rsi, 'earn': earn if earn else "", 'tage': best_opt_for_ticker['days'], 
                     'score': score, 'stars': "⭐" * score if score > 0 else "⚪"
                 })
         except: continue
@@ -220,28 +231,26 @@ if st.button("🚀 Kombi-Scan starten", key="kombi_scan_v_flex"):
 
     # --- ANZEIGE ---
     if not all_results:
-        st.warning("Keine Treffer im Bereich 11-24 Tage gefunden.")
+        st.warning("Keine sicheren Treffer (vor Earnings) gefunden.")
     else:
         all_results = sorted(all_results, key=lambda x: (x.get('score', 0), x.get('y_pa', 0)), reverse=True)
-        st.success(f"Scan beendet. {len(all_results)} optimierte Chancen gefunden!")
+        st.success(f"Scan beendet. {len(all_results)} 'Earnings-Safe' Chancen gefunden!")
         
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
-                val_earn = res.get('earn', "")
-                earn_warning = f"<span style='background-color:#fff3cd; color:#856404; padding:2px 6px; border-radius:10px; font-size:0.7em; font-weight:bold; border:1px solid #ffeeba; margin-left:5px;'>⚠️ ER: {val_earn}</span>" if val_earn else ""
+                earn_info = f"<span style='color:#27ae60; font-size:0.75em; font-weight:bold;'>🛡️ Exit vor ER ({res['earn']})</span>" if res['earn'] else "<span style='color:#95a5a6; font-size:0.75em;'>Keine ER geplant</span>"
                 rsi_color = "#e74c3c" if res['rsi'] > 70 else "#2ecc71" if res['rsi'] < 40 else "#555"
                 
                 with st.container(border=True):
-                    st.markdown(f"**{res['symbol']}** {res.get('stars', '⚪')} {earn_warning}", unsafe_allow_html=True)
-                    st.metric("Best Yield p.a.", f"{res['y_pa']:.1f}%")
+                    st.markdown(f"**{res['symbol']}** {res.get('stars', '⚪')}<br>{earn_info}", unsafe_allow_html=True)
+                    st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
                     st.markdown(f"""
-                    <div style="font-size: 0.85em; line-height: 1.5; background-color: #f8f9fa; padding: 10px; border-radius: 8px; border-left: 5px solid #3498db;">
-                    Aktueller Kurs: <b style="color:#2c3e50;">{res['price']:.2f}$</b><br>
-                    Strike: <b style="color:#2c3e50;">{res['strike']:.1f}$</b><br>
+                    <div style="font-size: 0.85em; line-height: 1.5; background-color: #f8f9fa; padding: 10px; border-radius: 8px; border-left: 5px solid #27ae60;">
+                    Kurs: <b>{res['price']:.2f}$</b> | Strike: <b>{res['strike']:.1f}$</b><br>
                     <hr style="margin: 5px 0; border-top:1px solid #ddd;">
-                    <b>Tage: {res['tage']}</b> | Puffer: {res['puffer']:.1f}%<br>
-                    Prämie: {res['bid']:.2f}$ ({res['bid']*100:.0f}$ p. Lot)<br>
+                    <b>Laufzeit: {res['tage']} Tage</b><br>
+                    Puffer: {res['puffer']:.1f}% | Prämie: {res['bid']:.2f}$<br>
                     RSI: <span style="color:{rsi_color}; font-weight:bold;">{res['rsi']:.0f}</span>
                     </div>
                     """, unsafe_allow_html=True)
@@ -354,6 +363,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
