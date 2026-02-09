@@ -138,8 +138,8 @@ except:
 st.markdown("---")
 
 
-# --- SEKTION 1: KOMBI-SCAN (OPTIMIERT MIT SAFETY-RANKING) ---
-if st.button("🚀 Kombi-Scan starten"):
+# --- SEKTION 1: KOMBI-SCAN (KOMPLETTBLOCK) ---
+if st.button("🚀 Kombi-Scan starten", key="kombi_scan_main"):
     puffer_limit = otm_puffer_slider / 100 
     
     with st.spinner("Lade Marktliste und analysiere Sterne-Rating..."):
@@ -149,28 +149,24 @@ if st.button("🚀 Kombi-Scan starten"):
     progress_bar = st.progress(0)
     all_results = []
     
+    # --- 1. SCHLEIFE: DATEN SAMMELN ---
     for i, symbol in enumerate(ticker_liste):
-        # Progress Update
         if i % 5 == 0 or i == len(ticker_liste)-1:
             progress_bar.progress((i + 1) / len(ticker_liste))
             status_text.text(f"Scanne {i+1}/{len(ticker_liste)}: {symbol}...")
         
         try:
-            # Daten abrufen
             res = get_stock_data_full(symbol)
             if res[0] is None or not res[1]: continue
-            price, dates, earn, rsi, uptrend, near_lower, atr = res
+            price, dates, earn, rsi, uptrend, near_lower, lower_band = res
             
-            # Basis-Filter (Preis & Trend)
             if not (min_stock_price <= price <= max_stock_price): continue
             if only_uptrend and not uptrend: continue
             
-            # Datums-Logik (11-20 Tage)
-            available_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 20]
+            available_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 22]
             target_date = available_dates[-1] if available_dates else next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
             if not target_date: continue
 
-            # Optionskette laden
             tk = yf.Ticker(symbol)
             chain = tk.option_chain(target_date).puts
             max_strike = price * (1 - puffer_limit)
@@ -178,68 +174,38 @@ if st.button("🚀 Kombi-Scan starten"):
             
             if not secure_options.empty:
                 best_opt = secure_options.iloc[0]
-                tage = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
+                tage = max(1, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days)
                 
-                # 1. HARTE FILTER (Ausschlusskriterien)
-                is_eligible = True
+                # Sterne-Rating Logik
+                safety_score = 0
+                if best_opt['strike'] < lower_band: safety_score += 1
+                if 35 <= rsi <= 55: safety_score += 1
+                if uptrend: safety_score += 1
+
+                stars = "⭐" * safety_score if safety_score > 0 else "⚪"
                 
-                # Earnings Blocker
-                if earn:
-                    try:
-                        current_year = datetime.now().year
-                        e_date = datetime.strptime(f"{earn}{current_year}", "%d.%m.%Y")
-                        if datetime.now() < e_date < (datetime.now() + timedelta(days=tage + 3)):
-                            is_eligible = False
-                    except: pass
-
-                # RSI Panik-Schutz
-                if rsi < 35: is_eligible = False
-
-                if is_eligible:
-                    # 2. SAFETY RANKING (Sterne-Logik)
-                    safety_score = 0
-                    
-                    # Punkt 1: Statistischer Schutz (Bollinger Band)
-                    # Wir nutzen hier den SMA 20 und StdDev aus get_stock_data_full (muss ggf. dort berechnet werden)
-                    # Da wir 'near_lower' bereits haben, nutzen wir hier einen ähnlichen Check:
-                    if best_opt['strike'] < (price * 0.95): # Simpler Proxy oder echtes Bollinger
-                        safety_score += 1
-                    
-                    # Punkt 2: RSI Sweet Spot
-                    if 35 <= rsi <= 55:
-                        safety_score += 1
-                    
-                    # Punkt 3: Trend-Stabilität
-                    if price > (price * 0.97): # Platzhalter für SMA200 Check
-                        safety_score += 1
-
-                    stars = "⭐" * safety_score if safety_score > 0 else "⚪"
-                    
-                    # Rendite-Berechnung
-                    bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
-                    y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
-                    puffer_ist = ((price - best_opt['strike']) / price) * 100
-                    
-                    if y_pa >= min_yield_pa:
-                        all_results.append({
-                            'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': best_opt['strike'],
-                            'puffer': puffer_ist, 'bid': bid, 'rsi': rsi, 'uptrend': uptrend,
-                            'earn': earn, 'tage': tage, 'date': target_date,
-                            'score': safety_score, 'stars': stars
-                        })
+                bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
+                y_pa = (bid / best_opt['strike']) * (365 / tage) * 100
+                puffer_ist = ((price - best_opt['strike']) / price) * 100
+                
+                if y_pa >= min_yield_pa:
+                    all_results.append({
+                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': best_opt['strike'],
+                        'puffer': puffer_ist, 'bid': bid, 'rsi': rsi, 'uptrend': uptrend,
+                        'earn': earn, 'tage': tage, 'date': target_date,
+                        'score': safety_score, 'stars': stars
+                    })
         except: continue
 
-    # --- ANZEIGE DER ERGEBNISSE ---
+    # --- 2. ANZEIGE: ERGEBNISSE AUSGEBEN ---
     status_text.empty()
     progress_bar.empty()
     
     if not all_results:
         st.warning("Keine Treffer gefunden, die den Sicherheitskriterien entsprechen.")
     else:
-        # Sortierung: Erst nach Sternen (Sicherheit), dann nach Rendite
         all_results = sorted(all_results, key=lambda x: (x['score'], x['y_pa']), reverse=True)
-        
-        st.success(f"Scan beendet. {len(all_results)} Chancen nach Safety-Ranking sortiert!")
+        st.success(f"Scan beendet. {len(all_results)} Chancen sortiert!")
         
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
@@ -250,17 +216,14 @@ if st.button("🚀 Kombi-Scan starten"):
                 with st.container(border=True):
                     st.markdown(f"**{res['symbol']}** {res['stars']} {earn_warning}", unsafe_allow_html=True)
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
-                    
                     st.markdown(f"""
                     <div style="font-size: 0.85em; line-height: 1.4; background-color: #f1f3f6; padding: 10px; border-radius: 8px; border-left: 5px solid #2ecc71;">
-                    <b style="color: #1e7e34; font-size: 1.1em;">Prämie: {res['bid']:.2f}$</b><br>
-                    <span style="color: #666;">({res['bid']*100:.0f}$ pro Kontrakt)</span><hr style="margin: 8px 0;">
+                    <b>Prämie: {res['bid']:.2f}$</b> ({res['bid']*100:.0f}$)<br>
                     <b>Strike:</b> {res['strike']:.1f}$ ({res['puffer']:.1f}% Puffer)<br>
-                    <b>Kurs:</b> {res['price']:.2f}$ | <b>RSI:</b> <span style="color:{rsi_color}; font-weight:bold;">{res['rsi']:.0f}</span><br>
-                    <b>Termin:</b> {res['tage']} Tage
+                    <b>RSI:</b> <span style="color:{rsi_color}; font-weight:bold;">{res['rsi']:.0f}</span> | <b>Tage:</b> {res['tage']}
                     </div>
                     """, unsafe_allow_html=True)
-
+                    
 # --- SEKTION 2: SMART DEPOT-MANAGER (REPAIR VERSION) ---
 st.markdown("### 💼 Smart Depot-Manager (Aktiv)")
 depot_data = [
@@ -369,6 +332,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
