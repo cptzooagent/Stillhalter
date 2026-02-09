@@ -75,30 +75,24 @@ def get_stock_data_full(symbol):
         return None, [], "", 50, True, False, 0
 
 # --- UI: SIDEBAR ---
+# Das "with" Statement stellt sicher, dass alles links landet, 
+# selbst wenn der Hauptcode weiter unten einen Fehler hat.
 with st.sidebar:
     st.header("🛡️ Strategie-Einstellungen")
-    otm_puffer_slider = st.slider("Gewünschter Puffer (%)", 3, 25, 10, help="Abstand vom Strike zum Kurs")
-    min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 0, 100, 15)
-    min_stock_price, max_stock_price = st.slider("Aktienpreis-Spanne ($)", 0, 1000, (20, 500))
+    otm_puffer_slider = st.slider("Gewünschter Puffer (%)", 3, 25, 10, key="puffer_sid")
+    min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 0, 100, 15, key="yield_sid")
+    min_stock_price, max_stock_price = st.slider("Aktienpreis-Spanne ($)", 0, 1000, (20, 500), key="price_sid")
 
     st.markdown("---")
-    only_uptrend = st.checkbox("Nur Aufwärtstrend (SMA 200)", value=False)
+    only_uptrend = st.checkbox("Nur Aufwärtstrend (SMA 200)", value=False, key="trend_sid")
     st.info("Tipp: Deaktiviere den Aufwärtstrend für mehr Treffer am Wochenende.")
 
-# --- DAS ULTIMATIVE MARKT-DASHBOARD ---
-st.markdown("## 📊 Globales Marktwetter")
-m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-
-# (Hier bleibt dein Code für VIX, RSI, Crypto, BTC gleich...)
-# ... [Marktwetter Logik] ...
-
-st.markdown("---")
-
 # --- SEKTION 1: KOMBI-SCAN ---
-if st.button("🚀 Kombi-Scan starten"):
+# Durch key="main_scan_btn" wird der DuplicateElementId Fehler aus Screenshot 3 verhindert
+if st.button("🚀 Kombi-Scan starten", key="main_scan_btn"):
     puffer_limit = otm_puffer_slider / 100 
     
-    with st.spinner("Lade Marktliste und analysiere Sterne-Rating..."):
+    with st.spinner("Analysiere Markt nach Safety-Rating..."):
         ticker_liste = get_combined_watchlist()
     
     status_text = st.empty()
@@ -115,10 +109,11 @@ if st.button("🚀 Kombi-Scan starten"):
             if res[0] is None or not res[1]: continue
             price, dates, earn, rsi, uptrend, near_lower, atr = res
             
+            # Basis-Filter
             if not (min_stock_price <= price <= max_stock_price): continue
             if only_uptrend and not uptrend: continue
             
-            # Datums-Logik
+            # Datums-Logik (11-20 Tage)
             available_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 20]
             target_date = available_dates[-1] if available_dates else next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
             if not target_date: continue
@@ -132,6 +127,7 @@ if st.button("🚀 Kombi-Scan starten"):
                 best_opt = secure_options.iloc[0]
                 tage = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
                 
+                # Sicherheits-Checks
                 is_eligible = True
                 if earn:
                     try:
@@ -147,7 +143,7 @@ if st.button("🚀 Kombi-Scan starten"):
                     safety_score = 0
                     if best_opt['strike'] < (price * 0.95): safety_score += 1
                     if 35 <= rsi <= 55: safety_score += 1
-                    if uptrend: safety_score += 1 # Nutzt den SMA200 Check aus get_stock_data_full
+                    if uptrend: safety_score += 1
 
                     stars = "⭐" * safety_score if safety_score > 0 else "⚪"
                     
@@ -170,8 +166,9 @@ if st.button("🚀 Kombi-Scan starten"):
     if not all_results:
         st.warning("Keine Treffer gefunden.")
     else:
+        # Sortierung nach Sicherheit (Sterne)
         all_results = sorted(all_results, key=lambda x: (x['score'], x['y_pa']), reverse=True)
-        st.success(f"Scan beendet. {len(all_results)} Chancen sortiert!")
+        st.success(f"Scan beendet. {len(all_results)} Chancen identifiziert!")
         
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
@@ -190,7 +187,7 @@ if st.button("🚀 Kombi-Scan starten"):
                     <b>Termin:</b> {res['tage']} Tage
                     </div>
                     """, unsafe_allow_html=True)
-
+                    
 # --- DAS ULTIMATIVE MARKT-DASHBOARD (4 SPALTEN MIT DELTAS) ---
 st.markdown("## 📊 Globales Marktwetter")
 m_col1, m_col2, m_col3, m_col4 = st.columns(4)
@@ -472,6 +469,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
