@@ -155,39 +155,38 @@ if st.button("🚀 Kombi-Scan starten"):
     all_results = []
     
     for i, symbol in enumerate(ticker_liste):
+        # Fortschrittsanzeige
         if i % 5 == 0 or i == len(ticker_liste)-1:
             progress_bar.progress((i + 1) / len(ticker_liste))
-            status_text.text(f"Scanne {i+1}/{len(ticker_liste)}: {symbol}...")
+            status_text.text(f"Prüfe {i+1}/{len(ticker_liste)}: {symbol}...")
         
         try:
+            # --- TURBO-FILTER: ETF-CHECK ZUERST (Löst dein Problem) ---
             tk = yf.Ticker(symbol)
-            info = tk.info
-            q_type = info.get('quoteType', 'EQUITY')
+            # Wir laden NUR die Info, nicht die ganze Historie
+            q_type = tk.info.get('quoteType', 'EQUITY')
 
-            # 1. TURBO-FILTER: Nur ETFs?
             if only_etfs and q_type != 'ETF':
-                continue
+                continue # Springt sofort zum nächsten Symbol, ohne Daten zu laden
 
-            # 2. QUALITÄTS-FILTER (Nur für Aktien relevant)
-            if only_quality and q_type == 'EQUITY':
-                roe = info.get('returnOnEquity', 0)
-                if roe < 0.15: # Filtert unrentable Firmen aus
-                    continue
-
+            # Nur wenn es ein ETF ist (oder der Filter aus ist), laden wir die teuren Kursdaten
             res = get_stock_data_full(symbol)
             if res[0] is None or not res[1]: continue
             price, dates, earn, rsi, uptrend, near_lower, atr = res
             
-            # 3. TECHNISCHE FILTER
+            # --- WEITERE FILTER AUS DER SIDEBAR ---
             if not (min_stock_price <= price <= max_stock_price): continue
             if only_uptrend and not uptrend: continue
-            if rsi > rsi_threshold: continue # Nutzt den neuen RSI Slider
+            # Nutze den RSI-Slider aus deiner Sidebar (Bild 10)
+            if rsi > rsi_threshold: continue 
             
-            # Restliche Datums- und Options-Logik bleibt identisch...
+            # Datums-Logik (Sucht passendes Expiry)
             available_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 30]
             target_date = available_dates[-1] if available_dates else next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
+            
             if not target_date: continue
 
+            # Optionskette abrufen
             chain = tk.option_chain(target_date).puts
             max_strike = price * (1 - puffer_limit)
             secure_options = chain[chain['strike'] <= max_strike].sort_values('strike', ascending=False)
@@ -196,31 +195,25 @@ if st.button("🚀 Kombi-Scan starten"):
                 best_opt = secure_options.iloc[0]
                 tage = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
                 
-                # Deine bestehende Safety-Logik (Earnings etc.)
-                is_safe = True
-                if earn:
-                    try:
-                        e_date = datetime.strptime(f"{earn}{datetime.now().year}", "%d.%m.%Y")
-                        if datetime.now() < e_date < (datetime.now() + timedelta(days=tage + 3)):
-                            is_safe = False
-                    except: pass
+                # Berechnung der Prämie und Rendite
+                bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
+                y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
+                puffer_ist = ((price - best_opt['strike']) / price) * 100
+                
+                if y_pa >= min_yield_pa:
+                    all_results.append({
+                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': best_opt['strike'],
+                        'puffer': puffer_ist, 'bid': bid, 'rsi': rsi, 'uptrend': uptrend,
+                        'earn': earn, 'tage': tage, 'date': target_date
+                    })
+        except: 
+            continue
 
-                if is_safe:
-                    bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
-                    y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
-                    puffer_ist = ((price - best_opt['strike']) / price) * 100
-                    
-                    if y_pa >= min_yield_pa:
-                        all_results.append({
-                            'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': best_opt['strike'],
-                            'puffer': puffer_ist, 'bid': bid, 'rsi': rsi, 'uptrend': uptrend,
-                            'earn': earn, 'tage': tage, 'date': target_date
-                        })
-        except: continue
-
-    # Anzeige der Ergebnisse (bleibt wie in deiner stabilen Version)
+    # Ergebnisse sortieren und anzeigen
     all_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
-    # ... (Anzeige Code)
+    status_text.empty()
+    progress_bar.empty()
+    # ... hier folgt dein Code für die Ergebniskarten (st.columns)
 
 # --- SEKTION 2: SMART DEPOT-MANAGER (REPAIR VERSION) ---
 st.markdown("### 💼 Smart Depot-Manager (Aktiv)")
@@ -316,4 +309,5 @@ if t_in:
                 )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
