@@ -302,27 +302,39 @@ if t_in:
                 price, opt['strike'], T, (opt['impliedVolatility'] if opt['impliedVolatility'] else 0.4), option_type=mode
             ), axis=1)
 
-            # --- OPTIMIERTER FILTER IM EINZEL-CHECK ---
+            # --- VERBESSERTE FILTER-LOGIK (NUR OTM) ---
             if mode == "put":
-            # Nur Strikes unterhalb des aktuellen Kurses (max. 99% des Preises)
-            filtered_df = chain[chain['strike'] <= price * 0.99].sort_values('strike', ascending=False)
+                # Nur Strikes unterhalb des aktuellen Kurses (max. 98% vom Preis)
+                filtered_df = chain[chain['strike'] <= price * 0.98].sort_values('strike', ascending=False)
             else:
-            # Für Calls: Nur Strikes oberhalb des aktuellen Kurses
-            filtered_df = chain[chain['strike'] >= price * 1.01].sort_values('strike', ascending=True)
+                # Nur Strikes oberhalb des aktuellen Kurses (min. 102% vom Preis)
+                filtered_df = chain[chain['strike'] >= price * 1.02].sort_values('strike', ascending=True)
             
             st.write("---")
-            for _, opt in filtered_df.head(15).iterrows():
-                bid_val = opt['bid'] if not pd.isna(opt['bid']) else 0.0
-                d_abs = abs(opt['delta_calc'])
-                risk_emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.30 else "🔴"
-                y_pa = (bid_val / opt['strike']) * (365 / days_to_expiry) * 100
-                puffer = (abs(opt['strike'] - price) / price) * 100
-                bid_style = f"<span style='color:#2ecc71; font-weight:bold;'>{bid_val:.2f}$</span>"
-                
-                st.markdown(
-                    f"{risk_emoji} **Strike: {opt['strike']:.1f}** | Bid: {bid_style} | Delta: {d_abs:.2f} | Puffer: {puffer:.1f}% | Yield: {y_pa:.1f}% p.a.",
-                    unsafe_allow_html=True
-                )
+            # Falls keine Optionen im OTM-Bereich gefunden wurden
+            if filtered_df.empty:
+                st.warning(f"Keine attraktiven OTM {mode.upper()}s im gewählten Bereich gefunden.")
+            else:
+                for _, opt in filtered_df.head(15).iterrows():
+                    bid_val = opt['bid'] if not pd.isna(opt['bid']) and opt['bid'] > 0 else 0.05
+                    d_abs = abs(opt['delta_calc'])
+                    
+                    # Ampelsystem nach Delta (Konservativ)
+                    risk_emoji = "🟢" if d_abs < 0.15 else "🟡" if d_abs <= 0.25 else "🔴"
+                    
+                    y_pa = (bid_val / opt['strike']) * (365 / days_to_expiry) * 100
+                    puffer = (abs(opt['strike'] - price) / price) * 100
+                    
+                    # Anzeige
+                    st.markdown(
+                        f"{risk_emoji} **Strike: {opt['strike']:.1f}** | "
+                        f"Bid: **{bid_val:.2f}$** | "
+                        f"Delta: {d_abs:.2f} | "
+                        f"Puffer: {puffer:.1f}% | "
+                        f"Yield: {y_pa:.1f}% p.a.",
+                        unsafe_allow_html=True
+                    )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
