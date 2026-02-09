@@ -76,22 +76,13 @@ def get_stock_data_full(symbol):
 
 # --- UI: SIDEBAR ---
 st.sidebar.header("🛡️ Strategie-Einstellungen")
-
-# NEU: Markt-Filter
-only_etfs = st.sidebar.checkbox("Nur ETFs scannen", value=False)
-only_quality = st.sidebar.checkbox("Nur Qualitäts-Aktien", value=True)
-
-st.sidebar.markdown("---")
-otm_puffer_slider = st.sidebar.slider("Gewünschter Puffer (%)", 3, 25, 10)
+otm_puffer_slider = st.sidebar.slider("Gewünschter Puffer (%)", 3, 25, 10, help="Abstand vom Strike zum Kurs")
 min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", 0, 100, 15)
 min_stock_price, max_stock_price = st.sidebar.slider("Aktienpreis-Spanne ($)", 0, 1000, (20, 500))
 
-# NEU: RSI Schwelle für den Scan
-rsi_threshold = st.sidebar.slider("Max. RSI (für Einstieg)", 20, 70, 45)
-
 st.sidebar.markdown("---")
 only_uptrend = st.sidebar.checkbox("Nur Aufwärtstrend (SMA 200)", value=False)
-st.sidebar.info("Tipp: Nutze 'Nur ETFs' für stabilere Deltas.")
+st.sidebar.info("Tipp: Deaktiviere den Aufwärtstrend für mehr Treffer am Wochenende.")
 
 # --- DAS ULTIMATIVE MARKT-DASHBOARD (4 SPALTEN MIT DELTAS) ---
 st.markdown("## 📊 Globales Marktwetter")
@@ -148,82 +139,94 @@ if st.button("🚀 Kombi-Scan starten"):
     puffer_limit = otm_puffer_slider / 100 
     
     with st.spinner("Lade Marktliste..."):
-        # LOGIK-FIX: Wenn 'only_etfs' aktiv ist, laden wir NUR eine ETF-Liste
-        if only_etfs:
-            ticker_liste = ["SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "XLV", "XLP", "XLE", "XLI", "XLB", "XLU", "XLRE", "GDX", "EEM"]
-        else:
-            ticker_liste = get_combined_watchlist()
+        ticker_liste = get_combined_watchlist()
     
     status_text = st.empty()
     progress_bar = st.progress(0)
     all_results = []
     
     for i, symbol in enumerate(ticker_liste):
-        # Fortschrittsanzeige
-        progress_bar.progress((i + 1) / len(ticker_liste))
-        status_text.text(f"Scanne {i+1}/{len(ticker_liste)}: {symbol}...")
+        if i % 5 == 0 or i == len(ticker_liste)-1:
+            progress_bar.progress((i + 1) / len(ticker_liste))
+            status_text.text(f"Scanne {i+1}/{len(ticker_liste)}: {symbol}...")
         
         try:
-            tk = yf.Ticker(symbol)
-            
-            # Sicherheits-Check: Falls doch eine Aktie reinrutscht
-            if only_etfs:
-                info = tk.info
-                if info.get('quoteType') != 'ETF':
-                    continue
-
-            # Jetzt erst die schweren Daten laden
             res = get_stock_data_full(symbol)
-            if res[0] is None or not res[1]: 
-                continue
-            
+            if res[0] is None or not res[1]: continue
             price, dates, earn, rsi, uptrend, near_lower, atr = res
             
-            # Sidebar-Filter (Nutzt deine Einstellungen aus Bild 12 & 14)
             if not (min_stock_price <= price <= max_stock_price): continue
             if only_uptrend and not uptrend: continue
-            if rsi > rsi_threshold: continue 
-
-            # Options-Logik (Datumssuche ca. 30 Tage)
-            available_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 45]
-            target_date = available_dates[0] if available_dates else (dates[0] if dates else None)
             
+            # Datums-Logik (11-20 Tage)
+            available_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 20]
+            target_date = available_dates[-1] if available_dates else next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
             if not target_date: continue
 
+            tk = yf.Ticker(symbol)
             chain = tk.option_chain(target_date).puts
             max_strike = price * (1 - puffer_limit)
-            
-            # Nur OTM Puts filtern
             secure_options = chain[chain['strike'] <= max_strike].sort_values('strike', ascending=False)
             
             if not secure_options.empty:
                 best_opt = secure_options.iloc[0]
                 tage = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
                 
-                # Prämie & Rendite berechnen
-                bid = best_opt['bid'] if best_opt['bid'] > 0 else best_opt['lastPrice']
-                y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
-                puffer_ist = ((price - best_opt['strike']) / price) * 100
+                # --- NEUE FILTER-LOGIK GEGEN EINBUCHUNGEN ---
+                is_safe = True
                 
-                if y_pa >= min_yield_pa:
-                    all_results.append({
-                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': best_opt['strike'],
-                        'puffer': puffer_ist, 'bid': bid, 'rsi': rsi, 'uptrend': uptrend,
-                        'earn': earn, 'tage': tage, 'date': target_date
-                    })
-        except: 
-            continue
+                # 1. Earnings Blocker (21 Tage Puffer)
+                if earn:
+                    try:
+                        current_year = datetime.now().year
+                        e_date = datetime.strptime(f"{earn}{current_year}", "%d.%m.%Y")
+                        # Wenn Earnings innerhalb der nächsten (Tage + 3) liegen -> Aussortieren
+                        if datetime.now() < e_date < (datetime.now() + timedelta(days=tage + 3)):
+                            is_safe = False
+                    except: pass
 
-    # Anzeige der Ergebnisse
+                # 2. RSI Überverkauft-Schutz (Kein Put-Verkauf bei Panik)
+                if rsi < 35:
+                    is_safe = False
+
+                if is_safe:
+                    bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
+                    y_pa = (bid / best_opt['strike']) * (365 / max(1, tage)) * 100
+                    puffer_ist = ((price - best_opt['strike']) / price) * 100
+                    
+                    if y_pa >= min_yield_pa:
+                        all_results.append({
+                            'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': best_opt['strike'],
+                            'puffer': puffer_ist, 'bid': bid, 'rsi': rsi, 'uptrend': uptrend,
+                            'earn': earn, 'tage': tage, 'date': target_date
+                        })
+        except: continue
+
     all_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
     status_text.empty()
     progress_bar.empty()
     
     if not all_results:
-        st.warning("Keine Treffer gefunden. Versuche den RSI-Filter oder Puffer zu lockern.")
+        st.warning("Keine Treffer gefunden.")
     else:
-        st.success(f"Scan beendet. {len(all_results)} Chancen gefunden!")
-        # (Dein bestehender Code für die st.columns Anzeige hier...)
+        st.success(f"Scan beendet. {len(all_results)} Chancen sortiert nach Rendite identifiziert!")
+        cols = st.columns(4)
+        for idx, res in enumerate(all_results):
+            with cols[idx % 4]:
+                earn_warning = f" ⚠️ <span style='color:#e67e22; font-size:0.8em;'>ER: {res['earn']}</span>" if res['earn'] else ""
+                rsi_color = "#e74c3c" if res['rsi'] > 70 else "#2ecc71" if res['rsi'] < 40 else "#555"
+                with st.container(border=True):
+                    st.markdown(f"**{res['symbol']}** {'✅' if res['uptrend'] else '📉'}{earn_warning}", unsafe_allow_html=True)
+                    st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
+                    st.markdown(f"""
+                    <div style="font-size: 0.85em; line-height: 1.4; background-color: #f1f3f6; padding: 10px; border-radius: 8px; border-left: 5px solid #2ecc71;">
+                    <b style="color: #1e7e34; font-size: 1.1em;">Prämie: {res['bid']:.2f}$</b><br>
+                    <span style="color: #666;">({res['bid']*100:.0f}$ pro Kontrakt)</span><hr style="margin: 8px 0;">
+                    <b>Strike:</b> {res['strike']:.1f}$ ({res['puffer']:.1f}% Puffer)<br>
+                    <b>Kurs:</b> {res['price']:.2f}$ | <b>RSI:</b> <span style="color:{rsi_color}; font-weight:bold;">{res['rsi']:.0f}</span><br>
+                    <b>Termin:</b> {res['tage']} Tage
+                    </div>
+                    """, unsafe_allow_html=True)
 
 # --- SEKTION 2: SMART DEPOT-MANAGER (REPAIR VERSION) ---
 st.markdown("### 💼 Smart Depot-Manager (Aktiv)")
@@ -319,7 +322,3 @@ if t_in:
                 )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
-
-
-
-
