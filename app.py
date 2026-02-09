@@ -138,11 +138,11 @@ except:
 st.markdown("---")
 
 
-# --- SEKTION 1: KOMBI-SCAN (ULTRA-SAFE: HARTER EARNINGS-STOP) ---
+# --- SEKTION 1: KOMBI-SCAN (FINALE EARNINGS-SPERRE) ---
 st.markdown("---")
-st.header("🔍 Kombi-Scan: Ultra-Safe (Keine Trades über Earnings)")
+st.header("🔍 Kombi-Scan: Ultra-Safe (Harter Earnings-Stop)")
 
-if st.button("🚀 Safe-Scan starten", key="kombi_scan_ultra_safe"):
+if st.button("🚀 Safe-Scan starten", key="kombi_scan_final_safe"):
     puffer_limit = otm_puffer_slider / 100 
     
     with st.spinner("Prüfe Termine... Trades werden streng vor Earnings begrenzt!"):
@@ -163,105 +163,105 @@ if st.button("🚀 Safe-Scan starten", key="kombi_scan_ultra_safe"):
             
             # --- DER HARTE FILTER ---
             max_days_allowed = 24 
-            er_datum_vorhanden = False
+            er_info_text = ""
             
-            if earn and earn != "N/A":
+            # WICHTIG: Wir prüfen, ob 'earn' ein Datum enthält (z.B. "11.02.")
+            if earn and isinstance(earn, str) and "." in earn:
                 try:
-                    # Datum parsen (Annahme Format DD.MM.)
-                    current_year = datetime.now().year
-                    earn_date = datetime.strptime(f"{earn}.{current_year}", "%d.%m.%Y")
-                    days_until_earn = (earn_date - datetime.now()).days
+                    # Wir bauen das Datum korrekt zusammen (Tag.Monat.Jahr)
+                    heute = datetime.now()
+                    tag, monat = earn.split(".")[:2]
+                    er_datum = datetime(heute.year, int(monat), int(tag))
                     
-                    # Wir müssen spätestens 2 Tage VOR ER glattstellen
+                    # Falls das Datum im Januar liegt, wir aber im Dezember sind -> nächstes Jahr
+                    if er_datum < heute - timedelta(days=1):
+                        er_datum = datetime(heute.year + 1, int(monat), int(tag))
+                    
+                    days_until_earn = (er_datum - heute).days
+                    
+                    # REGEL: Exit muss 2 Tage VOR ER sein
                     max_days_allowed = days_until_earn - 2
-                    er_datum_vorhanden = True
+                    er_info_text = f"ER: {earn}"
                     
-                    # Wenn wir nicht mal 11 Tage Zeit haben bis 2 Tage vor ER -> Ticker löschen
+                    # Wenn weniger als 11 Tage Zeit bleiben bis zum Safe-Exit -> Ticker weg!
                     if max_days_allowed < 11:
                         continue 
                 except:
-                    pass
+                    er_info_text = "" # Falls Format-Fehler, keine Sperre (Fallback)
 
-            # Nur Daten wählen, die INNERHALB der Safe-Zone liegen (11 bis max_days_allowed)
+            # Suche Laufzeiten nur im "Safe-Fenster"
             valid_dates = [
                 d for d in dates 
                 if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= max_days_allowed
             ]
             
-            if not valid_dates:
-                continue # Kein sicherer Verfallstag vor den Earnings gefunden
+            if not valid_dates: continue
 
-            # --- BESTE OPTION IM SAFE-FENSTER SUCHEN ---
             tk = yf.Ticker(symbol)
-            best_opt_for_ticker = None
-            max_yield_for_ticker = -1
+            best_opt = None
+            max_y = -1
             
             for d_str in valid_dates:
                 chain = tk.option_chain(d_str).puts
-                max_strike = price * (1 - puffer_limit)
-                opts = chain[chain['strike'] <= max_strike].sort_values('strike', ascending=False)
+                m_strike = price * (1 - puffer_limit)
+                opts = chain[chain['strike'] <= m_strike].sort_values('strike', ascending=False)
                 
                 if not opts.empty:
                     o = opts.iloc[0]
-                    d_days = (datetime.strptime(d_str, '%Y-%m-%d') - datetime.now()).days
+                    d_days = (datetime.strptime(d_str, '%Y-%m-%d') - heute).days
                     d_bid = o['bid'] if o['bid'] > 0 else o['lastPrice']
                     
-                    # Mondpreis-Filter (Split-Schutz)
-                    if d_bid > (price * 0.04): continue 
+                    if d_bid > (price * 0.04): continue # Split-Schutz
                     
-                    d_yield = (d_bid / o['strike']) * (365 / max(1, d_days)) * 100
-                    
-                    if d_yield > max_yield_for_ticker:
-                        max_yield_for_ticker = d_yield
-                        best_opt_for_ticker = {
-                            'opt': o, 'days': d_days, 'yield': d_yield, 'date': d_str
-                        }
+                    curr_y = (d_bid / o['strike']) * (365 / max(1, d_days)) * 100
+                    if curr_y > max_y:
+                        max_y = curr_y
+                        best_opt = {'o': o, 'days': d_days, 'date': d_str}
 
-            if best_opt_for_ticker:
-                # Sterne-Rating
+            if best_opt:
+                # Rating
                 score = 0
-                if best_opt_for_ticker['opt']['strike'] < lower_band: score += 1
+                if best_opt['o']['strike'] < lower_band: score += 1
                 if 35 <= rsi <= 60: score += 1
                 if uptrend: score += 1
                 
                 all_results.append({
-                    'symbol': symbol, 'price': price, 'y_pa': best_opt_for_ticker['yield'], 
-                    'strike': best_opt_for_ticker['opt']['strike'],
-                    'puffer': ((price - best_opt_for_ticker['opt']['strike']) / price) * 100,
-                    'bid': best_opt_for_ticker['opt']['bid'] if best_opt_for_ticker['opt']['bid'] > 0 else best_opt_for_ticker['opt']['lastPrice'],
-                    'rsi': rsi, 'earn': earn if er_datum_vorhanden else "", 'tage': best_opt_for_ticker['days'], 
+                    'symbol': symbol, 'price': price, 'y_pa': max_y, 
+                    'strike': best_opt['o']['strike'],
+                    'puffer': ((price - best_opt['o']['strike']) / price) * 100,
+                    'bid': best_opt['o']['bid'] if best_opt['o']['bid'] > 0 else best_opt['o']['lastPrice'],
+                    'rsi': rsi, 'earn': er_info_text, 'tage': best_opt['days'], 
                     'score': score, 'stars': "⭐" * score if score > 0 else "⚪"
                 })
         except: continue
 
+    # --- ANZEIGE ---
     status_text.empty()
     progress_bar.empty()
 
-    # --- ANZEIGE ---
     if not all_results:
-        st.warning("Keine Treffer gefunden, die VOR den nächsten Earnings enden.")
+        st.warning("Keine sicheren Trades vor Earnings gefunden.")
     else:
-        all_results = sorted(all_results, key=lambda x: (x.get('score', 0), x.get('y_pa', 0)), reverse=True)
-        st.success(f"Scan fertig: {len(all_results)} Trades mit Safe-Exit vor Earnings gefunden!")
+        all_results = sorted(all_results, key=lambda x: (x['score'], x['y_pa']), reverse=True)
+        st.success(f"Scan fertig: {len(all_results)} 'Safe-Exit' Trades gefunden!")
         
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
-                # Visualisierung des Safe-Exits
-                earn_info = f"<div style='color:#27ae60; font-weight:bold; font-size:0.75em;'>🛡️ Exit vor ER ({res['earn']})</div>" if res['earn'] else "<div style='color:#7f8c8d; font-size:0.75em;'>Keine ER in Sicht</div>"
-                rsi_color = "#e74c3c" if res['rsi'] > 70 else "#2ecc71" if res['rsi'] < 40 else "#555"
+                # Visualisierung
+                safe_label = f"<div style='color:#27ae60; font-weight:bold; font-size:0.75em;'>🛡️ Exit vor {res['earn']}</div>" if res['earn'] else "<div style='color:#7f8c8d; font-size:0.75em;'>Keine ER im Zeitfenster</div>"
+                rsi_c = "#e74c3c" if res['rsi'] > 70 else "#2ecc71" if res['rsi'] < 40 else "#555"
                 
                 with st.container(border=True):
-                    st.markdown(f"**{res['symbol']}** {res.get('stars', '⚪')}{earn_info}", unsafe_allow_html=True)
+                    st.markdown(f"**{res['symbol']}** {res['stars']}{safe_label}", unsafe_allow_html=True)
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
-                    
                     st.markdown(f"""
-                    <div style="font-size: 0.85em; line-height: 1.5; background-color: #f0fff0; padding: 10px; border-radius: 8px; border-left: 5px solid #27ae60;">
+                    <div style="font-size: 0.85em; background:#f0fff0; padding:10px; border-radius:8px; border-left:5px solid #27ae60;">
                     Kurs: <b>{res['price']:.2f}$</b> | Strike: <b>{res['strike']:.1f}$</b><br>
-                    <hr style="margin: 5px 0; border-top:1px solid #c8e6c9;">
-                    <b>Laufzeit: {res['tage']} Tage</b> (Safe)<br>
+                    <hr style="margin:5px 0; border-top:1px solid #c8e6c9;">
+                    <b>Laufzeit: {res['tage']} Tage (Safe)</b><br>
                     Puffer: {res['puffer']:.1f}% | Bid: {res['bid']:.2f}$<br>
-                    RSI: <span style="color:{rsi_color}; font-weight:bold;">{res['rsi']:.0f}</span>
+                    RSI: <span style="color:{rsi_c}; font-weight:bold;">{res['rsi']:.0f}</span>
                     </div>
                     """, unsafe_allow_html=True)
                     
@@ -373,6 +373,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
