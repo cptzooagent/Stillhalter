@@ -87,6 +87,56 @@ with st.sidebar:
     only_uptrend = st.checkbox("Nur Aufwärtstrend (SMA 200)", value=False, key="trend_sid")
     st.info("Tipp: Deaktiviere den Aufwärtstrend für mehr Treffer am Wochenende.")
 
+# --- DAS ULTIMATIVE MARKT-DASHBOARD (4 SPALTEN MIT DELTAS) ---
+st.markdown("## 📊 Globales Marktwetter")
+m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+
+# 1. Stock Fear & Greed (Proxy via SPY RSI)
+try:
+    spy_hist = yf.Ticker("SPY").history(period="30d")
+    spy_rsi_series = calculate_rsi(spy_hist['Close'])
+    rsi_val = spy_rsi_series.iloc[-1]
+    rsi_prev = spy_rsi_series.iloc[-2]
+    rsi_delta = rsi_val - rsi_prev
+    fng_text = "Neutral" if 40 < rsi_val < 60 else "Greed" if rsi_val >= 60 else "Fear"
+    m_col1.metric("Stock Sentiment (RSI)", f"{rsi_val:.0f}/100", f"{rsi_delta:+.1f} ({fng_text})")
+except:
+    m_col1.error("Stock F&G n.a.")
+
+# 2. Crypto Fear & Greed (API)
+try:
+    import requests
+    fg_data = requests.get("https://api.alternative.me/fng/").json()
+    fg_crypto = int(fg_data['data'][0]['value'])
+    fg_c_text = fg_data['data'][0]['value_classification']
+    # Da die API kein Delta liefert, zeigen wir den Text als Delta-Ersatz
+    m_col2.metric("Crypto Fear & Greed", f"{fg_crypto}/100", fg_c_text)
+except:
+    m_col2.error("Crypto F&G n.a.")
+
+# 3. VIX (Angst-Index) mit Änderung
+try:
+    vix_data = yf.Ticker("^VIX").history(period="2d")
+    vix_val = vix_data['Close'].iloc[-1]
+    vix_prev = vix_data['Close'].iloc[-2]
+    v_delta = vix_val - vix_prev
+    # delta_color="inverse": VIX steigt = Rot, VIX sinkt = Grün
+    m_col3.metric("VIX (Angst-Index)", f"{vix_val:.2f}", f"{v_delta:+.2f}", delta_color="inverse")
+except:
+    m_col3.error("VIX n.a.")
+
+# 4. Bitcoin (Risk-On) mit Änderung
+try:
+    btc_data = yf.Ticker("BTC-USD").history(period="2d")
+    btc_price = btc_data['Close'].iloc[-1]
+    btc_prev = btc_data['Close'].iloc[-2]
+    btc_delta = btc_price - btc_prev
+    m_col4.metric("Bitcoin (Risk-On)", f"{btc_price:,.0f} $", f"{btc_delta:+.2f} $")
+except:
+    m_col4.error("BTC n.a.")
+
+st.markdown("---")
+
 # --- SEKTION 1: KOMBI-SCAN ---
 # Durch key="main_scan_btn" wird der DuplicateElementId Fehler aus Screenshot 3 verhindert
 if st.button("🚀 Kombi-Scan starten", key="main_scan_btn"):
@@ -188,55 +238,6 @@ if st.button("🚀 Kombi-Scan starten", key="main_scan_btn"):
                     </div>
                     """, unsafe_allow_html=True)
                     
-# --- DAS ULTIMATIVE MARKT-DASHBOARD (4 SPALTEN MIT DELTAS) ---
-st.markdown("## 📊 Globales Marktwetter")
-m_col1, m_col2, m_col3, m_col4 = st.columns(4)
-
-# 1. Stock Fear & Greed (Proxy via SPY RSI)
-try:
-    spy_hist = yf.Ticker("SPY").history(period="30d")
-    spy_rsi_series = calculate_rsi(spy_hist['Close'])
-    rsi_val = spy_rsi_series.iloc[-1]
-    rsi_prev = spy_rsi_series.iloc[-2]
-    rsi_delta = rsi_val - rsi_prev
-    fng_text = "Neutral" if 40 < rsi_val < 60 else "Greed" if rsi_val >= 60 else "Fear"
-    m_col1.metric("Stock Sentiment (RSI)", f"{rsi_val:.0f}/100", f"{rsi_delta:+.1f} ({fng_text})")
-except:
-    m_col1.error("Stock F&G n.a.")
-
-# 2. Crypto Fear & Greed (API)
-try:
-    import requests
-    fg_data = requests.get("https://api.alternative.me/fng/").json()
-    fg_crypto = int(fg_data['data'][0]['value'])
-    fg_c_text = fg_data['data'][0]['value_classification']
-    # Da die API kein Delta liefert, zeigen wir den Text als Delta-Ersatz
-    m_col2.metric("Crypto Fear & Greed", f"{fg_crypto}/100", fg_c_text)
-except:
-    m_col2.error("Crypto F&G n.a.")
-
-# 3. VIX (Angst-Index) mit Änderung
-try:
-    vix_data = yf.Ticker("^VIX").history(period="2d")
-    vix_val = vix_data['Close'].iloc[-1]
-    vix_prev = vix_data['Close'].iloc[-2]
-    v_delta = vix_val - vix_prev
-    # delta_color="inverse": VIX steigt = Rot, VIX sinkt = Grün
-    m_col3.metric("VIX (Angst-Index)", f"{vix_val:.2f}", f"{v_delta:+.2f}", delta_color="inverse")
-except:
-    m_col3.error("VIX n.a.")
-
-# 4. Bitcoin (Risk-On) mit Änderung
-try:
-    btc_data = yf.Ticker("BTC-USD").history(period="2d")
-    btc_price = btc_data['Close'].iloc[-1]
-    btc_prev = btc_data['Close'].iloc[-2]
-    btc_delta = btc_price - btc_prev
-    m_col4.metric("Bitcoin (Risk-On)", f"{btc_price:,.0f} $", f"{btc_delta:+.2f} $")
-except:
-    m_col4.error("BTC n.a.")
-
-st.markdown("---")
 
 # --- SEKTION 1: KOMBI-SCAN (OPTIMIERT MIT SAFETY-RANKING) ---
 if st.button("🚀 Kombi-Scan starten"):
@@ -469,6 +470,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
