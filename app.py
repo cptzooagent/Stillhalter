@@ -205,38 +205,41 @@ if st.button("🚀 Kombi-Scan starten", key="kombi_scan_math"):
                 })
         except: continue
 
-    # --- ANZEIGE-LOGIK (MIT AKTUELLEM PREIS) ---
+    # --- FEHLERFREIE ANZEIGE-LOGIK ---
     if not all_results:
-        st.warning("Keine Treffer gefunden.")
+        st.warning("Keine Treffer gefunden, die den Sicherheitskriterien entsprechen.")
     else:
         # Sortierung: Erst nach Safety-Score (Sterne), dann nach Rendite
-        all_results = sorted(all_results, key=lambda x: (x['score'], x['y_pa']), reverse=True)
+        all_results = sorted(all_results, key=lambda x: (x.get('score', 0), x.get('y_pa', 0)), reverse=True)
         
         st.success(f"Scan beendet. {len(all_results)} Chancen sortiert!")
         
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
-                # Earnings-Warnung & RSI-Farbe
-                earn_warning = f" ⚠️ <span style='color:#e67e22; font-size:0.8em;'>ER: {res['earn']}</span>" if res['earn'] else ""
-                rsi_color = "#e74c3c" if res['rsi'] > 70 else "#2ecc71" if res['rsi'] < 40 else "#555"
+                # Sicherer Zugriff auf Earnings & RSI
+                val_earn = res.get('earn', "")
+                val_rsi = res.get('rsi', 50)
+                
+                earn_warning = f" ⚠️ <span style='color:#e67e22; font-size:0.8em;'>ER: {val_earn}</span>" if val_earn else ""
+                rsi_color = "#e74c3c" if val_rsi > 70 else "#2ecc71" if val_rsi < 40 else "#555"
                 
                 with st.container(border=True):
-                    # Titel-Zeile
-                    st.markdown(f"**{res['symbol']}** {res['stars']} {earn_warning}", unsafe_allow_html=True)
+                    # Titel-Zeile mit Sternen
+                    st.markdown(f"**{res['symbol']}** {res.get('stars', '⚪')} {earn_warning}", unsafe_allow_html=True)
                     
                     # Rendite als Hauptzahl
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
                     
-                    # Preis-Details (Hier ist die Neuerung!)
+                    # Preis-Details (Jetzt mit sicherem Zugriff)
                     st.markdown(f"""
                     <div style="font-size: 0.85em; line-height: 1.5; background-color: #f8f9fa; padding: 10px; border-radius: 8px; border-left: 5px solid #3498db;">
-                    <span style="color: #555;">Aktueller Kurs:</span> <b style="font-size: 1.1em;">{res['price']:.2f}$</b><br>
-                    <span style="color: #555;">Gewählter Strike:</span> <b style="color: #2c3e50;">{res['strike']:.1f}$</b><br>
+                    <span style="color: #555;">Aktueller Kurs:</span> <b style="font-size: 1.1em;">{res.get('price', 0):.2f}$</b><br>
+                    <span style="color: #555;">Gewählter Strike:</span> <b style="color: #2c3e50;">{res.get('strike', 0):.1f}$</b><br>
                     <hr style="margin: 5px 0;">
-                    <b>Puffer:</b> {res['puffer']:.1f}% | <b>Tage:</b> {res['tage']}<br>
-                    <b>Prämie:</b> {res['bid']:.2f}$ ({res['bid']*100:.0f}$ pro Lot)<br>
-                    <b>RSI:</b> <span style="color:{rsi_color}; font-weight:bold;">{res['rsi']:.0f}</span>
+                    <b>Puffer:</b> {res.get('puffer', 0):.1f}% | <b>Tage:</b> {res.get('tage', 0)}<br>
+                    <b>Prämie:</b> {res.get('bid', 0):.2f}$ ({res.get('bid', 0)*100:.0f}$ pro Lot)<br>
+                    <b>RSI:</b> <span style="color:{rsi_color}; font-weight:bold;">{val_rsi:.0f}</span>
                     </div>
                     """, unsafe_allow_html=True)
                     
@@ -348,6 +351,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
