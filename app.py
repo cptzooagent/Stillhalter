@@ -266,7 +266,7 @@ for i, item in enumerate(depot_data):
                 
                 if earn: st.warning(f"📅 ER: {earn}")
 
-# --- SEKTION 3: EINZEL-CHECK (MIT SHORT-PUT-AMPEL & EARNINGS-WARNUNG) ---
+# --- SEKTION 3: EINZEL-CHECK (REPARIERT: KLAMMERN & BID-PREISE) ---
 st.markdown("---")
 st.subheader("🔍 Einzel-Check & Option-Chain")
 c1, c2 = st.columns([1, 2])
@@ -276,40 +276,32 @@ with c2: t_in = st.text_input("Ticker Symbol", value="HOOD").upper()
 if t_in:
     ticker_symbol = t_in.strip().upper()
     with st.spinner(f"Analysiere {ticker_symbol}..."):
-        # Wir holen die Daten (Preis, Optionen, Earnings, RSI, Trend etc.)
         price, dates, earn, rsi_now, uptrend, near_lower, atr = get_stock_data_full(ticker_symbol)
-        
-        # Für die Ampel brauchen wir den RSI von gestern zum Vergleich
         tk = yf.Ticker(ticker_symbol)
         hist_small = tk.history(period="5d")
         
-        if price and not hist_small.empty:
+        if price is not None and not hist_small.empty:
             rsi_series = calculate_rsi(hist_small['Close'])
             rsi_prev = rsi_series.iloc[-2] if len(rsi_series) > 1 else rsi_now
             rsi_rising = rsi_now > rsi_prev
 
-            # --- 1. EARNINGS-CHECK (Extrem wichtig für Short Puts!) ---
+            # 1. Earnings-Check
             if earn:
                 st.warning(f"⚠️ **Earnings am {earn}**")
-                # Heute ist der 09.02.2026. Wenn ER heute oder morgen ist -> Stopp-Signal
                 if "09.02" in earn or "10.02" in earn:
-                    st.error("🛑 ACHTUNG: Earnings stehen unmittelbar bevor! Short Puts jetzt extrem riskant (Gambling).")
+                    st.error("🛑 ACHTUNG: Earnings stehen unmittelbar bevor! Short Puts jetzt extrem riskant.")
 
-            # --- 2. DIE SHORT-PUT AMPEL ---
+            # 2. Strategie-Ampel
             st.markdown("#### 🚥 Strategie-Ampel")
             a1, a2, a3 = st.columns(3)
-            
             if mode == "put":
                 if rsi_now < 30:
                     if rsi_rising:
                         a1.error("🟡 BODENBILDUNG")
-                        st.info("RSI dreht nach oben (Hook). Volatilität noch hoch – Einstieg wird interessant!")
                     else:
                         a1.error("🔴 MESSER FÄLLT")
-                        st.warning(f"RSI ({rsi_now:.1f}) sinkt weiter. Finger weg vom Short Put!")
                 elif 30 <= rsi_now <= 45 and rsi_rising:
                     a1.success("🟢 GO: SHORT PUT")
-                    st.write("Ideales Szenario: Aktie erholt sich. Risiko sinkt, Prämie noch gut.")
                 else:
                     a1.info("⚪ NEUTRAL")
             else:
@@ -318,61 +310,41 @@ if t_in:
             a2.metric("Aktueller RSI", f"{rsi_now:.1f}", f"{rsi_now - rsi_prev:+.1f}")
             a3.metric("Kurs", f"{price:.2f}$")
 
-            # --- 3. OPTION-CHAIN ---
+            # 3. Option-Chain mit Bid-Fix
             if not dates:
                 st.warning("Keine Optionen verfügbar.")
             else:
-                d_sel = st.selectbox("Laufzeit wählen (Empfehlung: 30-45 Tage)", dates)
+                d_sel = st.selectbox("Laufzeit wählen", dates)
                 try:
-                    chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
+                    opt_obj = tk.option_chain(d_sel)
+                    chain = opt_obj.puts if mode == "put" else opt_obj.calls
                     expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
                     days_to_expiry = max(1, (expiry_dt - datetime.now()).days)
-                    T = days_to_expiry / 365
-                    
-                    chain['delta_calc'] = chain.apply(lambda opt: calculate_bsm_delta(
-                        price, opt['strike'], T, (opt['impliedVolatility'] or 0.4), option_type=mode
-                    ), axis=1)
-
-                    # Filtern für bessere Übersicht
-                    if mode == "put":
-                        filtered_df = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
-                    else:
-                        filtered_df = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
+                    T_val = days_to_expiry / 365
                     
                     st.write("---")
-                    for _, opt in filtered_df.head(10).iterrows():
-                        # --- FIX FÜR NULL-WERTE ---
-                        # Wir nehmen den Bid, falls vorhanden, sonst den Last Price
-                        current_bid = opt['bid'] if opt['bid'] > 0 else opt['lastPrice']
+                    # Filtern für Übersicht
+                    if mode == "put":
+                        df_view = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
+                    else:
+                        df_view = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
+                    
+                    for _, opt in df_view.head(10).iterrows():
+                        # FIX: Nutze lastPrice wenn Bid 0 ist (Wochenende/Pre-Market)
+                        display_bid = opt['bid'] if opt['bid'] > 0 else opt['lastPrice']
                         
-                        # Delta-Korrektur: Falls BSM-Berechnung fehlschlägt, nehmen wir 0.4 als Platzhalter
-                        d_abs = abs(opt['delta_calc']) if opt['delta_calc'] != 0 else 0.4
+                        # Delta neu berechnen (BSM)
+                        iv = opt['impliedVolatility'] if opt['impliedVolatility'] and opt['impliedVolatility'] > 0 else 0.4
+                        calc_delta = calculate_bsm_delta(price, opt['strike'], T_val, iv, option_type=mode)
+                        d_abs = abs(calc_delta)
                         
                         risk_emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.30 else "🔴"
-                        
-                        # Yield-Berechnung nur wenn Preis > 0
-                        if current_bid > 0:
-                            y_pa = (current_bid / opt['strike']) * (365 / days_to_expiry) * 100
-                        else:
-                            y_pa = 0.0
-                            
+                        y_pa = (display_bid / opt['strike']) * (365 / days_to_expiry) * 100 if display_bid > 0 else 0
                         puffer = (abs(opt['strike'] - price) / price) * 100
                         
-                        # Anzeige anpassen
-                        bid_display = f"{current_bid:.2f}$" if current_bid > 0 else "n.a."
-                        
                         st.markdown(
-                            f"{risk_emoji} **Strike: {opt['strike']:.1f}** | Bid: {bid_display} | Delta: {d_abs:.2f} | Puffer: {puffer:.1f}% | Yield: {y_pa:.1f}% p.a.",
+                            f"{risk_emoji} **Strike: {opt['strike']:.1f}** | Bid (Last): {display_bid:.2f}$ | Delta: {d_abs:.2f} | Puffer: {puffer:.1f}% | Yield: {y_pa:.1f}% p.a.",
                             unsafe_allow_html=True
                         )
-                        )
                 except Exception as e:
-                    st.error(f"Datenfehler: {e}")
-
-
-
-
-
-
-
-
+                    st.error(f"Fehler in Chain: {e}")
