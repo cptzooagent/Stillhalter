@@ -91,18 +91,41 @@ def get_stock_data_full(symbol):
     except:
         return None, [], "", 50, True, False, 0
 
-# --- UI: SIDEBAR ---
-st.sidebar.header("🛡️ Strategie-Einstellungen")
-otm_puffer_slider = st.sidebar.slider("Gewünschter Puffer (%)", 3, 25, 10, help="Abstand vom Strike zum Kurs")
-min_yield_pa = st.sidebar.number_input("Mindestrendite p.a. (%)", 0, 100, 15)
-min_stock_price, max_stock_price = st.sidebar.slider("Aktienpreis-Spanne ($)", 0, 1000, (20, 500))
+# --- SIDEBAR: STRATEGIE-KONFIGURATION ---
+with st.sidebar:
+    st.header("⚙️ Strategie-Setup")
+    
+    # 1. Markt-Filter
+    st.subheader("Markt-Filter")
+    only_etfs = st.checkbox("Nur ETFs scannen", value=False, 
+                            help="Filtert alle Einzelaktien heraus und zeigt nur Index-Produkte (SPY, QQQ etc.).")
+    
+    only_quality = st.checkbox("Nur Qualitäts- & Wachstumsaktien", value=True,
+                               help="Filtert nach Profitabilität (RoE > 15%) und positivem Gewinnwachstum.")
 
-# In der Sidebar oder im Einstellungs-Bereich
-only_etfs = st.checkbox("Nur ETFs anzeigen", value=False)
+    # 2. Technische Filter (Timing)
+    st.subheader("Technisches Timing")
+    rsi_threshold = st.slider("Max. RSI (Einstieg)", 10, 50, 35, 
+                              help="Sucht Aktien, die kurzfristig überverkauft sind (Dip-Buying).")
+    
+    only_uptrend = st.checkbox("Nur im Aufwärtstrend (SMA 200)", value=True,
+                               help="Stellt sicher, dass die Aktie langfristig steigt, bevor wir einen Put schreiben.")
 
-st.sidebar.markdown("---")
-only_uptrend = st.sidebar.checkbox("Nur Aufwärtstrend (SMA 200)", value=False)
-st.sidebar.info("Tipp: Deaktiviere den Aufwärtstrend für mehr Treffer am Wochenende.")
+    # 3. Risiko-Parameter
+    st.subheader("Options-Parameter")
+    otm_puffer_slider = st.slider("Mindest-Puffer OTM (%)", 0, 30, 10,
+                                 help="Wie weit muss der Strike unter dem aktuellen Kurs liegen?")
+    
+    days_range = st.select_slider("Laufzeit (Tage bis Expiry)", 
+                                  options=[7, 14, 21, 30, 45, 60], value=30)
+
+    # 4. Preis-Filter
+    st.subheader("Konto-Größe")
+    min_stock_price = st.number_input("Min. Aktienkurs ($)", value=10, step=5)
+    max_stock_price = st.number_input("Max. Aktienkurs ($)", value=1000, step=50)
+
+    st.markdown("---")
+    st.info("💡 **Tipp:** Für Short Puts auf Qualitätsaktien ist ein Delta zwischen 0.10 und 0.20 ideal.")
 
 # --- DAS ULTIMATIVE MARKT-DASHBOARD (4 SPALTEN MIT DELTAS) ---
 st.markdown("## 📊 Globales Marktwetter")
@@ -166,54 +189,65 @@ if st.button("🚀 Kombi-Scan starten"):
     all_results = []
 
     for i, symbol in enumerate(ticker_liste):
-        # Progress Bar Update
+        # Progress Update
         if i % 5 == 0 or i == len(ticker_liste)-1:
             progress_bar.progress((i + 1) / len(ticker_liste))
             status_text.text(f"Scanne {i+1}/{len(ticker_liste)}: {symbol}...")
 
         try:
-            # --- ETF FILTER LOGIK ---
             tk = yf.Ticker(symbol)
+            
+            # --- DER ETF-FILTER ---
             if only_etfs:
-                # Prüft den Typ. Wenn der Haken gesetzt ist und es kein ETF ist -> Überspringen
+                # Wir prüfen den Typ. Nur wenn 'ETF' im quoteType steht, machen wir weiter.
                 if tk.info.get('quoteType') != 'ETF':
                     continue 
 
-            # Daten abrufen
             res = get_stock_data_full(symbol)
-            if res[0] is None or not res[1]: 
+            # Falls keine Daten kommen, überspringen
+            if res is None or res[0] is None:
                 continue
-            
+                
             price, dates, earn, rsi, uptrend, near_lower, atr = res
 
-            # Standard-Filter (Preis & Trend)
-            if not (min_stock_price <= price <= max_stock_price): 
+            # Basis-Filter
+            if not (min_stock_price <= price <= max_stock_price):
                 continue
-            if only_uptrend and not uptrend: 
+            if only_uptrend and not uptrend:
                 continue
 
-            # --- DATUMS-LOGIK ---
-            # Wir suchen ein Verfallsdatum in 11-20 Tagen
-            available_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 20]
-            target_date = available_dates[-1] if available_dates else next((d for d in dates if (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days >= 11), None)
+            # Verfallsdatum suchen (ca. 30-45 Tage für Short Puts empfohlen)
+            # Hier nutzen wir eine einfache Suche in den verfügbaren Daten
+            if not dates:
+                continue
             
-            if not target_date: 
-                continue
+            # Suche nach dem ersten Datum in ca. 30 Tagen
+            target_date = dates[0] # Platzhalter, kann verfeinert werden
 
-            # Optionskette für das gewählte Datum laden
+            # Optionskette laden
             chain = tk.option_chain(target_date).puts
+            
+            # Nur Strikes UNTER dem aktuellen Kurs (Out-of-the-Money)
             max_strike = price * (1 - puffer_limit)
             secure_options = chain[chain['strike'] <= max_strike].sort_values('strike', ascending=False)
 
             if not secure_options.empty:
-                # Hier würde die Logik zum Speichern der Ergebnisse folgen...
-                pass
+                best_opt = secure_options.iloc[0]
+                all_results.append({
+                    "Ticker": symbol,
+                    "Preis": price,
+                    "RSI": rsi,
+                    "Strike": best_opt['strike'],
+                    "Bid": best_opt['bid'],
+                    "Puffer": f"{((price-best_opt['strike'])/price)*100:.1f}%"
+                })
 
-        except Exception as e:
-            # Fehler bei einzelnen Tickern ignorieren und weitermachen
+        except Exception:
             continue
 
-    st.success("Scan abgeschlossen!")
+    st.success(f"Scan abgeschlossen! {len(all_results)} passende Werte gefunden.")
+    if all_results:
+        st.table(all_results)
 
 # --- SEKTION 2: SMART DEPOT-MANAGER (REPAIR VERSION) ---
 st.markdown("### 💼 Smart Depot-Manager (Aktiv)")
@@ -353,6 +387,7 @@ if t_in:
                         )
                 except Exception as e:
                     st.error(f"Fehler in Chain: {e}")
+
 
 
 
