@@ -302,10 +302,13 @@ if t_in:
                 price, opt['strike'], T, (opt['impliedVolatility'] if opt['impliedVolatility'] else 0.4), option_type=mode
             ), axis=1)
 
+            # --- OPTIMIERTER FILTER IM EINZEL-CHECK ---
             if mode == "put":
-                filtered_df = chain[chain['strike'] <= price * 1.05].sort_values('strike', ascending=False)
+            # Nur Strikes unterhalb des aktuellen Kurses (max. 99% des Preises)
+            filtered_df = chain[chain['strike'] <= price * 0.99].sort_values('strike', ascending=False)
             else:
-                filtered_df = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
+            # Für Calls: Nur Strikes oberhalb des aktuellen Kurses
+            filtered_df = chain[chain['strike'] >= price * 1.01].sort_values('strike', ascending=True)
             
             st.write("---")
             for _, opt in filtered_df.head(15).iterrows():
@@ -322,3 +325,4 @@ if t_in:
                 )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
