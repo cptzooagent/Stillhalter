@@ -11,28 +11,24 @@ st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 # --- 1. MATHE: DELTA-BERECHNUNG ---
 
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
-    # Sicherheitsnetz für die Volatilität (IV)
-    # Wenn IV 0 ist, kann man kein Delta berechnen -> wir nehmen 40% Standard
-    if sigma is None or sigma < 0.01:
-        sigma = 0.4 
-    
-    # Sicherheitsnetz für die Zeit
-    # Wenn T (Jahre) zu klein ist, crasht die Formel -> wir setzen ein Minimum von 1 Tag
+    # Sicherheits-Check für Volatilität (IV)
+    # Yahoo liefert oft 0.5 (50%) oder 50.0 (50%). Wir normalisieren das.
+    if sigma is None or sigma == 0:
+        sigma = 0.4
+    if sigma > 5: # Wenn IV als 40.0 statt 0.4 kommt
+        sigma = sigma / 100
+        
+    # Sicherheits-Check für Zeit (T)
     if T <= 0:
-        T = 1/365
+        T = 1/365 # Mindestens 1 Tag Restlaufzeit für die Berechnung
 
     try:
-        # Die d1-Formel nach Black-Scholes
         d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-        
         if option_type == 'call':
-            delta_val = norm.cdf(d1)
+            return float(norm.cdf(d1))
         else:
-            # Für Puts ist das Delta negativ
-            delta_val = norm.cdf(d1) - 1
-            
-        return float(delta_val)
-    except Exception:
+            return float(norm.cdf(d1) - 1)
+    except:
         return 0.0
 
 def calculate_rsi(data, window=14):
@@ -351,37 +347,36 @@ if t_in:
                         df_view = chain[chain['strike'] >= price * 0.95].sort_values('strike', ascending=True)
                     
                     for _, opt in df_view.head(10).iterrows():
-                        # Falls Bid 0 ist (Börse zu), nimm den letzten Preis
+                        # Preis-Fix für Wochenende
                         display_bid = opt['bid'] if opt['bid'] > 0 else opt['lastPrice']
                         
-                        # In der for-Schleife der Option-Chain:
-                        iv_val = opt['impliedVolatility']
-
-                        # WICHTIG: Falls die IV über 2.0 liegt (z.B. 40.0%), dividieren wir durch 100
-                        # Yahoo liefert IV oft unterschiedlich aus.
-                        if iv_val > 5.0: 
-                        iv_val = iv_val / 100
-
+                        # IV-Fix: Wir stellen sicher, dass iv_val eine kleine Dezimalzahl ist
+                        iv_val = opt['impliedVolatility'] if opt['impliedVolatility'] else 0.4
+                        
                         # Delta berechnen
                         calc_delta = calculate_bsm_delta(price, opt['strike'], T_val, iv_val, option_type=mode)
                         d_abs = abs(calc_delta)
                         
-                        # Ampel-Logik
-                        risk_emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.30 else "🔴"
+                        # Ampel-Logik (Sorgt für die bunten Punkte)
+                        risk_emoji = "🟢" if d_abs < 0.16 else "🟡" if d_abs <= 0.35 else "🔴"
                         
-                        # Rendite-Check
+                        # Puffer berechnen (Fehler-Fix für Bild 2)
+                        puffer = (abs(opt['strike'] - price) / price) * 100
+                        
+                        # Rendite p.a.
                         y_pa = (display_bid / opt['strike']) * (365 / days_to_expiry) * 100 if display_bid > 0 else 0
                         
                         st.markdown(
                             f"{risk_emoji} **Strike: {opt['strike']:.1f}** | "
-                            f"Bid: {display_bid:.2f}$ | "
+                            f"Bid (Last): {display_bid:.2f}$ | "
                             f"Delta: {d_abs:.2f} | "
+                            f"Puffer: {puffer:.1f}% | "
                             f"Yield: {y_pa:.1f}% p.a.",
                             unsafe_allow_html=True
-                        
                         )
                 except Exception as e:
                     st.error(f"Fehler in Chain: {e}")
+
 
 
 
