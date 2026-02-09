@@ -138,7 +138,7 @@ except:
 st.markdown("---")
 
 
-# --- SEKTION 1: KOMBI-SCAN (KOMPLETTBLOCK) ---
+# --- SEKTION 1: KOMBI-SCAN (VERSION MIT MATHE-CHECK) ---
 if st.button("🚀 Kombi-Scan starten", key="kombi_scan_main"):
     puffer_limit = otm_puffer_slider / 100 
     
@@ -149,7 +149,6 @@ if st.button("🚀 Kombi-Scan starten", key="kombi_scan_main"):
     progress_bar = st.progress(0)
     all_results = []
     
-    # --- 1. SCHLEIFE: DATEN SAMMELN ---
     for i, symbol in enumerate(ticker_liste):
         if i % 5 == 0 or i == len(ticker_liste)-1:
             progress_bar.progress((i + 1) / len(ticker_liste))
@@ -176,7 +175,15 @@ if st.button("🚀 Kombi-Scan starten", key="kombi_scan_main"):
                 best_opt = secure_options.iloc[0]
                 tage = max(1, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days)
                 
-                # Sterne-Rating Logik
+                # --- MATHE-CHECK FÜR REALISTISCHE PRÄMIE ---
+                market_bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
+                
+                # Plausibilitäts-Check: Prämie darf nicht > 5% des Kurswertes sein für 2 Wochen
+                # Das fängt Fehler wie bei DHI ab.
+                max_allowed_premium = price * 0.05 
+                final_premium = min(market_bid, max_allowed_premium)
+                
+                # Sterne-Rating
                 safety_score = 0
                 if best_opt['strike'] < lower_band: safety_score += 1
                 if 35 <= rsi <= 55: safety_score += 1
@@ -184,26 +191,27 @@ if st.button("🚀 Kombi-Scan starten", key="kombi_scan_main"):
 
                 stars = "⭐" * safety_score if safety_score > 0 else "⚪"
                 
-                bid = best_opt['bid'] if best_opt['bid'] > 0 else (best_opt['lastPrice'] if best_opt['lastPrice'] > 0 else 0.05)
-                y_pa = (bid / best_opt['strike']) * (365 / tage) * 100
+                # Rendite mit der validierten Prämie berechnen
+                y_pa = (final_premium / best_opt['strike']) * (365 / tage) * 100
                 puffer_ist = ((price - best_opt['strike']) / price) * 100
                 
                 if y_pa >= min_yield_pa:
                     all_results.append({
                         'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': best_opt['strike'],
-                        'puffer': puffer_ist, 'bid': bid, 'rsi': rsi, 'uptrend': uptrend,
+                        'puffer': puffer_ist, 'bid': final_premium, 'rsi': rsi, 'uptrend': uptrend,
                         'earn': earn, 'tage': tage, 'date': target_date,
                         'score': safety_score, 'stars': stars
                     })
         except: continue
 
-    # --- 2. ANZEIGE: ERGEBNISSE AUSGEBEN ---
+    # --- ANZEIGE ---
     status_text.empty()
     progress_bar.empty()
     
     if not all_results:
-        st.warning("Keine Treffer gefunden, die den Sicherheitskriterien entsprechen.")
+        st.warning("Keine Treffer gefunden.")
     else:
+        # Sortierung nach Sicherheit (Sterne)
         all_results = sorted(all_results, key=lambda x: (x['score'], x['y_pa']), reverse=True)
         st.success(f"Scan beendet. {len(all_results)} Chancen sortiert!")
         
@@ -332,6 +340,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
