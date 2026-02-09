@@ -205,18 +205,40 @@ if st.button("🚀 Kombi-Scan starten", key="kombi_scan_math"):
                 })
         except: continue
 
-    # --- ANZEIGE DER MATHE-ERGEBNISSE ---
-    status_text.empty()
-    progress_bar.empty()
-    if all_results:
-        all_results = sorted(all_results, key=lambda x: x['score'], reverse=True)
+    # --- ANZEIGE-LOGIK (MIT AKTUELLEM PREIS) ---
+    if not all_results:
+        st.warning("Keine Treffer gefunden.")
+    else:
+        # Sortierung: Erst nach Safety-Score (Sterne), dann nach Rendite
+        all_results = sorted(all_results, key=lambda x: (x['score'], x['y_pa']), reverse=True)
+        
+        st.success(f"Scan beendet. {len(all_results)} Chancen sortiert!")
+        
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
+                # Earnings-Warnung & RSI-Farbe
+                earn_warning = f" ⚠️ <span style='color:#e67e22; font-size:0.8em;'>ER: {res['earn']}</span>" if res['earn'] else ""
+                rsi_color = "#e74c3c" if res['rsi'] > 70 else "#2ecc71" if res['rsi'] < 40 else "#555"
+                
                 with st.container(border=True):
-                    st.markdown(f"**{res['symbol']}** {res['stars']}")
-                    st.metric("Fair Yield p.a.", f"{res['y_pa']:.1f}%")
-                    st.caption(f"Strike: {res['strike']}$ | Prämie: {res['bid']:.2f}$")
+                    # Titel-Zeile
+                    st.markdown(f"**{res['symbol']}** {res['stars']} {earn_warning}", unsafe_allow_html=True)
+                    
+                    # Rendite als Hauptzahl
+                    st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
+                    
+                    # Preis-Details (Hier ist die Neuerung!)
+                    st.markdown(f"""
+                    <div style="font-size: 0.85em; line-height: 1.5; background-color: #f8f9fa; padding: 10px; border-radius: 8px; border-left: 5px solid #3498db;">
+                    <span style="color: #555;">Aktueller Kurs:</span> <b style="font-size: 1.1em;">{res['price']:.2f}$</b><br>
+                    <span style="color: #555;">Gewählter Strike:</span> <b style="color: #2c3e50;">{res['strike']:.1f}$</b><br>
+                    <hr style="margin: 5px 0;">
+                    <b>Puffer:</b> {res['puffer']:.1f}% | <b>Tage:</b> {res['tage']}<br>
+                    <b>Prämie:</b> {res['bid']:.2f}$ ({res['bid']*100:.0f}$ pro Lot)<br>
+                    <b>RSI:</b> <span style="color:{rsi_color}; font-weight:bold;">{res['rsi']:.0f}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
                     
 # --- SEKTION 2: SMART DEPOT-MANAGER (REPAIR VERSION) ---
 st.markdown("### 💼 Smart Depot-Manager (Aktiv)")
@@ -326,6 +348,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
