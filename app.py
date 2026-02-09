@@ -182,6 +182,7 @@ if st.button("🚀 Kombi-Scan starten"):
     puffer_limit = otm_puffer_slider / 100
 
     with st.spinner("Lade Marktliste..."):
+        # Holt die große Liste (S&P 500, Nasdaq etc.)
         ticker_liste = get_combined_watchlist()
 
     status_text = st.empty()
@@ -197,57 +198,73 @@ if st.button("🚀 Kombi-Scan starten"):
         try:
             tk = yf.Ticker(symbol)
             
-            # --- DER ETF-FILTER ---
-            if only_etfs:
-                # Wir prüfen den Typ. Nur wenn 'ETF' im quoteType steht, machen wir weiter.
-                if tk.info.get('quoteType') != 'ETF':
-                    continue 
+            # --- 1. ETF FILTER (FIX FÜR BILD 5) ---
+            # Wir rufen info einmal ab, um den Typ zu prüfen
+            info = tk.info
+            q_type = info.get('quoteType', 'EQUITY')
+            
+            if only_etfs and q_type != 'ETF':
+                continue # Springt zum nächsten Ticker, wenn es kein ETF ist
 
+            # --- 2. QUALITÄTS FILTER ---
+            if only_quality and q_type == 'EQUITY':
+                roe = info.get('returnOnEquity', 0)
+                rev_growth = info.get('revenueGrowth', 0)
+                if roe < 0.15 or rev_growth < 0.05:
+                    continue
+
+            # Daten abrufen (RSI, Trend etc.)
             res = get_stock_data_full(symbol)
-            # Falls keine Daten kommen, überspringen
-            if res is None or res[0] is None:
+            if res[0] is None:
                 continue
-                
+            
             price, dates, earn, rsi, uptrend, near_lower, atr = res
 
-            # Basis-Filter
+            # --- 3. TECHNISCHE FILTER (SIDEBAR) ---
             if not (min_stock_price <= price <= max_stock_price):
                 continue
             if only_uptrend and not uptrend:
                 continue
+            if rsi > rsi_threshold:
+                continue
 
-            # Verfallsdatum suchen (ca. 30-45 Tage für Short Puts empfohlen)
-            # Hier nutzen wir eine einfache Suche in den verfügbaren Daten
+            # Options-Check (Laufzeit aus Sidebar nutzen)
             if not dates:
                 continue
             
-            # Suche nach dem ersten Datum in ca. 30 Tagen
-            target_date = dates[0] # Platzhalter, kann verfeinert werden
+            # Sucht das Datum, das am nächsten an deinem Slider (z.B. 30 Tage) liegt
+            target_date = min(dates, key=lambda x: abs((datetime.strptime(x, '%Y-%m-%d') - datetime.now()).days - days_range))
 
-            # Optionskette laden
+            # Optionskette laden & Puffer berechnen
             chain = tk.option_chain(target_date).puts
-            
-            # Nur Strikes UNTER dem aktuellen Kurs (Out-of-the-Money)
             max_strike = price * (1 - puffer_limit)
+            
+            # Filtert Strikes unter dem Puffer
             secure_options = chain[chain['strike'] <= max_strike].sort_values('strike', ascending=False)
 
             if not secure_options.empty:
                 best_opt = secure_options.iloc[0]
+                # Puffer-Berechnung (Fix für Bild 2 "name puffer not defined")
+                aktueller_puffer = ((price - best_opt['strike']) / price) * 100
+                
                 all_results.append({
                     "Ticker": symbol,
-                    "Preis": price,
+                    "Typ": q_type,
+                    "Preis": f"{price:.2f}$",
                     "RSI": rsi,
                     "Strike": best_opt['strike'],
-                    "Bid": best_opt['bid'],
-                    "Puffer": f"{((price-best_opt['strike'])/price)*100:.1f}%"
+                    "Puffer": f"{aktueller_puffer:.1f}%",
+                    "Yield p.a.": f"{(best_opt['bid']/best_opt['strike'] if best_opt['strike']>0 else 0)*12*100:.1f}%"
                 })
 
         except Exception:
             continue
 
-    st.success(f"Scan abgeschlossen! {len(all_results)} passende Werte gefunden.")
+    st.success(f"Scan abgeschlossen! {len(all_results)} Treffer gefunden.")
     if all_results:
         st.table(all_results)
+    else:
+        st.warning("Keine Werte gefunden, die alle Filter erfüllen.")
 
 # --- SEKTION 2: SMART DEPOT-MANAGER (REPAIR VERSION) ---
 st.markdown("### 💼 Smart Depot-Manager (Aktiv)")
@@ -387,6 +404,7 @@ if t_in:
                         )
                 except Exception as e:
                     st.error(f"Fehler in Chain: {e}")
+
 
 
 
