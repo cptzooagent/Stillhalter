@@ -178,9 +178,14 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     puffer_limit = otm_puffer_slider / 100 
     mkt_cap_limit = min_mkt_cap * 1_000_000_000
     
-    with st.spinner("Analysiere High-Performance Liste..."):
-        # Deine optimierte Liste für heute
-        ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR"]
+    with st.spinner("Lade Marktdaten..."):
+        if test_modus:
+            # Kleine Liste für schnellen UI-Test
+            ticker_liste = ["APP", "AVGO", "NET", "CRWD", "NVDA", "CRDO", "HOOD", "TSLA", "PLTR"]
+        else:
+            # Volle Power: S&P 500 + Nasdaq
+            ticker_liste = get_combined_watchlist()
+            st.info(f"Scanne {len(ticker_liste)} Symbole mit Mindest-Cap > {min_mkt_cap} Mrd. $...")
     
     status_text = st.empty()
     progress_bar = st.progress(0)
@@ -419,4 +424,5 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
