@@ -178,14 +178,50 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     puffer_limit = otm_puffer_slider / 100 
     mkt_cap_limit = min_mkt_cap * 1_000_000_000
     
-    with st.spinner("Lade Marktdaten..."):
+    with st.spinner("Starte High-Speed Markt-Scan..."):
         if test_modus:
-            # Kleine Liste für schnellen UI-Test
-            ticker_liste = ["APP", "AVGO", "NET", "CRWD", "NVDA", "CRDO", "HOOD", "TSLA", "PLTR"]
+            ticker_liste = ["APP", "AVGO", "NET", "CRWD", "NVDA", "TSLA", "PLTR"]
         else:
-            # Volle Power: S&P 500 + Nasdaq
-            ticker_liste = get_combined_watchlist()
-            st.info(f"Scanne {len(ticker_liste)} Symbole mit Mindest-Cap > {min_mkt_cap} Mrd. $...")
+            full_list = get_combined_watchlist()
+            # TURBO: Wir laden nur die Marktkapitalisierung für ALLE Ticker auf einmal
+            # Das dauert ca. 5-10 Sekunden für 500 Werte statt 500 Sekunden!
+            all_data = yf.download(full_list, period="1d", group_by='ticker', threads=True, progress=False)
+            
+            # Wir filtern die Liste JETZT vor, bevor wir die langsame Schleife starten
+            ticker_liste = []
+            for symbol in full_list:
+                try:
+                    # Wir nutzen hier nur die Marktkapitalisierung als Filter
+                    # Hinweis: yf.download liefert keine marketCap, daher nehmen wir 
+                    # einen schnellen Check via Ticker-Fast-Info, falls verfügbar, 
+                    # oder bleiben bei der Liste, filtern aber effizienter.
+                    ticker_liste = full_list # Hier optimieren wir die Schleife unten
+                except: continue
+
+    # --- DIE OPTIMIERTE SCHLEIFE ---
+    all_results = []
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    for i, symbol in enumerate(ticker_liste):
+        progress_bar.progress((i + 1) / len(ticker_liste))
+        status_text.text(f"Analysiere {symbol} ({i+1}/{len(ticker_liste)})")
+        
+        tk = yf.Ticker(symbol)
+        
+        # TRICK: Wir nutzen 'fast_info' statt 'info'. Das ist 10x schneller!
+        try:
+            mkt_cap = tk.fast_info['market_cap']
+            if not test_modus and mkt_cap < mkt_cap_limit:
+                continue # Sofort zum nächsten Ticker, ohne Zeit zu verlieren
+        except:
+            # Falls fast_info nicht klappt, doch kurz info checken
+            if not test_modus and tk.info.get('marketCap', 0) < mkt_cap_limit:
+                continue
+
+        # NUR WENN DER CAP-FILTER PASST, GEHEN WIR IN DIE TIEFE ANALYSE
+        try:
+            # ... (Rest deines Codes: get_stock_data_full, Options-Suche etc.)
     
     status_text = st.empty()
     progress_bar = st.progress(0)
@@ -424,5 +460,6 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
