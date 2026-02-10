@@ -154,6 +154,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     mkt_cap_limit = min_mkt_cap * 1_000_000_000
     
     with st.spinner("Analysiere High-Performance Liste..."):
+        # Deine optimierte Liste
         ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR"]
     
     status_text = st.empty()
@@ -168,17 +169,27 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             tk = yf.Ticker(symbol)
             info = tk.info
             
-            # 1. Marktkapitalisierungs-Filter
+            # 1. MARKTKAPITALISIERUNGS-FILTER (Wird im Test-Modus ignoriert)
             current_mkt_cap = info.get('marketCap', 0)
-            if not test_modus and current_mkt_cap < mkt_cap_limit:
-                continue
+            if not test_modus:
+                if current_mkt_cap < mkt_cap_limit:
+                    continue
             
-            # 2. Datenbeschaffung
+            # 2. DATENBESCHAFFUNG
             if test_modus:
+                # Simulation: Wir "erfinden" stabile Werte für das Layout
                 price = info.get('currentPrice', 150.0)
-                rsi, uptrend, earn = 55, True, "18.02."
-                max_y, strike, puffer, tage, bid = 18.2, price * 0.88, 12.0, 18, 2.45
+                if price is None: price = 150.0
+                rsi = 35 if symbol in ["NET", "SE"] else 55
+                uptrend = False if symbol in ["TSLA"] else True
+                earn = "18.02."
+                max_y = 18.2
+                strike = price * 0.88
+                puffer = 12.0
+                tage = 18
+                bid = 2.45
             else:
+                # Live-Modus: Echte Daten ziehen
                 res = get_stock_data_full(symbol)
                 if res[0] is None: continue
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
@@ -196,7 +207,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 
                 if max_days_allowed < 11: continue
                 
-                # Options-Suche
+                # Options-Suche (Echte Kette)
                 valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= max_days_allowed]
                 best_opt = None
                 max_y = -1
@@ -210,30 +221,34 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                         d_bid = o['bid'] if o['bid'] > 0 else o['lastPrice']
                         curr_y = (d_bid / o['strike']) * (365 / max(1, d_days)) * 100
                         if curr_y > max_y:
-                            max_y, best_opt = curr_y, {'strike': o['strike'], 'days': d_days, 'bid': d_bid}
+                            max_y = curr_y
+                            best_opt = {'strike': o['strike'], 'days': d_days, 'bid': d_bid}
                 
                 if not best_opt or max_y < min_yield_pa: continue
                 strike, tage, bid = best_opt['strike'], best_opt['days'], best_opt['bid']
                 puffer = ((price - strike) / price) * 100
 
-            # 3. Analysten-Check & Resultate speichern
+            # 3. ANALYSTEN-CHECK & LABELS
             analyst_txt, analyst_col = get_analyst_conviction(info)
             status_label = "🛡️ Trend" if uptrend else "💎 Dip"
             
             all_results.append({
-                'symbol': symbol, 'price': price, 'y_pa': max_y, 'strike': strike, 
-                'puffer': puffer, 'bid': bid, 'rsi': rsi, 'earn': earn, 
-                'tage': tage, 'status': status_label, 'mkt_cap': current_mkt_cap / 1e9,
+                'symbol': symbol, 'price': price, 'y_pa': max_y, 
+                'strike': strike, 'puffer': puffer,
+                'bid': bid, 'rsi': rsi, 'earn': earn, 
+                'tage': tage, 'status': status_label,
+                'mkt_cap': current_mkt_cap / 1_000_000_000 if current_mkt_cap else 0,
                 'analyst_txt': analyst_txt, 'analyst_col': analyst_col
             })
-        except: continue
+        except Exception as e:
+            continue
 
     status_text.empty()
     progress_bar.empty()
 
     # --- ANZEIGE DER KACHELN ---
     if not all_results:
-        st.warning("Keine Treffer gefunden.")
+        st.warning("Keine Treffer gefunden (Checke Filter oder Simulation).")
     else:
         all_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
         cols = st.columns(4)
@@ -241,10 +256,11 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             with cols[idx % 4]:
                 s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
                 with st.container(border=True):
+                    # Header
                     st.markdown(f"**{res['symbol']}** <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
+                    # Rendite
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
-                    
-                    # Trading-Details Box
+                    # Trading-Box
                     st.markdown(f"""
                     <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 1px solid #e0e0e0; margin-bottom: 8px;">
                         <div style="display: flex; justify-content: space-between; font-size: 0.9em;">
@@ -256,10 +272,6 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                             <span>⏳ Tage: <b>{res['tage']}</b></span>
                         </div>
                     </div>
-                    """, unsafe_allow_html=True)
-
-                    # Analysten-Info
-                    st.markdown(f"""
                     <div style="font-size: 0.85em; line-height:1.4;">
                         <b>Cap: {res['mkt_cap']:.1f} Mrd. $</b> | RSI: {res['rsi']:.0f} | ER: {res['earn']}<br>
                         <div style="margin-top:8px; padding:8px; border-radius:6px; background:#ffffff; border-left:5px solid {res['analyst_col']}; color:{res['analyst_col']}; font-weight:bold; font-size:0.85em; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
@@ -376,6 +388,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
