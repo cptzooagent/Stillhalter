@@ -102,31 +102,6 @@ with st.sidebar:
     st.markdown("---")
     st.info("💡 Profi-Tipp: Für den S&P 500 Scan ab 16:00 Uhr 'Simulations-Modus' deaktivieren.")
 
-# --- NEUER BLOCK: GLOBALE MARKTLAGE (GANZ OBEN) ---
-st.markdown("## 🌍 Globale Marktlage")
-price_ndq, rsi_ndq, dist_ndq = get_market_sentiment()
-
-# Farb-Logik für die große Warnmeldung
-if dist_ndq < -2:
-    m_color, m_text = "#e74c3c", "🚨 KRITISCH: Nasdaq im Abwärtstrend"
-elif rsi_ndq > 70:
-    m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT: Korrekturgefahr im Nasdaq"
-else:
-    m_color, m_text = "#27ae60", "✅ STABIL: Nasdaq Marktlage ok"
-
-st.markdown(f"""
-    <div style="background-color: {m_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
-        <h3 style="margin:0;">{m_text}</h3>
-    </div>
-""", unsafe_allow_html=True)
-
-# Die 3 Nasdaq-Werte in einer eigenen kleinen Reihe
-m1, m2, m3 = st.columns(3)
-m1.metric("Nasdaq 100", f"{price_ndq:,.0f} Pkt")
-m2.metric("Nasdaq RSI", f"{int(rsi_ndq)}")
-m3.metric("Abstand SMA 20", f"{dist_ndq:.1f} %")
-
-st.markdown("---") # Trennlinie zum Rest der App
     
 # --- DAS ULTIMATIVE MARKT-DASHBOARD (4 SPALTEN MIT DELTAS) ---
 st.markdown("## 📊 Globales Marktwetter")
@@ -495,6 +470,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
