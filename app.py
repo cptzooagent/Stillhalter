@@ -83,6 +83,11 @@ with st.sidebar:
     min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 0, 100, 15, key="yield_sid")
     min_stock_price, max_stock_price = st.slider("Aktienpreis-Spanne ($)", 0, 1000, (20, 500), key="price_sid")
 
+    # In deiner Sidebar-Sektion hinzufügen:
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Qualitäts-Filter")
+    min_mkt_cap = st.sidebar.slider("Mindest-Marktkapitalisierung (Mrd. $)", 1, 100, 5)
+    
     st.markdown("---")
     only_uptrend = st.checkbox("Nur Aufwärtstrend (SMA 200)", value=False, key="trend_sid")
     st.info("Tipp: Deaktiviere den Aufwärtstrend für mehr Treffer am Wochenende.")
@@ -138,14 +143,15 @@ except:
 st.markdown("---")
 
 
-# --- SEKTION 1: KOMBI-SCAN (ULTRA-SAFE & KURZE LAUFZEIT) ---
+# --- SEKTION 1: KOMBI-SCAN (MARKET-CAP & EARNINGS-SAFE) ---
 st.markdown("---")
-st.header("🔍 Kombi-Scan: Ultra-Safe (Max. 24 Tage)")
+st.header(f"🔍 Kombi-Scan: Fokus auf {min_mkt_cap} Mrd.+ USD")
 
-if st.button("🚀 Safe-Scan starten", key="kombi_scan_final_v4"):
+if st.button("🚀 Safe-Scan starten", key="kombi_scan_mkt_cap_v1"):
     puffer_limit = otm_puffer_slider / 100 
+    mkt_cap_limit = min_mkt_cap * 1_000_000_000 # Umrechnung in echte USD
     
-    with st.spinner("Filtere nach kurzen & sicheren Laufzeiten..."):
+    with st.spinner(f"Filtere Aktien über {min_mkt_cap} Mrd. $..."):
         ticker_liste = get_combined_watchlist()
     
     status_text = st.empty()
@@ -154,17 +160,25 @@ if st.button("🚀 Safe-Scan starten", key="kombi_scan_final_v4"):
     
     for i, symbol in enumerate(ticker_liste):
         progress_bar.progress((i + 1) / len(ticker_liste))
-        status_text.text(f"Checke {symbol}...")
+        status_text.text(f"Analysiere {symbol}...")
         
         try:
+            tk = yf.Ticker(symbol)
+            
+            # --- NEU: MARKTKAPITALISIERUNGS-CHECK ---
+            info = tk.info
+            current_mkt_cap = info.get('marketCap', 0)
+            
+            if current_mkt_cap < mkt_cap_limit:
+                continue # Firma ist zu klein -> ignorieren
+            
+            # --- BASIS-DATEN LADEN ---
             res = get_stock_data_full(symbol)
             if res[0] is None: continue
             price, dates, earn, rsi, uptrend, near_lower, lower_band = res
             
-            # --- 1. ZEIT-LIMITS BERECHNEN ---
-            # Wir wollen immer zwischen 11 und 24 Tagen bleiben
-            absolute_max_days = 24 
-            
+            # --- EARNINGS-SAFE LOGIK ---
+            max_days_allowed = 24 
             if earn and isinstance(earn, str) and "." in earn:
                 try:
                     heute = datetime.now()
@@ -172,29 +186,17 @@ if st.button("🚀 Safe-Scan starten", key="kombi_scan_final_v4"):
                     er_datum = datetime(heute.year, int(monat), int(tag))
                     if er_datum < heute - timedelta(days=1):
                         er_datum = datetime(heute.year + 1, int(monat), int(tag))
-                    
-                    days_until_earn = (er_datum - heute).days
-                    # Wenn Earnings anstehen, ist das neue Limit: Entweder 24 Tage ODER 2 Tage vor ER
-                    absolute_max_days = min(24, days_until_earn - 2)
-                except:
-                    absolute_max_days = 24
+                    max_days_allowed = min(24, (er_datum - heute).days - 2)
+                except: pass
 
-            # Wenn durch die Earnings-Sperre weniger als 11 Tage übrig bleiben -> Ticker überspringen
-            if absolute_max_days < 11:
-                continue
+            if max_days_allowed < 11: continue # Kein Fenster vor Earnings
 
-            # --- 2. OPTIONSSUCHE INNERHALB DES FENSTERS (11-24 TAGE) ---
-            valid_dates = [
-                d for d in dates 
-                if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= absolute_max_days
-            ]
-            
+            # --- OPTIONSSUCHE ---
+            valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= max_days_allowed]
             if not valid_dates: continue
 
-            tk = yf.Ticker(symbol)
             best_opt = None
             max_y = -1
-            
             for d_str in valid_dates:
                 chain = tk.option_chain(d_str).puts
                 m_strike = price * (1 - puffer_limit)
@@ -205,56 +207,53 @@ if st.button("🚀 Safe-Scan starten", key="kombi_scan_final_v4"):
                     d_days = (datetime.strptime(d_str, '%Y-%m-%d') - datetime.now()).days
                     d_bid = o['bid'] if o['bid'] > 0 else o['lastPrice']
                     
-                    # Split-Schutz
-                    if d_bid > (price * 0.05): continue 
+                    if d_bid > (price * 0.05): continue # Split/Datenfehler-Schutz
                     
                     curr_y = (d_bid / o['strike']) * (365 / max(1, d_days)) * 100
                     if curr_y > max_y:
                         max_y = curr_y
-                        best_opt = {'o': o, 'days': d_days, 'date': d_str}
+                        best_opt = {'o': o, 'days': d_days, 'date': d_str, 'bid': d_bid}
 
-            if best_opt:
-                score = 0
-                if best_opt['o']['strike'] < lower_band: score += 1
-                if 35 <= rsi <= 60: score += 1
-                if uptrend: score += 1
+            if best_opt and max_y >= mindestrendite_slider:
+                # Status-Label vergeben
+                status_label = "🛡️ Trend-Follower" if uptrend else "💎 Quality-Dip"
                 
                 all_results.append({
                     'symbol': symbol, 'price': price, 'y_pa': max_y, 
                     'strike': best_opt['o']['strike'],
                     'puffer': ((price - best_opt['o']['strike']) / price) * 100,
-                    'bid': best_opt['o']['bid'] if best_opt['o']['bid'] > 0 else best_opt['o']['lastPrice'],
-                    'rsi': rsi, 'earn': earn if (earn and "." in str(earn)) else "", 
-                    'tage': best_opt['days'], 'score': score
+                    'bid': best_opt['bid'], 'rsi': rsi, 'earn': earn, 
+                    'tage': best_opt['days'], 'status': status_label,
+                    'mkt_cap': current_mkt_cap / 1_000_000_000
                 })
         except: continue
 
-    # --- ANZEIGE ---
     status_text.empty()
     progress_bar.empty()
 
     if not all_results:
-        st.warning("Keine Chancen im Bereich 11-24 Tage gefunden (oder Earnings blockieren alles).")
+        st.warning("Keine Treffer gefunden. Versuche die Marktkapitalisierung oder den Puffer zu senken.")
     else:
-        all_results = sorted(all_results, key=lambda x: (x['score'], x['y_pa']), reverse=True)
-        st.success(f"Scan fertig: {len(all_results)} passende Trades gefunden!")
+        all_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
+        st.success(f"Scan fertig: {len(all_results)} Qualitäts-Werte gefunden!")
         
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
-                er_label = f"<div style='color:#27ae60; font-weight:bold; font-size:0.75em;'>🛡️ Exit vor ER ({res['earn']})</div>" if res['earn'] else "<div style='color:#7f8c8d; font-size:0.75em;'>Keine ER im Fenster</div>"
-                rsi_c = "#e74c3c" if res['rsi'] > 70 else "#2ecc71" if res['rsi'] < 40 else "#555"
+                # Farbe je nach Status
+                border_color = "#27ae60" if res['status'] == "🛡️ Trend-Follower" else "#3498db"
+                bg_color = "#f0fff0" if res['status'] == "🛡️ Trend-Follower" else "#f0f7ff"
                 
                 with st.container(border=True):
-                    st.markdown(f"**{res['symbol']}** {'⭐'*res['score'] if res['score']>0 else '⚪'}{er_label}", unsafe_allow_html=True)
+                    st.markdown(f"**{res['symbol']}** <br><span style='font-size:0.75em; color:{border_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
                     st.markdown(f"""
-                    <div style="font-size: 0.85em; background:#f0fff0; padding:10px; border-radius:8px; border-left:5px solid #27ae60;">
-                    Kurs: <b>{res['price']:.2f}$</b> | Strike: <b>{res['strike']:.1f}$</b><br>
-                    <hr style="margin:5px 0; border-top:1px solid #c8e6c9;">
-                    <b>Laufzeit: {res['tage']} Tage</b><br>
-                    Puffer: {res['puffer']:.1f}% | Bid: {res['bid']:.2f}$<br>
-                    RSI: <span style="color:{rsi_c}; font-weight:bold;">{res['rsi']:.0f}</span>
+                    <div style="font-size: 0.82em; background:{bg_color}; padding:10px; border-radius:8px; border-left:4px solid {border_color};">
+                    <b>Cap: {res['mkt_cap']:.1f} Mrd. $</b><br>
+                    Kurs: {res['price']:.2f}$ | Strike: {res['strike']:.1f}$<br>
+                    <hr style="margin:5px 0; border-top:1px solid #ddd;">
+                    Laufzeit: <b>{res['tage']} Tage</b> | RSI: {res['rsi']:.0f}<br>
+                    Prämie: {res['bid']:.2f}$ | Puffer: {res['puffer']:.1f}%
                     </div>
                     """, unsafe_allow_html=True)
                     
@@ -366,6 +365,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
