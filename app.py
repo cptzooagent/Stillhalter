@@ -74,22 +74,18 @@ def get_stock_data_full(symbol):
     except:
         return None, [], "", 50, True, False, 0
 
-# --- UI: SIDEBAR ---
-# Das "with" Statement stellt sicher, dass alles links landet, 
+# --- UI: SIDEBAR --- 
 # selbst wenn der Hauptcode weiter unten einen Fehler hat.
 with st.sidebar:
-    st.header("🛡️ Strategie-Einstellungen")
-    otm_puffer_slider = st.slider("Gewünschter Puffer (%)", 3, 25, 10, key="puffer_sid")
-    min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 0, 100, 15, key="yield_sid")
-    min_stock_price, max_stock_price = st.slider("Aktienpreis-Spanne ($)", 0, 1000, (20, 500), key="price_sid")
-
-    # In deiner Sidebar-Sektion hinzufügen:
-    st.sidebar.markdown("---")
+    # ... (deine bisherigen Slider)
+    st.markdown("---")
     st.sidebar.subheader("Qualitäts-Filter")
     min_mkt_cap = st.sidebar.slider("Mindest-Marktkapitalisierung (Mrd. $)", 1, 100, 5)
-    
-    st.markdown("---")
     only_uptrend = st.checkbox("Nur Aufwärtstrend (SMA 200)", value=False, key="trend_sid")
+    
+    # DIESE ZEILE MUSS HIER STEHEN:
+    test_modus = st.checkbox("🛠️ Simulations-Modus (Test)", value=False, key="sim_checkbox")
+    
     st.info("Tipp: Deaktiviere den Aufwärtstrend für mehr Treffer am Wochenende.")
 
 # --- DAS ULTIMATIVE MARKT-DASHBOARD (4 SPALTEN MIT DELTAS) ---
@@ -167,96 +163,87 @@ def get_analyst_conviction(info):
     except:
         return "🔍 Check nötig", "#7f8c8d"
 
+
+
+# --- Sektion 1 Marktscann
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     puffer_limit = otm_puffer_slider / 100 
     mkt_cap_limit = min_mkt_cap * 1_000_000_000
     
-    with st.spinner("Lade S&P 500 & Nasdaq Watchlist..."):
-        # Holt die große Liste (~510+ Aktien)
-        ticker_liste = get_combined_watchlist()
-        
-        # Optional: Nur im Testmodus die Liste kürzen, falls du nur kurz probieren willst
+    with st.spinner("Lade Ticker-Liste..."):
         if test_modus:
-            ticker_liste = ticker_liste[:20] # Nur die ersten 20 zum Testen
+            # Kleine Test-Liste für schnellen Check
+            ticker_liste = ["APP", "AVGO", "NET", "CRWD", "NVDA", "HOOD"]
+        else:
+            # Volle Liste für 16:00 Uhr
+            ticker_liste = get_combined_watchlist()
     
     status_text = st.empty()
     progress_bar = st.progress(0)
     all_results = []
     
-    # Der Scan-Loop
     for i, symbol in enumerate(ticker_liste):
-        # Fortschrittsanzeige
         progress_bar.progress((i + 1) / len(ticker_liste))
-        if i % 5 == 0: # Update alle 5 Ticker, um UI flüssig zu halten
-            status_text.text(f"Analysiere {i}/{len(ticker_liste)}: {symbol}...")
+        status_text.text(f"Checke {i}/{len(ticker_liste)}: {symbol}...")
         
         try:
             tk = yf.Ticker(symbol)
-            # WICHTIG: Erst info laden für Mkt-Cap Check (spart Zeit)
-            info = tk.info
+            # 1. Schneller Check der Marktkapitalisierung
+            # Wir nutzen .info nur einmal pro Ticker
+            ticker_info = tk.info
+            m_cap = ticker_info.get('marketCap', 0)
             
-            # 1. MARKTKAPITALISIERUNGS-FILTER (Vorschaltung)
-            current_mkt_cap = info.get('marketCap', 0)
-            if current_mkt_cap < mkt_cap_limit:
+            if m_cap < mkt_cap_limit:
                 continue
                 
-            # 2. DATENBESCHAFFUNG
+            # 2. Daten laden
             res = get_stock_data_full(symbol)
             if res[0] is None: continue
             price, dates, earn, rsi, uptrend, near_lower, atr = res
             
-            # 3. STRATEGIE-FILTER (Trend & RSI)
+            # Trend-Filter
             if only_uptrend and not uptrend:
                 continue
 
-            # 4. EARNINGS-CHECK
+            # 3. Options-Suche (vereinfacht für Stabilität)
             heute = datetime.now()
-            max_days_allowed = 24
-            if earn and "." in earn:
-                try:
-                    tag, monat = earn.split(".")[:2]
-                    er_datum = datetime(heute.year, int(monat), int(tag))
-                    if er_datum < heute: er_datum = datetime(heute.year + 1, int(monat), int(tag))
-                    max_days_allowed = min(24, (er_datum - heute).days - 2)
-                except: pass
+            # Finde passendes Datum (zwischen 11 und 45 Tagen)
+            valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
             
-            if max_days_allowed < 11: continue
+            if not valid_dates: continue
             
-            # 5. OPTIONS-SUCHE
-            valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= max_days_allowed]
-            best_opt = None
-            max_y = -1
+            # Wir nehmen das nächste verfügbare Datum für den Scan
+            target_date = valid_dates[0]
+            chain = tk.option_chain(target_date).puts
             
-            for d_str in valid_dates:
-                chain = tk.option_chain(d_str).puts
-                target_strike = price * (1 - puffer_limit)
-                # Nur OTM Puts finden
-                opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
+            # Strike-Suche
+            target_strike = price * (1 - puffer_limit)
+            opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
+            
+            if not opts.empty:
+                o = opts.iloc[0]
+                bid_val = o['bid'] if o['bid'] > 0 else o['lastPrice']
+                days = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 
-                if not opts.empty:
-                    o = opts.iloc[0]
-                    d_days = (datetime.strptime(d_str, '%Y-%m-%d') - heute).days
-                    d_bid = o['bid'] if o['bid'] > 0 else o['lastPrice']
-                    
-                    if o['strike'] > 0:
-                        curr_y = (d_bid / o['strike']) * (365 / max(1, d_days)) * 100
-                        if curr_y > max_y:
-                            max_y = curr_y
-                            best_opt = {'strike': o['strike'], 'days': d_days, 'bid': d_bid}
-            
-            # Ergebnis speichern
-            if best_opt and max_y >= min_yield_pa:
-                analyst_txt, analyst_col = get_analyst_conviction(info)
-                all_results.append({
-                    'symbol': symbol, 'price': price, 'y_pa': max_y, 
-                    'strike': best_opt['strike'], 'puffer': ((price - best_opt['strike']) / price) * 100,
-                    'bid': best_opt['bid'], 'rsi': rsi, 'earn': earn, 
-                    'tage': best_opt['days'], 'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                    'mkt_cap': current_mkt_cap / 1_000_000_000,
-                    'analyst_txt': analyst_txt, 'analyst_col': analyst_col
-                })
-        except Exception:
-            continue # Springe zum nächsten Ticker bei API-Fehler
+                # Rendite-Berechnung
+                y_pa = (bid_val / o['strike']) * (365 / max(1, days)) * 100
+                
+                if y_pa >= min_yield_pa:
+                    analyst_txt, analyst_col = get_analyst_conviction(ticker_info)
+                    all_results.append({
+                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 
+                        'strike': o['strike'], 'puffer': ((price - o['strike']) / price) * 100,
+                        'bid': bid_val, 'rsi': rsi, 'earn': earn, 
+                        'tage': days, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
+                        'mkt_cap': m_cap / 1_000_000_000,
+                        'analyst_txt': analyst_txt, 'analyst_col': analyst_col
+                    })
+        except:
+            continue
+
+    status_text.empty()
+    progress_bar.empty()
+    # ... (Rest der Anzeige-Logik bleibt gleich)
                     
 # --- SEKTION 2: SMART DEPOT-MANAGER (REPAIR VERSION) ---
 st.markdown("### 💼 Smart Depot-Manager (Aktiv)")
@@ -366,4 +353,5 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
