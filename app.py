@@ -143,38 +143,44 @@ except:
 st.markdown("---")
 
 
-# --- SEKTION 1: KOMBI-SCAN (QUALITÄT & ANALYTIK) ---
-
-# Hilfsfunktion für die fundamentale Einordnung (Analysten-Veto)
+# --- NEUE ANALYSTEN-LOGIK (VOR DEM SCAN DEFINIEREN) ---
 def get_analyst_conviction(info):
     try:
-        current = info.get('currentPrice', 1)
+        current = info.get('current_price', info.get('currentPrice', 1))
         target = info.get('targetMedianPrice', 0)
         upside = ((target / current) - 1) * 100 if target > 0 else 0
         rev_growth = info.get('revenueGrowth', 0) * 100
         
-        if upside > 10 and rev_growth > 5:
-            return f"✅ Positiv (Ziel: +{upside:.0f}%, Wachst.: {rev_growth:.1f}%)", "#27ae60"
+        # 1. LILA: 🚀 HYPER-GROWTH (APP, CRDO, NVDA, ALAB)
+        if rev_growth > 40:
+            return f"🚀 HYPER-GROWTH (+{rev_growth:.0f}% Wachst.)", "#9b59b6"
+        # 2. GRÜN: ✅ STARK (AVGO, CRWD)
+        elif upside > 15 and rev_growth > 5:
+            return f"✅ Stark (Ziel: +{upside:.0f}%, Wachst.: {rev_growth:.1f}%)", "#27ae60"
+        # 3. BLAU: 💎 QUALITY-DIP (NET, MRVL)
+        elif upside > 25:
+            return f"💎 Quality-Dip (Ziel: +{upside:.0f}%)", "#2980b9"
+        # 4. ORANGE: ⚠️ WARNUNG (GTM, stagnierende Werte)
         elif upside < 0 or rev_growth < -2:
-            return f"⚠️ Warnung (Ziel: {upside:.0f}%, Wachst.: {rev_growth:.1f}%)", "#e67e22"
-        else:
-            return f"⚖️ Neutral (Ziel: {upside:.0f}%)", "#7f8c8d"
+            return f"⚠️ Warnung (Ziel: {upside:.1f}%, Wachst.: {rev_growth:.1f}%)", "#e67e22"
+        return f"⚖️ Neutral (Ziel: {upside:.0f}%)", "#7f8c8d"
     except:
-        return "🔍 Keine Analysten-Daten", "#7f8c8d"
+        return "🔍 Check nötig", "#7f8c8d"
 
+# --- SEKTION 1: KOMBI-SCAN (QUALITÄT & ANALYTIK) ---
 st.markdown("---")
 st.header(f"🔍 Qualitäts-Scan: >{min_mkt_cap} Mrd. $")
 
-# Test-Modus Schalter in der Sidebar (unter deinem Market-Cap-Slider platzieren)
-test_modus = st.sidebar.checkbox("🛠️ Simulations-Modus (für Test vor 15:30)")
+# Nur ein Button/Checkbox hier!
+test_modus = st.sidebar.checkbox("🛠️ Simulations-Modus (für Test vor 15:30)", key="sim_checkbox")
 
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     puffer_limit = otm_puffer_slider / 100 
     mkt_cap_limit = min_mkt_cap * 1_000_000_000
     
-    with st.spinner("Analysiere Daten..."):
-        # Für den Test nehmen wir eine feste Liste, sonst deine get_combined_watchlist()
-        ticker_liste = ["AVGO", "AAPL", "TSLA", "GTM", "MSFT", "AMZN"]
+    with st.spinner("Analysiere High-Performance Liste..."):
+        # Deine optimierte Liste für heute
+        ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR"]
     
     status_text = st.empty()
     progress_bar = st.progress(0)
@@ -195,27 +201,25 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             
             # 2. DATENBESCHAFFUNG (LIVE ODER TEST)
             if test_modus:
-                # Künstliche Daten für den Layout-Check
                 price = info.get('currentPrice', 150.0)
-                rsi = 35 if symbol == "GTM" else 55
-                uptrend = False if symbol == "GTM" else True
+                rsi = 35 if symbol in ["NET", "SE"] else 55
+                uptrend = False if symbol in ["GTM", "SE"] else True
                 earn = "18.02."
-                max_y = 14.2
+                max_y = 18.2
                 strike = price * 0.88
                 puffer = 12.0
                 tage = 18
                 bid = 2.45
             else:
-                # DEINE ECHTE LIVE-LOGIK
-                res = get_stock_data_full(symbol) # Deine Funktion
+                res = get_stock_data_full(symbol)
                 if res[0] is None: continue
-                price, dates, earn, rsi, uptrend, near_lower, lower_band = res
+                price, dates, earn, rsi, uptrend, near_lower, atr = res
                 
-                # Earnings-Check (11-24 Tage)
-                max_days_allowed = 24 
-                if earn and isinstance(earn, str) and "." in earn:
+                # Earnings-Check (11 Tage Puffer zur Sicherheit)
+                heute = datetime.now()
+                max_days_allowed = 24
+                if earn and "." in earn:
                     try:
-                        heute = datetime.now()
                         tag, monat = earn.split(".")[:2]
                         er_datum = datetime(heute.year, int(monat), int(tag))
                         if er_datum < heute: er_datum = datetime(heute.year + 1, int(monat), int(tag))
@@ -224,8 +228,8 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 
                 if max_days_allowed < 11: continue
                 
-                # Options-Suche
-                valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= max_days_allowed]
+                # Options-Suche (Deine bewährte Logik)
+                valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= max_days_allowed]
                 best_opt = None
                 max_y = -1
                 for d_str in valid_dates:
@@ -234,18 +238,18 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
                     if not opts.empty:
                         o = opts.iloc[0]
-                        d_days = (datetime.strptime(d_str, '%Y-%m-%d') - datetime.now()).days
+                        d_days = (datetime.strptime(d_str, '%Y-%m-%d') - heute).days
                         d_bid = o['bid'] if o['bid'] > 0 else o['lastPrice']
                         curr_y = (d_bid / o['strike']) * (365 / max(1, d_days)) * 100
                         if curr_y > max_y:
                             max_y = curr_y
                             best_opt = {'strike': o['strike'], 'days': d_days, 'bid': d_bid}
                 
-                if not best_opt or max_y < mindestrendite_slider: continue
+                if not best_opt or max_y < min_yield_pa: continue
                 strike, tage, bid = best_opt['strike'], best_opt['days'], best_opt['bid']
                 puffer = ((price - strike) / price) * 100
 
-            # 3. ANALYSTEN-CHECK
+            # 3. ANALYSTEN-CHECK & ANZEIGE-LABELS
             analyst_txt, analyst_col = get_analyst_conviction(info)
             status_label = "🛡️ Trend-Follower" if uptrend else "💎 Quality-Dip"
             
@@ -264,21 +268,22 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
 
     # --- ANZEIGE DER KACHELN ---
     if not all_results:
-        st.warning("Keine Treffer gefunden.")
+        st.warning("Keine Treffer gefunden (Checke Filter-Einstellungen oder Earnings-Termine).")
     else:
         all_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
-                border_c = "#27ae60" if "🛡️" in res['status'] else "#3498db"
+                # Status-Farbe
+                s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
                 with st.container(border=True):
-                    st.markdown(f"**{res['symbol']}** <span style='float:right; font-size:0.7em; color:{border_c};'>{res['status']}</span>", unsafe_allow_html=True)
+                    st.markdown(f"**{res['symbol']}** <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
                     st.markdown(f"""
                     <div style="font-size: 0.85em; line-height:1.4;">
                     <b>Cap: {res['mkt_cap']:.1f} Mrd. $</b> | RSI: {res['rsi']:.0f}<br>
                     Puffer: {res['puffer']:.1f}% | ER: {res['earn']}<br>
-                    <div style="margin-top:8px; padding:5px; border-radius:4px; background:#f0f2f6; border-left:3px solid {res['analyst_col']}; color:{res['analyst_col']}; font-weight:bold; font-size:0.9em;">
+                    <div style="margin-top:8px; padding:8px; border-radius:6px; background:#f0f2f6; border-left:5px solid {res['analyst_col']}; color:{res['analyst_col']}; font-weight:bold; font-size:0.85em;">
                         {res['analyst_txt']}
                     </div>
                     </div>
@@ -392,6 +397,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
