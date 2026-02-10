@@ -179,14 +179,15 @@ def get_analyst_conviction(info):
 
 
 
-# --- SEKTION 1: KOMBI-SCAN (FINALE QUALITÄTS-SORTIERUNG) ---
+# --- SEKTION: PROFI-SCANNER (RSI & STERNE EDITION) ---
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     puffer_limit = otm_puffer_slider / 100 
     mkt_cap_limit = min_mkt_cap * 1_000_000_000
     
     with st.spinner("Lade Ticker-Liste..."):
         if test_modus:
-            ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR"]
+            # HIER SIND ALLE DEINE SYMBOLE GESICHERT:
+            ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"]
         else:
             ticker_liste = get_combined_watchlist()
     
@@ -214,7 +215,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             
             if only_uptrend and not uptrend: continue
 
-            # Laufzeit-Logik (11-24 Tage + Earnings-Schutz)
+            # Laufzeit & Earnings-Schutz
             heute = datetime.now()
             max_days_allowed = 24
             if earn and "." in earn:
@@ -242,23 +243,19 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 if y_pa >= min_yield_pa:
                     analyst_txt, analyst_col = get_analyst_conviction(info)
                     
-                    # --- VERSCHÄRFTE STERNE LOGIK ---
+                    # Sterne Logik (Priorität)
                     stars = 0
                     if "HYPER" in analyst_txt: stars = 3
                     elif "Stark" in analyst_txt: stars = 2
                     elif "Neutral" in analyst_txt: stars = 1
-                    if "Warnung" in analyst_txt: stars = 0
-                    
-                    # Bonus-Stern für Trend nur bei Nicht-Warnungen
                     if uptrend and stars > 0: stars += 0.5 
-                    
+
                     all_results.append({
                         'symbol': symbol, 'price': price, 'y_pa': y_pa, 
                         'strike': o['strike'], 'puffer': ((price - o['strike']) / price) * 100,
                         'bid': bid_val, 'rsi': rsi, 'earn': earn if earn else "n.a.", 
                         'tage': days, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                        'stars_val': stars, 
-                        'stars_str': "⭐" * int(stars),
+                        'stars_val': stars, 'stars_str': "⭐" * int(stars),
                         'analyst_txt': analyst_txt, 'analyst_col': analyst_col,
                         'mkt_cap': m_cap / 1_000_000_000
                     })
@@ -270,16 +267,16 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     if not all_results:
         st.warning("Keine Treffer gefunden.")
     else:
-        # SORTIERUNG: Sterne (Qualität) wiegt 1000x schwerer als die Rendite
+        # Sortierung: Qualität (Sterne) -> Rendite
         all_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
 
-        st.markdown(f"### 🎯 Top-Setups nach Qualität ({len(all_results)} Treffer)")
+        st.markdown(f"### 🎯 Top-Setups ({len(all_results)} Treffer)")
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
                 s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-                # Rahmen-Logik für Hyper-Growth und Stark
                 border_color = res['analyst_col'] if res['stars_val'] >= 2 else "#e0e0e0"
+                rsi_col = "#e74c3c" if res['rsi'] > 70 else ("#27ae60" if res['rsi'] < 30 else "#7f8c8d")
                 
                 with st.container(border=True):
                     st.markdown(f"**{res['symbol']}** {res['stars_str']} <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
@@ -291,7 +288,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                             🛡️ Puffer: <b>{res['puffer']:.1f}%</b> | ⏳ Tage: <b>{res['tage']}</b>
                         </div>
                         <div style="font-size: 0.8em; color: #7f8c8d; margin-bottom: 5px;">
-                            📅 ER: <b>{res['earn']}</b> | Cap: {res['mkt_cap']:.1f}B
+                            📅 ER: <b>{res['earn']}</b> | RSI: <b style="color:{rsi_col};">{int(res['rsi'])}</b>
                         </div>
                         <div style="font-size: 0.85em; border-left: 4px solid {res['analyst_col']}; padding: 4px 8px; font-weight: bold; color: {res['analyst_col']}; background: {res['analyst_col']}10; border-radius: 0 4px 4px 0;">
                             {res['analyst_txt']}
@@ -406,4 +403,5 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
