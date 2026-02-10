@@ -167,6 +167,11 @@ def get_analyst_conviction(info):
     except:
         return "🔍 Check nötig", "#7f8c8d"
 
+# --- SEKTION 1: KOMBI-SCAN (QUALITÄT & ANALYTIK) ---
+st.markdown("---")
+st.header(f"🔍 Qualitäts-Scan: >{min_mkt_cap} Mrd. $")
+
+# Der Scan-Button
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     puffer_limit = otm_puffer_slider / 100 
     mkt_cap_limit = min_mkt_cap * 1_000_000_000
@@ -175,7 +180,6 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         if test_modus:
             ticker_liste = ["APP", "AVGO", "NET", "CRWD", "NVDA", "CRDO", "HOOD", "TSLA", "PLTR"]
         else:
-            # Holt die volle S&P 500 / Nasdaq Liste
             ticker_liste = get_combined_watchlist()
     
     status_text = st.empty()
@@ -189,7 +193,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         try:
             tk = yf.Ticker(symbol)
             
-            # --- TURBO-FILTER: Marktkapitalisierung via fast_info ---
+            # Schnell-Check Marktkapitalisierung
             try:
                 current_mkt_cap = tk.fast_info['market_cap']
             except:
@@ -198,18 +202,18 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             if not test_modus and current_mkt_cap < mkt_cap_limit:
                 continue
 
-            # --- DATENBESCHAFFUNG ---
+            # Daten ziehen
             if test_modus:
                 price = tk.info.get('currentPrice', 150.0)
                 rsi, uptrend, earn, max_y = 55, True, "18.02.", 18.2
                 strike, puffer, tage, bid = price * 0.88, 12.0, 18, 2.45
-                info = tk.info # Für Analysten-Check
+                info = tk.info
             else:
                 res = get_stock_data_full(symbol)
                 if res[0] is None: continue
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
                 
-                # Earnings-Check (11 Tage Puffer)
+                # Earnings-Check (11 Tage)
                 heute = datetime.now()
                 max_days_allowed = 24
                 if earn and "." in earn:
@@ -244,7 +248,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 puffer = ((price - strike) / price) * 100
                 info = tk.info
 
-            # Analysten-Check & Label
+            # Analysten
             analyst_txt, analyst_col = get_analyst_conviction(info)
             status_label = "🛡️ Trend-Follower" if uptrend else "💎 Quality-Dip"
             
@@ -261,7 +265,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     status_text.empty()
     progress_bar.empty()
 
-    # --- ANZEIGE ---
+    # Anzeige der Kacheln
     if not all_results:
         st.warning("Keine Treffer gefunden.")
     else:
@@ -396,6 +400,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
