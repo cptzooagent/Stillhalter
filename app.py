@@ -167,61 +167,16 @@ def get_analyst_conviction(info):
     except:
         return "🔍 Check nötig", "#7f8c8d"
 
-# --- SEKTION 1: KOMBI-SCAN (QUALITÄT & ANALYTIK) ---
-st.markdown("---")
-st.header(f"🔍 Qualitäts-Scan: >{min_mkt_cap} Mrd. $")
-
-# Nur ein Button/Checkbox hier!
-test_modus = st.sidebar.checkbox("🛠️ Simulations-Modus (für Test vor 15:30)", key="sim_checkbox")
-
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     puffer_limit = otm_puffer_slider / 100 
     mkt_cap_limit = min_mkt_cap * 1_000_000_000
     
-    with st.spinner("Starte High-Speed Markt-Scan..."):
+    with st.spinner("Analysiere Markt..."):
         if test_modus:
-            ticker_liste = ["APP", "AVGO", "NET", "CRWD", "NVDA", "TSLA", "PLTR"]
+            ticker_liste = ["APP", "AVGO", "NET", "CRWD", "NVDA", "CRDO", "HOOD", "TSLA", "PLTR"]
         else:
-            full_list = get_combined_watchlist()
-            # TURBO: Wir laden nur die Marktkapitalisierung für ALLE Ticker auf einmal
-            # Das dauert ca. 5-10 Sekunden für 500 Werte statt 500 Sekunden!
-            all_data = yf.download(full_list, period="1d", group_by='ticker', threads=True, progress=False)
-            
-            # Wir filtern die Liste JETZT vor, bevor wir die langsame Schleife starten
-            ticker_liste = []
-            for symbol in full_list:
-                try:
-                    # Wir nutzen hier nur die Marktkapitalisierung als Filter
-                    # Hinweis: yf.download liefert keine marketCap, daher nehmen wir 
-                    # einen schnellen Check via Ticker-Fast-Info, falls verfügbar, 
-                    # oder bleiben bei der Liste, filtern aber effizienter.
-                    ticker_liste = full_list # Hier optimieren wir die Schleife unten
-                except: continue
-
-    # --- DIE OPTIMIERTE SCHLEIFE ---
-    all_results = []
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-
-    for i, symbol in enumerate(ticker_liste):
-        progress_bar.progress((i + 1) / len(ticker_liste))
-        status_text.text(f"Analysiere {symbol} ({i+1}/{len(ticker_liste)})")
-        
-        tk = yf.Ticker(symbol)
-        
-        # TRICK: Wir nutzen 'fast_info' statt 'info'. Das ist 10x schneller!
-        try:
-            mkt_cap = tk.fast_info['market_cap']
-            if not test_modus and mkt_cap < mkt_cap_limit:
-                continue # Sofort zum nächsten Ticker, ohne Zeit zu verlieren
-        except:
-            # Falls fast_info nicht klappt, doch kurz info checken
-            if not test_modus and tk.info.get('marketCap', 0) < mkt_cap_limit:
-                continue
-
-        # NUR WENN DER CAP-FILTER PASST, GEHEN WIR IN DIE TIEFE ANALYSE
-        try:
-            # ... (Rest deines Codes: get_stock_data_full, Options-Suche etc.)
+            # Holt die volle S&P 500 / Nasdaq Liste
+            ticker_liste = get_combined_watchlist()
     
     status_text = st.empty()
     progress_bar = st.progress(0)
@@ -229,34 +184,32 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     
     for i, symbol in enumerate(ticker_liste):
         progress_bar.progress((i + 1) / len(ticker_liste))
-        status_text.text(f"Checke {symbol}...")
+        status_text.text(f"Checke {symbol} ({i+1}/{len(ticker_liste)})...")
         
         try:
             tk = yf.Ticker(symbol)
-            info = tk.info
             
-            # 1. MARKTKAPITALISIERUNGS-FILTER
-            current_mkt_cap = info.get('marketCap', 0)
+            # --- TURBO-FILTER: Marktkapitalisierung via fast_info ---
+            try:
+                current_mkt_cap = tk.fast_info['market_cap']
+            except:
+                current_mkt_cap = tk.info.get('marketCap', 0)
+                
             if not test_modus and current_mkt_cap < mkt_cap_limit:
                 continue
-            
-            # 2. DATENBESCHAFFUNG (LIVE ODER TEST)
+
+            # --- DATENBESCHAFFUNG ---
             if test_modus:
-                price = info.get('currentPrice', 150.0)
-                rsi = 35 if symbol in ["NET", "SE"] else 55
-                uptrend = False if symbol in ["GTM", "SE"] else True
-                earn = "18.02."
-                max_y = 18.2
-                strike = price * 0.88
-                puffer = 12.0
-                tage = 18
-                bid = 2.45
+                price = tk.info.get('currentPrice', 150.0)
+                rsi, uptrend, earn, max_y = 55, True, "18.02.", 18.2
+                strike, puffer, tage, bid = price * 0.88, 12.0, 18, 2.45
+                info = tk.info # Für Analysten-Check
             else:
                 res = get_stock_data_full(symbol)
                 if res[0] is None: continue
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
                 
-                # Earnings-Check (11 Tage Puffer zur Sicherheit)
+                # Earnings-Check (11 Tage Puffer)
                 heute = datetime.now()
                 max_days_allowed = 24
                 if earn and "." in earn:
@@ -269,10 +222,10 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 
                 if max_days_allowed < 11: continue
                 
-                # Options-Suche (Deine bewährte Logik)
+                # Options-Suche
                 valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= max_days_allowed]
-                best_opt = None
-                max_y = -1
+                best_opt, max_y = None, -1
+                
                 for d_str in valid_dates:
                     chain = tk.option_chain(d_str).puts
                     target_strike = price * (1 - puffer_limit)
@@ -289,45 +242,37 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 if not best_opt or max_y < min_yield_pa: continue
                 strike, tage, bid = best_opt['strike'], best_opt['days'], best_opt['bid']
                 puffer = ((price - strike) / price) * 100
+                info = tk.info
 
-            # 3. ANALYSTEN-CHECK & ANZEIGE-LABELS
+            # Analysten-Check & Label
             analyst_txt, analyst_col = get_analyst_conviction(info)
             status_label = "🛡️ Trend-Follower" if uptrend else "💎 Quality-Dip"
             
             all_results.append({
                 'symbol': symbol, 'price': price, 'y_pa': max_y, 
-                'strike': strike, 'puffer': puffer,
-                'bid': bid, 'rsi': rsi, 'earn': earn, 
-                'tage': tage, 'status': status_label,
+                'strike': strike, 'puffer': puffer, 'bid': bid, 
+                'rsi': rsi, 'earn': earn, 'tage': tage, 'status': status_label,
                 'mkt_cap': current_mkt_cap / 1_000_000_000,
                 'analyst_txt': analyst_txt, 'analyst_col': analyst_col
             })
-        except: continue
+        except:
+            continue
 
     status_text.empty()
     progress_bar.empty()
 
-    # --- ANZEIGE DER KACHELN (TRADING-READY) ---
+    # --- ANZEIGE ---
     if not all_results:
-        st.warning("Keine Treffer gefunden (Checke Filter-Einstellungen oder Earnings-Termine).")
+        st.warning("Keine Treffer gefunden.")
     else:
-        # Sortierung nach höchster Rendite
         all_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
         cols = st.columns(4)
-        
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
-                # Status-Farbe bestimmen
                 s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-                
                 with st.container(border=True):
-                    # 1. Kopfzeile mit Trend/Dip Label
                     st.markdown(f"**{res['symbol']}** <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
-                    
-                    # 2. Haupt-Metrik
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
-                    
-                    # 3. TRADING BOX: Hier stehen die Befehle für 15:30 Uhr
                     st.markdown(f"""
                     <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 1px solid #e0e0e0; margin-bottom: 8px;">
                         <div style="display: flex; justify-content: space-between; font-size: 0.9em;">
@@ -340,17 +285,8 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                         </div>
                     </div>
                     """, unsafe_allow_html=True)
-
-                    # 4. Analysten- & Qualitäts-Info
-                    st.markdown(f"""
-                    <div style="font-size: 0.85em; line-height:1.4;">
-                        <b>Cap: {res['mkt_cap']:.1f} Mrd. $</b> | RSI: {res['rsi']:.0f}<br>
-                        ER: {res['earn']}
-                        <div style="margin-top:8px; padding:8px; border-radius:6px; background:#ffffff; border-left:5px solid {res['analyst_col']}; color:{res['analyst_col']}; font-weight:bold; font-size:0.85em; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-                            {res['analyst_txt']}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    st.markdown(f"<div style='font-size: 0.85em;'><b>Cap: {res['mkt_cap']:.1f} Mrd. $</b> | RSI: {res['rsi']:.0f} | ER: {res['earn']}</div>", unsafe_allow_html=True)
+                    st.markdown(f"<div style='margin-top:8px; padding:8px; border-radius:6px; background:#ffffff; border-left:5px solid {res['analyst_col']}; color:{res['analyst_col']}; font-weight:bold; font-size:0.85em;'>{res['analyst_txt']}</div>", unsafe_allow_html=True)
                     
 # --- SEKTION 2: SMART DEPOT-MANAGER (REPAIR VERSION) ---
 st.markdown("### 💼 Smart Depot-Manager (Aktiv)")
@@ -460,6 +396,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
