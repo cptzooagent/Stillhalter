@@ -102,94 +102,92 @@ with st.sidebar:
     st.markdown("---")
     st.info("💡 Profi-Tipp: Für den S&P 500 Scan ab 16:00 Uhr 'Simulations-Modus' deaktivieren.")
     
-# 1. HILFSFUNKTIONEN (Ganz oben im Skript)
+# --- HILFSFUNKTIONEN FÜR DAS DASHBOARD ---
 
 def get_market_data():
     try:
-        # ^IXIC ist der Nasdaq Composite, ^NDX wäre der Nasdaq 100
+        # Nasdaq & VIX
         ndq = yf.Ticker("^IXIC")
         vix = yf.Ticker("^VIX")
         btc = yf.Ticker("BTC-USD")
         
-        # '1mo' reicht für SMA20 und RSI14 aus und ist schneller
-        h_ndq = ndq.history(period="1mo")
-        h_vix = vix.history(period="5d")
-        h_btc = btc.history(period="5d")
+        h_ndq = ndq.history(period="60d")
+        h_vix = vix.history(period="1d")
+        h_btc = btc.history(period="1d")
         
-        if h_ndq.empty: return 0, 50, 0, 20, 0
-        
-        # Aktuelle Kurse
+        # Nasdaq Berechnung
         cp_ndq = h_ndq['Close'].iloc[-1]
-        v_val = h_vix['Close'].iloc[-1]
-        b_val = h_btc['Close'].iloc[-1]
-        
-        # SMA20 & Trend
         sma20_ndq = h_ndq['Close'].rolling(window=20).mean().iloc[-1]
         dist_ndq = ((cp_ndq - sma20_ndq) / sma20_ndq) * 100
         
-        # RSI 14 Berechnung
+        # Nasdaq RSI
         delta = h_ndq['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         rsi_ndq = 100 - (100 / (1 + rs)).iloc[-1]
         
+        # VIX & BTC
+        v_val = h_vix['Close'].iloc[-1]
+        b_val = h_btc['Close'].iloc[-1]
+        
         return cp_ndq, rsi_ndq, dist_ndq, v_val, b_val
-    except Exception as e:
-        print(f"Fehler Marktdaten: {e}")
+    except:
         return 0, 50, 0, 20, 0
 
 def get_crypto_fg():
     try:
-        r = requests.get("https://api.alternative.me/fng/", timeout=5)
+        import requests
+        r = requests.get("https://api.alternative.me/fng/")
         return int(r.json()['data'][0]['value'])
     except:
-        return 50 # Neutraler Fallback
+        return 50
 
-# --- HAUPT-BLOCK (Nach st.title einfügen) ---
+# --- HAUPT-BLOCK: GLOBAL MONITORING ---
 
 st.markdown("## 🌍 Globales Markt-Monitoring")
 
 # Daten abrufen
 cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
-crypto_fg_val = get_crypto_fg()
-stock_fg_val = 50 # Hier kannst du deine CNN-Funktion einhängen
+crypto_fg = get_crypto_fg()
+# Hinweis: fg_val (Stock) müsstest du aus deiner vorhandenen Funktion nehmen
+stock_fg = 50 # Platzhalter, falls deine Funktion anders heißt
 
-# Banner-Logik (Kombiniert Preis-Trend und Angst)
-if dist_ndq < -1.5 or vix_val > 24:
-    m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Nasdaq Schwächephase"
-    m_advice = "Erhöhtes Risiko für Puts. Fokus auf Absicherung."
-elif rsi_ndq > 72 or stock_fg_val > 80:
-    m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT: Korrekturgefahr (Gier hoch)"
-    m_advice = "Engere Stopps nutzen, keine gierigen Einstiege."
+# Master-Banner Logik
+if dist_ndq < -2 or vix_val > 25:
+    m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Nasdaq-Schwäche / Hohe Volatilität"
+    m_advice = "Defensiv agieren. Fokus auf Call-Verkäufe zur Depot-Absicherung."
+elif rsi_ndq > 72 or stock_fg > 80:
+    m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT: Korrekturgefahr (Gier/RSI hoch)"
+    m_advice = "Keine neuen Puts mit engem Puffer. Gewinne sichern."
 else:
-    m_color, m_text = "#27ae60", "✅ TRENDSTARK: Marktumfeld konstruktiv"
-    m_advice = "Puts auf Qualitätsaktien bei Dips bevorzugt."
+    m_color, m_text = "#27ae60", "✅ TRENDSTARK: Marktumfeld ist konstruktiv"
+    m_advice = "Puts auf starke Aktien bei Rücksetzern möglich."
 
 st.markdown(f"""
-    <div style="background-color: {m_color}; color: white; padding: 18px; border-radius: 12px; text-align: center; margin-bottom: 25px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-        <h2 style="margin:0; font-size: 1.6em; font-weight: bold;">{m_text}</h2>
-        <p style="margin:5px 0 0 0; font-size: 1.1em; opacity: 0.9;">{m_advice}</p>
+    <div style="background-color: {m_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
+        <h3 style="margin:0; font-size: 1.4em;">{m_text}</h3>
+        <p style="margin:0; opacity: 0.9;">{m_advice}</p>
     </div>
 """, unsafe_allow_html=True)
 
-# 2x3 Raster für die Metriken
+# Das 2x3 Raster
 r1c1, r1c2, r1c3 = st.columns(3)
 r2c1, r2c2, r2c3 = st.columns(3)
 
 with r1c1:
-    st.metric("Nasdaq Composite", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
+    st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
 with r1c2:
     st.metric("Bitcoin", f"{btc_val:,.0f} $")
 with r1c3:
-    st.metric("VIX (Angst)", f"{vix_val:.2f}", delta="PANIK" if vix_val > 22 else "Normal", delta_color="inverse")
+    st.metric("VIX (Angst)", f"{vix_val:.2f}", delta="HOCH" if vix_val > 22 else "Normal", delta_color="inverse")
 
 with r2c1:
-    st.metric("Fear & Greed (Stock)", f"{stock_fg_val}")
+    st.metric("Fear & Greed (Stock)", f"{stock_fg}")
 with r2c2:
-    st.metric("Fear & Greed (Crypto)", f"{crypto_fg_val_val}" if 'crypto_fg_val' in locals() else crypto_fg_val)
+    st.metric("Fear & Greed (Crypto)", f"{crypto_fg}")
 with r2c3:
-    st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="Überkauft" if rsi_ndq > 70 else None, delta_color="inverse")
+    st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_ndq > 70 else None, delta_color="inverse")
 
 st.markdown("---")
 
@@ -510,4 +508,5 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
