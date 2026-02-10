@@ -101,7 +101,6 @@ with st.sidebar:
     
     st.markdown("---")
     st.info("💡 Profi-Tipp: Für den S&P 500 Scan ab 16:00 Uhr 'Simulations-Modus' deaktivieren.")
-
     
 # --- DAS ULTIMATIVE MARKT-DASHBOARD (4 SPALTEN MIT DELTAS) ---
 st.markdown("## 📊 Globales Marktwetter")
@@ -470,8 +469,3 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
-
-
-
-
-
