@@ -179,13 +179,12 @@ def get_analyst_conviction(info):
 
 
 
-# --- SEKTION 1: KOMBI-SCAN (QUALITÄTS-PRIORISIERTE VERSION) ---
+# --- SEKTION 1: KOMBI-SCAN (FINALE STERNE-EDITION) ---
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     puffer_limit = otm_puffer_slider / 100 
     mkt_cap_limit = min_mkt_cap * 1_000_000_000
     
     with st.spinner("Lade Ticker-Liste..."):
-        # Wahl zwischen Favoriten (Test) und Gesamtmarkt (Echt)
         if test_modus:
             ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR"]
         else:
@@ -202,7 +201,6 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         
         try:
             tk = yf.Ticker(symbol)
-            # 1. Vorab-Checks (Preis & Cap)
             info = tk.info
             curr_price = info.get('currentPrice', 0)
             m_cap = info.get('marketCap', 0)
@@ -210,14 +208,13 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             if m_cap < mkt_cap_limit: continue
             if not (min_stock_price <= curr_price <= max_stock_price): continue
             
-            # 2. Basis-Indikatoren laden
             res = get_stock_data_full(symbol)
             if res[0] is None: continue
             price, dates, earn, rsi, uptrend, near_lower, atr = res
             
             if only_uptrend and not uptrend: continue
 
-            # 3. Dynamische Laufzeit (11-24 Tage + Earnings-Schutz)
+            # Laufzeit-Logik (11-24 Tage)
             heute = datetime.now()
             max_days_allowed = 24
             if earn and "." in earn:
@@ -233,8 +230,6 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             
             target_date = valid_dates[0]
             chain = tk.option_chain(target_date).puts
-            
-            # 4. Strike-Suche
             target_strike = price * (1 - puffer_limit)
             opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
             
@@ -246,48 +241,44 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 
                 if y_pa >= min_yield_pa:
                     analyst_txt, analyst_col = get_analyst_conviction(info)
+                    
+                    # --- STERNE BERECHNUNG ---
+                    stars = 0
+                    if "HYPER" in analyst_txt: stars += 2
+                    elif "Stark" in analyst_txt: stars += 1
+                    if uptrend: stars += 1
+                    if "Warnung" in analyst_txt: stars = 0
+                    
                     all_results.append({
                         'symbol': symbol, 'price': price, 'y_pa': y_pa, 
                         'strike': o['strike'], 'puffer': ((price - o['strike']) / price) * 100,
                         'bid': bid_val, 'rsi': rsi, 'earn': earn if earn else "n.a.", 
                         'tage': days, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                        'mkt_cap': m_cap / 1_000_000_000,
-                        'analyst_txt': analyst_txt, 'analyst_col': analyst_col
+                        'stars': "⭐" * stars if stars > 0 else "",
+                        'analyst_txt': analyst_txt, 'analyst_col': analyst_col,
+                        'mkt_cap': m_cap / 1_000_000_000
                     })
         except: continue
 
     status_text.empty()
     progress_bar.empty()
 
-    # --- ANZEIGE & SORTIERUNG NACH QUALITÄT ---
     if not all_results:
         st.warning("Keine Treffer gefunden.")
     else:
-        # Prioritäts-Score berechnen (Hyper-Growth > Stark > Trend > Dip > Warnung)
-        def get_priority_score(item):
-            score = 0
-            if "🚀 HYPER" in item['analyst_txt']: score += 1000
-            elif "✅ Stark" in item['analyst_txt']: score += 800
-            elif "💎 Quality-Dip" in item['analyst_txt']: score += 600
-            elif "⚠️ Warnung" in item['analyst_txt']: score -= 1000
-            
-            if "🛡️ Trend" in item['status']: score += 100
-            # Rendite als kleiner Bonus für das Ranking innerhalb der Gruppe
-            score += (item['y_pa'] / 10)
-            return score
+        # Sortierung: Sterne-Anzahl zuerst, dann Rendite
+        all_results = sorted(all_results, key=lambda x: (len(x['stars']), x['y_pa']), reverse=True)
 
-        all_results = sorted(all_results, key=get_priority_score, reverse=True)
-
-        st.markdown(f"### 🎯 Beste Setups ({len(all_results)} Treffer)")
+        st.markdown(f"### 🎯 Top-Setups nach Qualität ({len(all_results)} Treffer)")
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
                 s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-                # Rahmen-Highlight für Top-Werte
-                border_color = res['analyst_col'] if ("HYPER" in res['analyst_txt'] or "Stark" in res['analyst_txt']) else "#e0e0e0"
+                border_color = res['analyst_col'] if len(res['stars']) >= 2 else "#e0e0e0"
                 
                 with st.container(border=True):
-                    st.markdown(f"**{res['symbol']}** <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
+                    # Header mit Symbol und Sternen
+                    st.markdown(f"**{res['symbol']}** {res['stars']} <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
                     
                     st.markdown(f"""
@@ -411,6 +402,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
