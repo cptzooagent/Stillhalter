@@ -333,7 +333,7 @@ for i, item in enumerate(depot_data):
                 
                 if earn: st.warning(f"📅 ER: {earn}")
 
-# --- SEKTION 3: PROFICHECK MIT AMPEL & STYLED TABELLE ---
+# --- SEKTION 3: PROFICHECK MIT AMPEL & STYLED TABELLE (REPARIERT) ---
 st.markdown("### 🔍 Profi-Einzelcheck & Sicherheits-Ampel")
 symbol_input = st.text_input("Ticker Symbol", value="MU").upper()
 
@@ -364,7 +364,7 @@ if symbol_input:
 
                 # 1. Visuelle Haupt-Ampel
                 st.markdown(f"""
-                    <div style="background-color: {ampel_color}; color: white; padding: 20px; border-radius: 15px; text-align: center; margin-bottom: 20px;">
+                    <div style="background-color: {ampel_color}; color: white; padding: 20px; border-radius: 15px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
                         <h2 style="margin:0; font-size: 2em;">● {ampel_text}</h2>
                         <span style="font-size: 1.1em;">{symbol_input} | {"⭐" * int(stars)} | RSI: {int(rsi)}</span>
                     </div>
@@ -375,10 +375,11 @@ if symbol_input:
                 st.subheader(f"🎯 Put-Optionen für {symbol_input}")
                 
                 heute = datetime.now()
-                valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 24]
-                
-                # Erweitert auf ca. 1 bis 5 Wochen Laufzeit
+                # ERWEITERTES FENSTER: 5 bis 35 Tage
                 valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
+                
+                if not valid_dates:
+                    st.warning("Keine passenden Verfallstage (5-35 Tage) gefunden.")
                 else:
                     target_date = st.selectbox("Wähle Verfallstag", valid_dates)
                     chain = tk.option_chain(target_date).puts
@@ -393,12 +394,15 @@ if symbol_input:
                     df_disp = chain[(chain['strike'] < price) & (chain['Puffer %'] < 25)].copy()
                     df_disp = df_disp.sort_values('strike', ascending=False)
 
-                    # Ampel-Styling Funktion für die Zeilen
+                    # Ampel-Styling Funktion für die Zeilen (korrekt eingerückt)
                     def style_rows(row):
                         p = row['Puffer %']
-                        if p >= 12: color = 'background-color: rgba(39, 174, 96, 0.15)' 
-                        elif 8 <= p < 12: color = 'background-color: rgba(241, 196, 15, 0.15)'
-                        else: color = 'background-color: rgba(231, 76, 60, 0.15)'
+                        if p >= 12: 
+                            color = 'background-color: rgba(39, 174, 96, 0.15)' 
+                        elif 8 <= p < 12: 
+                            color = 'background-color: rgba(241, 196, 15, 0.15)'
+                        else: 
+                            color = 'background-color: rgba(231, 76, 60, 0.15)'
                         return [color] * len(row)
 
                     # Tabelle formatieren und anzeigen
@@ -407,8 +411,8 @@ if symbol_input:
                         'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
                     })
                     
-                    st.dataframe(styled_df, use_container_width=True, height=400)
-                    st.caption("🟢 >12% Puffer | 🟡 8-12% Puffer | 🔴 <8% Puffer")
+                    st.dataframe(styled_df, use_container_width=True, height=450)
+                    st.caption("🟢 >12% Puffer (Sicher) | 🟡 8-12% Puffer (Moderat) | 🔴 <8% Puffer (Aggressiv)")
 
     except Exception as e:
         st.error(f"Fehler im Einzelcheck: {e}")
