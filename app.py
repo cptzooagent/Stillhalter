@@ -266,26 +266,48 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     status_text.empty()
     progress_bar.empty()
 
-    # --- ANZEIGE DER KACHELN ---
+    # --- ANZEIGE DER KACHELN (TRADING-READY) ---
     if not all_results:
         st.warning("Keine Treffer gefunden (Checke Filter-Einstellungen oder Earnings-Termine).")
     else:
+        # Sortierung nach höchster Rendite
         all_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
         cols = st.columns(4)
+        
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
-                # Status-Farbe
+                # Status-Farbe bestimmen
                 s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
+                
                 with st.container(border=True):
+                    # 1. Kopfzeile mit Trend/Dip Label
                     st.markdown(f"**{res['symbol']}** <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
+                    
+                    # 2. Haupt-Metrik
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
+                    
+                    # 3. TRADING BOX: Hier stehen die Befehle für 15:30 Uhr
+                    st.markdown(f"""
+                    <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 1px solid #e0e0e0; margin-bottom: 8px;">
+                        <div style="display: flex; justify-content: space-between; font-size: 0.9em;">
+                            <span>🎯 Strike: <b>{res['strike']:.1f}$</b></span>
+                            <span>💰 Bid: <b>{res['bid']:.2f}$</b></span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 0.9em; margin-top: 4px;">
+                            <span>🛡️ Puffer: <b>{res['puffer']:.1f}%</b></span>
+                            <span>⏳ Tage: <b>{res['tage']}</b></span>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # 4. Analysten- & Qualitäts-Info
                     st.markdown(f"""
                     <div style="font-size: 0.85em; line-height:1.4;">
-                    <b>Cap: {res['mkt_cap']:.1f} Mrd. $</b> | RSI: {res['rsi']:.0f}<br>
-                    Puffer: {res['puffer']:.1f}% | ER: {res['earn']}<br>
-                    <div style="margin-top:8px; padding:8px; border-radius:6px; background:#f0f2f6; border-left:5px solid {res['analyst_col']}; color:{res['analyst_col']}; font-weight:bold; font-size:0.85em;">
-                        {res['analyst_txt']}
-                    </div>
+                        <b>Cap: {res['mkt_cap']:.1f} Mrd. $</b> | RSI: {res['rsi']:.0f}<br>
+                        ER: {res['earn']}
+                        <div style="margin-top:8px; padding:8px; border-radius:6px; background:#ffffff; border-left:5px solid {res['analyst_col']}; color:{res['analyst_col']}; font-weight:bold; font-size:0.85em; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                            {res['analyst_txt']}
+                        </div>
                     </div>
                     """, unsafe_allow_html=True)
                     
@@ -397,3 +419,4 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
