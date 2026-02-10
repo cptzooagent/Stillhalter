@@ -333,7 +333,7 @@ for i, item in enumerate(depot_data):
                 
                 if earn: st.warning(f"📅 ER: {earn}")
 
-# --- SEKTION: PROFICHECK MIT AMPEL & DATEN-TABELLE ---
+# --- SEKTION 3: PROFICHECK MIT AMPEL & STYLED TABELLE ---
 st.markdown("### 🔍 Profi-Einzelcheck & Sicherheits-Ampel")
 symbol_input = st.text_input("Ticker Symbol", value="MU").upper()
 
@@ -348,21 +348,21 @@ if symbol_input:
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
                 analyst_txt, analyst_col = get_analyst_conviction(info)
                 
-                # Sterne-Logik
+                # Sterne-Logik für die Haupt-Ampel
                 stars = 0
                 if "HYPER" in analyst_txt: stars = 3
                 elif "Stark" in analyst_txt: stars = 2
                 elif "Neutral" in analyst_txt: stars = 1
                 if uptrend and stars > 0: stars += 0.5
                 
-                # Ampel-Logik
+                # Haupt-Ampel Logik
                 ampel_color, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
                 if stars >= 2.5 and uptrend and rsi < 60:
                     ampel_color, ampel_text = "#27ae60", "TOP SETUP (Sicher)"
                 elif "Warnung" in analyst_txt or rsi > 75:
                     ampel_color, ampel_text = "#e74c3c", "STOPP: ZU RISKANT"
 
-                # Darstellung der Ampel
+                # 1. Visuelle Haupt-Ampel
                 st.markdown(f"""
                     <div style="background-color: {ampel_color}; color: white; padding: 20px; border-radius: 15px; text-align: center; margin-bottom: 20px;">
                         <h2 style="margin:0; font-size: 2em;">● {ampel_text}</h2>
@@ -370,7 +370,7 @@ if symbol_input:
                     </div>
                 """, unsafe_allow_html=True)
 
-                # --- VERBESSERTE TABELLE MIT ZEILEN-AMPEL ---
+                # 2. Option-Chain Bereich
                 st.write("---")
                 st.subheader(f"🎯 Put-Optionen für {symbol_input}")
                 
@@ -378,45 +378,37 @@ if symbol_input:
                 valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 24]
                 
                 if not valid_dates:
-                    st.warning("Keine passenden Laufzeiten (11-24 Tage) gefunden.")
+                    st.warning("Keine passenden Verfallstage (11-24 Tage) gefunden.")
                 else:
                     target_date = st.selectbox("Wähle Verfallstag", valid_dates)
                     chain = tk.option_chain(target_date).puts
                     days_to_expiry = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                     
-                    # Berechnungen
+                    # Berechnungen für die Tabelle
                     chain['strike'] = chain['strike'].astype(float)
                     chain['Puffer %'] = ((price - chain['strike']) / price) * 100
                     chain['Yield p.a. %'] = (chain['bid'] / chain['strike']) * (365 / max(1, days_to_expiry)) * 100
                     
                     # Filter: Nur OTM bis 25% Puffer
-                    df_display = chain[(chain['strike'] < price) & (chain['Puffer %'] < 25)].copy()
-                    df_display = df_display.sort_values('strike', ascending=False)
+                    df_disp = chain[(chain['strike'] < price) & (chain['Puffer %'] < 25)].copy()
+                    df_disp = df_disp.sort_values('strike', ascending=False)
 
-                    # --- AMPEL-STYLING FUNKTION ---
-                    def style_strike_rows(row):
-                        """Färbt Zeilen basierend auf dem Puffer-Risiko ein"""
-                        puffer = row['Puffer %']
-                        # Grün: Sicherer Bereich (> 12% Puffer)
-                        if puffer >= 12:
-                            color = 'background-color: rgba(39, 174, 96, 0.2)' 
-                        # Gelb: Moderat (8% - 12% Puffer)
-                        elif 8 <= puffer < 12:
-                            color = 'background-color: rgba(241, 196, 15, 0.2)'
-                        # Rot: Riskant (< 8% Puffer)
-                        else:
-                            color = 'background-color: rgba(231, 76, 60, 0.2)'
+                    # Ampel-Styling Funktion für die Zeilen
+                    def style_rows(row):
+                        p = row['Puffer %']
+                        if p >= 12: color = 'background-color: rgba(39, 174, 96, 0.15)' 
+                        elif 8 <= p < 12: color = 'background-color: rgba(241, 196, 15, 0.15)'
+                        else: color = 'background-color: rgba(231, 76, 60, 0.15)'
                         return [color] * len(row)
 
-                    # Tabelle mit Styling anzeigen
-                    styled_df = df_display[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].style.apply(style_strike_rows, axis=1).format({
-                        'strike': '{:.1f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $',
+                    # Tabelle formatieren und anzeigen
+                    styled_df = df_disp[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].style.apply(style_rows, axis=1).format({
+                        'strike': '{:.2f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $',
                         'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
                     })
                     
-                    st.dataframe(styled_df, use_container_width=True, height=450)
-                    
-                    st.caption("🟢 >12% Puffer (Sicher) | 🟡 8-12% Puffer (Moderat) | 🔴 <8% Puffer (Aggressiv)")
+                    st.dataframe(styled_df, use_container_width=True, height=400)
+                    st.caption("🟢 >12% Puffer | 🟡 8-12% Puffer | 🔴 <8% Puffer")
 
-
-
+    except Exception as e:
+        st.error(f"Fehler im Einzelcheck: {e}")
