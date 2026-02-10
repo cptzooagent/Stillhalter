@@ -295,44 +295,70 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                         </div>
                     """, unsafe_allow_html=True)
                     
-# --- SEKTION 2: SMART DEPOT-MANAGER (REPAIR VERSION) ---
-st.markdown("### 💼 Smart Depot-Manager (Aktiv)")
-depot_data = [
-    {'Ticker': 'AFRM', 'Einstand': 76.00}, {'Ticker': 'HOOD', 'Einstand': 120.0},
-    {'Ticker': 'JKS', 'Einstand': 50.00}, {'Ticker': 'GTM', 'Einstand': 17.00},
-    {'Ticker': 'HIMS', 'Einstand': 37.00}, {'Ticker': 'NVO', 'Einstand': 97.00},
-    {'Ticker': 'RBRK', 'Einstand': 70.00}, {'Ticker': 'SE', 'Einstand': 170.00},
-    {'Ticker': 'ETSY', 'Einstand': 67.00}, {'Ticker': 'TTD', 'Einstand': 102.00},
-    {'Ticker': 'ELF', 'Einstand': 109.00}
-]       
+# --- SEKTION 2: INTELLIGENTER DEPOT-MANAGER (WARNSYSTEM & REPARATUR) ---
+st.markdown("### 🛠️ Depot-Manager: Live-Monitoring & Reparatur")
 
-p_cols = st.columns(4) 
-for i, item in enumerate(depot_data):
-    price, _, earn, rsi, uptrend, _, _ = get_stock_data_full(item['Ticker'])
-    if price:
-        diff = (price / item['Einstand'] - 1) * 100
-        perf_color = "#2ecc71" if diff >= 0 else "#e74c3c"
-        with p_cols[i % 4]:
-            with st.container(border=True):
-                st.markdown(f"**{item['Ticker']}** <span style='float:right; color:{perf_color}; font-weight:bold;'>{diff:+.1f}%</span>", unsafe_allow_html=True)
-                
-                # Strategie-Logik
-                if diff < -20:
-                    # Repair-Ansatz: Call 15% über aktuellem Kurs, egal wo der Einstand ist
-                    repair_strike = price * 1.15
-                    st.warning("🛠️ Repair-Modus")
-                    st.caption(f"Call @{repair_strike:.1f}$ senkt Einstand.")
-                    if rsi < 40: 
-                        st.info("Wait: RSI zu tief")
-                    else:
-                        st.success(f"Prämie einsammeln!")
-                elif rsi > 65:
-                    st.success("🟢 Call-Chance!")
+# Hier deine Ticker eintragen
+# Beispiel: HIMS (Sorgenkind), MU (Laufender Put-Trade), PLTR (Bestand)
+my_portfolio = ["HIMS", "MU", "PLTR", "DELL"] 
+
+for symbol in my_portfolio:
+    with st.expander(f"Position: {symbol}", expanded=True):
+        res = get_stock_data_full(symbol)
+        if res[0] is not None:
+            price, dates, earn, rsi, uptrend, near_lower, atr = res
+            
+            # --- LOGIK 1: WARNSYSTEM FÜR BESTEHENDE TRADES ---
+            warning_msg = "✅ Position stabil"
+            warning_col = "#27ae60" # Grün
+            
+            if rsi > 75:
+                warning_msg = "⚠️ ACHTUNG: Aktie überhitzt (Abverkauf droht!)"
+                warning_col = "#e74c3c" # Rot
+            elif rsi < 25:
+                warning_msg = "🚨 PANIK-MODUS: Aktie im freien Fall"
+                warning_col = "#c0392b"
+            elif not uptrend and rsi < 40:
+                warning_msg = "🟡 Schwächephase: Strike-Abstand prüfen"
+                warning_col = "#f1c40f" # Gelb
+
+            # --- LOGIK 2: REPARATUR-MODUS (CALL VERKAUFEN?) ---
+            call_advice = "Warten"
+            if rsi > 55:
+                call_advice = "✅ JETZT CALL VERKAUFEN (Prämie hoch)"
+            elif rsi < 35:
+                call_advice = "🚫 Warten (Prämie zu niedrig)"
+
+            # --- DARSTELLUNG ---
+            # Header-Leiste mit Warnstatus
+            st.markdown(f"""
+                <div style="background:{warning_col}; color:white; padding:10px; border-radius:5px; text-align:center; font-weight:bold; margin-bottom:15px;">
+                    {warning_msg}
+                </div>
+            """, unsafe_allow_html=True)
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Kurs", f"{price:.2f} $")
+            c2.metric("RSI", f"{int(rsi)}")
+            c3.metric("Earnings", earn if earn else "n.a.")
+            c4.metric("Call-Check", call_advice)
+
+            # Option-Chain für Reparatur-Calls einblenden
+            if st.checkbox(f"Call-Optionen für {symbol} zur Reparatur laden"):
+                tk = yf.Ticker(symbol)
+                # Wir suchen Calls für die nächsten 15-40 Tage
+                valid_dates = [d for d in dates if 15 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 40]
+                if valid_dates:
+                    target_date = st.selectbox(f"Verfallstag für {symbol}", valid_dates, key=f"call_{symbol}")
+                    chain = tk.option_chain(target_date).calls
+                    # Nur Calls über dem aktuellen Kurs anzeigen
+                    chain = chain[chain['strike'] > price].sort_values('strike')
+                    
+                    st.dataframe(chain[['strike', 'bid', 'ask', 'volume', 'openInterest']].head(10).style.format({
+                        'strike': '{:.1f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $'
+                    }), use_container_width=True)
                 else:
-                    st.info("⏳ Seitwärts")
-                
-                if earn: st.warning(f"📅 ER: {earn}")
-
+                    st.info("Keine passenden Call-Laufzeiten gefunden.")
 # --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
 symbol_input = st.text_input("Ticker Symbol", value="MU", help="Gib ein Ticker-Symbol ein").upper()
@@ -434,3 +460,4 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
