@@ -179,16 +179,15 @@ def get_analyst_conviction(info):
 
 
 
-# --- SEKTION 1: KOMBI-SCAN (FINALE QUALITÄTS-SORTIERUNG) ---
+# --- Sektion 1 Marktscann
+# --- SEKTION 1: KOMBI-SCAN (S&P 500 + NASDAQ) ---
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     puffer_limit = otm_puffer_slider / 100 
     mkt_cap_limit = min_mkt_cap * 1_000_000_000
     
     with st.spinner("Lade Ticker-Liste..."):
-        if test_modus:
-            ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR"]
-        else:
-            ticker_liste = get_combined_watchlist()
+        # Logik: Testliste oder echte Watchlist
+        ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR"] if test_modus else get_combined_watchlist()
     
     status_text = st.empty()
     progress_bar = st.progress(0)
@@ -196,40 +195,37 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     
     for i, symbol in enumerate(ticker_liste):
         progress_bar.progress((i + 1) / len(ticker_liste))
-        if i % 3 == 0: 
+        if i % 3 == 0: # UI-Update alle 3 Ticker
             status_text.text(f"Analysiere {i}/{len(ticker_liste)}: {symbol}...")
         
         try:
             tk = yf.Ticker(symbol)
+            # 1. Schnelle Vorab-Checks (spart API-Zeit)
             info = tk.info
             curr_price = info.get('currentPrice', 0)
             m_cap = info.get('marketCap', 0)
             
+            # Filter anwenden
             if m_cap < mkt_cap_limit: continue
             if not (min_stock_price <= curr_price <= max_stock_price): continue
-            
+                
+            # 2. Vollständige Daten für Treffer laden
             res = get_stock_data_full(symbol)
             if res[0] is None: continue
             price, dates, earn, rsi, uptrend, near_lower, atr = res
             
             if only_uptrend and not uptrend: continue
 
-            # Laufzeit-Logik (11-24 Tage + Earnings-Schutz)
+            # 3. Options-Suche (Nächste 11-45 Tage)
             heute = datetime.now()
-            max_days_allowed = 24
-            if earn and "." in earn:
-                try:
-                    tag, monat = earn.split(".")[:2]
-                    er_datum = datetime(heute.year, int(monat), int(tag))
-                    if er_datum < heute: er_datum = datetime(heute.year + 1, int(monat), int(tag))
-                    max_days_allowed = min(24, (er_datum - heute).days - 2)
-                except: pass
-
-            valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= max_days_allowed]
+            valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
+            
             if not valid_dates: continue
             
             target_date = valid_dates[0]
             chain = tk.option_chain(target_date).puts
+            
+            # Strike & Yield Berechnung
             target_strike = price * (1 - puffer_limit)
             opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
             
@@ -241,59 +237,38 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 
                 if y_pa >= min_yield_pa:
                     analyst_txt, analyst_col = get_analyst_conviction(info)
-                    
-                    # --- VERSCHÄRFTE STERNE LOGIK ---
-                    stars = 0
-                    if "HYPER" in analyst_txt: stars = 3
-                    elif "Stark" in analyst_txt: stars = 2
-                    elif "Neutral" in analyst_txt: stars = 1
-                    if "Warnung" in analyst_txt: stars = 0
-                    
-                    # Bonus-Stern für Trend nur bei Nicht-Warnungen
-                    if uptrend and stars > 0: stars += 0.5 
-                    
                     all_results.append({
                         'symbol': symbol, 'price': price, 'y_pa': y_pa, 
                         'strike': o['strike'], 'puffer': ((price - o['strike']) / price) * 100,
-                        'bid': bid_val, 'rsi': rsi, 'earn': earn if earn else "n.a.", 
+                        'bid': bid_val, 'rsi': rsi, 'earn': earn, 
                         'tage': days, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                        'stars_val': stars, 
-                        'stars_str': "⭐" * int(stars),
-                        'analyst_txt': analyst_txt, 'analyst_col': analyst_col,
-                        'mkt_cap': m_cap / 1_000_000_000
+                        'mkt_cap': m_cap / 1_000_000_000,
+                        'analyst_txt': analyst_txt, 'analyst_col': analyst_col
                     })
-        except: continue
+        except:
+            continue
 
     status_text.empty()
     progress_bar.empty()
 
+    # --- ANZEIGE DER KACHELN ---
     if not all_results:
-        st.warning("Keine Treffer gefunden.")
+        st.warning("Keine Treffer mit den aktuellen Filtern gefunden.")
     else:
-        # SORTIERUNG: Sterne (Qualität) wiegt 1000x schwerer als die Rendite
-        all_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
-
-        st.markdown(f"### 🎯 Top-Setups nach Qualität ({len(all_results)} Treffer)")
+        all_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
                 s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-                # Rahmen-Logik für Hyper-Growth und Stark
-                border_color = res['analyst_col'] if res['stars_val'] >= 2 else "#e0e0e0"
-                
                 with st.container(border=True):
-                    st.markdown(f"**{res['symbol']}** {res['stars_str']} <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
+                    st.markdown(f"**{res['symbol']}** <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
-                    
                     st.markdown(f"""
-                        <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 2px solid {border_color}; margin-bottom: 8px; font-size: 0.85em;">
+                        <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 1px solid #e0e0e0; margin-bottom: 8px; font-size: 0.85em;">
                             🎯 Strike: <b>{res['strike']:.1f}$</b> | 💰 Bid: <b>{res['bid']:.2f}$</b><br>
                             🛡️ Puffer: <b>{res['puffer']:.1f}%</b> | ⏳ Tage: <b>{res['tage']}</b>
                         </div>
-                        <div style="font-size: 0.8em; color: #7f8c8d; margin-bottom: 5px;">
-                            📅 ER: <b>{res['earn']}</b> | Cap: {res['mkt_cap']:.1f}B
-                        </div>
-                        <div style="font-size: 0.85em; border-left: 4px solid {res['analyst_col']}; padding: 4px 8px; font-weight: bold; color: {res['analyst_col']}; background: {res['analyst_col']}10; border-radius: 0 4px 4px 0;">
+                        <div style="font-size: 0.8em; border-left: 4px solid {res['analyst_col']}; padding-left: 5px;">
                             {res['analyst_txt']}
                         </div>
                     """, unsafe_allow_html=True)
@@ -406,15 +381,3 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
-
-
-
-
-
-
-
-
-
-
-
-
