@@ -333,7 +333,7 @@ for i, item in enumerate(depot_data):
                 
                 if earn: st.warning(f"📅 ER: {earn}")
 
-# --- SEKTION: PROFICHECK MIT SICHERHEITS-AMPEL ---
+# --- SEKTION: PROFICHECK MIT AMPEL & DATEN-TABELLE ---
 st.markdown("### 🔍 Profi-Einzelcheck & Sicherheits-Ampel")
 symbol_input = st.text_input("Ticker Symbol", value="MU").upper()
 
@@ -348,52 +348,71 @@ if symbol_input:
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
                 analyst_txt, analyst_col = get_analyst_conviction(info)
                 
-                # Sterne-Logik (Sicherheit & Qualität)
+                # Sterne-Logik
                 stars = 0
                 if "HYPER" in analyst_txt: stars = 3
                 elif "Stark" in analyst_txt: stars = 2
                 elif "Neutral" in analyst_txt: stars = 1
                 if uptrend and stars > 0: stars += 0.5
                 
-                # --- AMPEL-LOGIK ---
-                # Grün: Qualität (>=2 Sterne), Trend ist oben, RSI < 60
-                # Gelb: Neutraler Wert ODER Trend ok aber RSI > 65 ODER Dip bei Top-Aktie
-                # Rot: Warnung im Text ODER RSI > 75 ODER Trend unten bei schwacher Aktie
-                
-                ampel_color = "#27ae60" # Standard Grün
-                ampel_text = "READY TO TRADE"
-                
+                # Ampel-Logik
+                ampel_color, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
                 if stars >= 2.5 and uptrend and rsi < 60:
                     ampel_color, ampel_text = "#27ae60", "TOP SETUP (Sicher)"
                 elif "Warnung" in analyst_txt or rsi > 75:
                     ampel_color, ampel_text = "#e74c3c", "STOPP: ZU RISKANT"
-                else:
-                    ampel_color, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
 
                 # Darstellung der Ampel
                 st.markdown(f"""
-                    <div style="background-color: {ampel_color}; color: white; padding: 20px; border-radius: 15px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                    <div style="background-color: {ampel_color}; color: white; padding: 20px; border-radius: 15px; text-align: center; margin-bottom: 20px;">
                         <h2 style="margin:0; font-size: 2em;">● {ampel_text}</h2>
                         <span style="font-size: 1.1em;">{symbol_input} | {"⭐" * int(stars)} | RSI: {int(rsi)}</span>
                     </div>
                 """, unsafe_allow_html=True)
 
-                # Restliche Details (Metriken)
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Kurs", f"{price:.2f}$")
-                c2.metric("Status", "🛡️ Trend" if uptrend else "💎 Dip")
-                c3.metric("RSI", f"{int(rsi)}")
-
-                with st.container(border=True):
-                    st.markdown(f"**Analysten:** {analyst_txt}")
-                    st.markdown(f"**Earnings:** {earn if earn else 'n.a.'}")
-                
-                # Option-Chain wie gehabt...
+                # --- OPTION CHAIN DATEN (DIE FEHLENDEN PUTS) ---
                 st.write("---")
-                st.subheader("🎯 Verfügbare Puts")
-                # ... [Hier folgt dein bestehender Option-Chain Code] ...
+                st.subheader(f"🎯 Put-Optionen für {symbol_input}")
+                
+                heute = datetime.now()
+                # Filter für Laufzeit 11-24 Tage
+                valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 24]
+                
+                if not valid_dates:
+                    st.warning("Keine Verfallstage zwischen 11 und 24 Tagen gefunden.")
+                else:
+                    target_date = st.selectbox("Wähle Verfallstag", valid_dates)
+                    chain = tk.option_chain(target_date).puts
+                    
+                    # Berechnungen für die Tabelle
+                    days_to_expiry = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
+                    
+                    # Hilfsfunktion für saubere Berechnung
+                    chain['strike'] = chain['strike'].astype(float)
+                    chain['Puffer %'] = ((price - chain['strike']) / price) * 100
+                    chain['Yield p.a. %'] = (chain['bid'] / chain['strike']) * (365 / max(1, days_to_expiry)) * 100
+                    
+                    # Filter: Nur OTM (Out of the Money) und nur relevante Strikes (bis 25% Puffer)
+                    df_display = chain[(chain['strike'] < price) & (chain['Puffer %'] < 25)].copy()
+                    df_display = df_display.sort_values('strike', ascending=False)
+                    
+                    # Formatierte Tabelle anzeigen
+                    st.dataframe(
+                        df_display[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].style.format({
+                            'strike': '{:.1f} $',
+                            'bid': '{:.2f} $',
+                            'ask': '{:.2f} $',
+                            'Puffer %': '{:.1f} %',
+                            'Yield p.a. %': '{:.1f} %'
+                        }),
+                        use_container_width=True,
+                        height=400
+                    )
+                    
+                    st.success(f"Gefunden: {len(df_display)} passende Strikes für den {target_date}.")
 
     except Exception as e:
-        st.error(f"Fehler bei {symbol_input}: {e}")
+        st.error(f"Fehler beim Laden der Daten: {e}")
+
 
 
