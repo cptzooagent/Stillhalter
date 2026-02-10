@@ -74,20 +74,34 @@ def get_stock_data_full(symbol):
     except:
         return None, [], "", 50, True, False, 0
 
-# --- UI: SIDEBAR --- 
-# selbst wenn der Hauptcode weiter unten einen Fehler hat.
+# --- UI: SIDEBAR (KOMPLETT-REPARATUR) ---
 with st.sidebar:
-    # ... (deine bisherigen Slider)
+    st.header("🛡️ Strategie-Einstellungen")
+    
+    # Basis-Filter
+    otm_puffer_slider = st.slider("Gewünschter Puffer (%)", 3, 25, 10, key="puffer_sid")
+    min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 0, 100, 15, key="yield_sid")
+    
+    # Der Aktienpreis-Regler
+    min_stock_price, max_stock_price = st.slider(
+        "Aktienpreis-Spanne ($)", 
+        0, 1000, (20, 500), 
+        key="price_sid"
+    )
+
     st.markdown("---")
-    st.sidebar.subheader("Qualitäts-Filter")
-    min_mkt_cap = st.sidebar.slider("Mindest-Marktkapitalisierung (Mrd. $)", 1, 100, 5)
+    st.subheader("Qualitäts-Filter")
+    
+    # Marktkapitalisierung & Trend
+    min_mkt_cap = st.slider("Mindest-Marktkapitalisierung (Mrd. $)", 1, 1000, 50, key="mkt_cap_sid")
     only_uptrend = st.checkbox("Nur Aufwärtstrend (SMA 200)", value=False, key="trend_sid")
     
-    # DIESE ZEILE MUSS HIER STEHEN:
+    # WICHTIG: Die Checkbox für den Simulationsmodus
     test_modus = st.checkbox("🛠️ Simulations-Modus (Test)", value=False, key="sim_checkbox")
     
-    st.info("Tipp: Deaktiviere den Aufwärtstrend für mehr Treffer am Wochenende.")
-
+    st.markdown("---")
+    st.info("💡 Profi-Tipp: Für den S&P 500 Scan ab 16:00 Uhr 'Simulations-Modus' deaktivieren.")
+    
 # --- DAS ULTIMATIVE MARKT-DASHBOARD (4 SPALTEN MIT DELTAS) ---
 st.markdown("## 📊 Globales Marktwetter")
 m_col1, m_col2, m_col3, m_col4 = st.columns(4)
@@ -166,17 +180,14 @@ def get_analyst_conviction(info):
 
 
 # --- Sektion 1 Marktscann
+# --- SEKTION 1: KOMBI-SCAN (S&P 500 + NASDAQ) ---
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     puffer_limit = otm_puffer_slider / 100 
     mkt_cap_limit = min_mkt_cap * 1_000_000_000
     
     with st.spinner("Lade Ticker-Liste..."):
-        if test_modus:
-            # Kleine Test-Liste für schnellen Check
-            ticker_liste = ["APP", "AVGO", "NET", "CRWD", "NVDA", "HOOD"]
-        else:
-            # Volle Liste für 16:00 Uhr
-            ticker_liste = get_combined_watchlist()
+        # Logik: Testliste oder echte Watchlist
+        ticker_liste = ["APP", "AVGO", "NET", "CRWD", "NVDA", "HOOD"] if test_modus else get_combined_watchlist()
     
     status_text = st.empty()
     progress_bar = st.progress(0)
@@ -184,39 +195,37 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     
     for i, symbol in enumerate(ticker_liste):
         progress_bar.progress((i + 1) / len(ticker_liste))
-        status_text.text(f"Checke {i}/{len(ticker_liste)}: {symbol}...")
+        if i % 3 == 0: # UI-Update alle 3 Ticker
+            status_text.text(f"Analysiere {i}/{len(ticker_liste)}: {symbol}...")
         
         try:
             tk = yf.Ticker(symbol)
-            # 1. Schneller Check der Marktkapitalisierung
-            # Wir nutzen .info nur einmal pro Ticker
-            ticker_info = tk.info
-            m_cap = ticker_info.get('marketCap', 0)
+            # 1. Schnelle Vorab-Checks (spart API-Zeit)
+            info = tk.info
+            curr_price = info.get('currentPrice', 0)
+            m_cap = info.get('marketCap', 0)
             
-            if m_cap < mkt_cap_limit:
-                continue
+            # Filter anwenden
+            if m_cap < mkt_cap_limit: continue
+            if not (min_stock_price <= curr_price <= max_stock_price): continue
                 
-            # 2. Daten laden
+            # 2. Vollständige Daten für Treffer laden
             res = get_stock_data_full(symbol)
             if res[0] is None: continue
             price, dates, earn, rsi, uptrend, near_lower, atr = res
             
-            # Trend-Filter
-            if only_uptrend and not uptrend:
-                continue
+            if only_uptrend and not uptrend: continue
 
-            # 3. Options-Suche (vereinfacht für Stabilität)
+            # 3. Options-Suche (Nächste 11-45 Tage)
             heute = datetime.now()
-            # Finde passendes Datum (zwischen 11 und 45 Tagen)
             valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
             
             if not valid_dates: continue
             
-            # Wir nehmen das nächste verfügbare Datum für den Scan
             target_date = valid_dates[0]
             chain = tk.option_chain(target_date).puts
             
-            # Strike-Suche
+            # Strike & Yield Berechnung
             target_strike = price * (1 - puffer_limit)
             opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
             
@@ -224,12 +233,10 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 o = opts.iloc[0]
                 bid_val = o['bid'] if o['bid'] > 0 else o['lastPrice']
                 days = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
-                
-                # Rendite-Berechnung
                 y_pa = (bid_val / o['strike']) * (365 / max(1, days)) * 100
                 
                 if y_pa >= min_yield_pa:
-                    analyst_txt, analyst_col = get_analyst_conviction(ticker_info)
+                    analyst_txt, analyst_col = get_analyst_conviction(info)
                     all_results.append({
                         'symbol': symbol, 'price': price, 'y_pa': y_pa, 
                         'strike': o['strike'], 'puffer': ((price - o['strike']) / price) * 100,
@@ -243,7 +250,28 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
 
     status_text.empty()
     progress_bar.empty()
-    # ... (Rest der Anzeige-Logik bleibt gleich)
+
+    # --- ANZEIGE DER KACHELN ---
+    if not all_results:
+        st.warning("Keine Treffer mit den aktuellen Filtern gefunden.")
+    else:
+        all_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
+        cols = st.columns(4)
+        for idx, res in enumerate(all_results):
+            with cols[idx % 4]:
+                s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
+                with st.container(border=True):
+                    st.markdown(f"**{res['symbol']}** <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
+                    st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
+                    st.markdown(f"""
+                        <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 1px solid #e0e0e0; margin-bottom: 8px; font-size: 0.85em;">
+                            🎯 Strike: <b>{res['strike']:.1f}$</b> | 💰 Bid: <b>{res['bid']:.2f}$</b><br>
+                            🛡️ Puffer: <b>{res['puffer']:.1f}%</b> | ⏳ Tage: <b>{res['tage']}</b>
+                        </div>
+                        <div style="font-size: 0.8em; border-left: 4px solid {res['analyst_col']}; padding-left: 5px;">
+                            {res['analyst_txt']}
+                        </div>
+                    """, unsafe_allow_html=True)
                     
 # --- SEKTION 2: SMART DEPOT-MANAGER (REPAIR VERSION) ---
 st.markdown("### 💼 Smart Depot-Manager (Aktiv)")
@@ -353,5 +381,6 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
