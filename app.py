@@ -370,49 +370,53 @@ if symbol_input:
                     </div>
                 """, unsafe_allow_html=True)
 
-                # --- OPTION CHAIN DATEN (DIE FEHLENDEN PUTS) ---
+                # --- VERBESSERTE TABELLE MIT ZEILEN-AMPEL ---
                 st.write("---")
                 st.subheader(f"🎯 Put-Optionen für {symbol_input}")
                 
                 heute = datetime.now()
-                # Filter für Laufzeit 11-24 Tage
                 valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 24]
                 
                 if not valid_dates:
-                    st.warning("Keine Verfallstage zwischen 11 und 24 Tagen gefunden.")
+                    st.warning("Keine passenden Laufzeiten (11-24 Tage) gefunden.")
                 else:
                     target_date = st.selectbox("Wähle Verfallstag", valid_dates)
                     chain = tk.option_chain(target_date).puts
-                    
-                    # Berechnungen für die Tabelle
                     days_to_expiry = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                     
-                    # Hilfsfunktion für saubere Berechnung
+                    # Berechnungen
                     chain['strike'] = chain['strike'].astype(float)
                     chain['Puffer %'] = ((price - chain['strike']) / price) * 100
                     chain['Yield p.a. %'] = (chain['bid'] / chain['strike']) * (365 / max(1, days_to_expiry)) * 100
                     
-                    # Filter: Nur OTM (Out of the Money) und nur relevante Strikes (bis 25% Puffer)
+                    # Filter: Nur OTM bis 25% Puffer
                     df_display = chain[(chain['strike'] < price) & (chain['Puffer %'] < 25)].copy()
                     df_display = df_display.sort_values('strike', ascending=False)
-                    
-                    # Formatierte Tabelle anzeigen
-                    st.dataframe(
-                        df_display[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].style.format({
-                            'strike': '{:.1f} $',
-                            'bid': '{:.2f} $',
-                            'ask': '{:.2f} $',
-                            'Puffer %': '{:.1f} %',
-                            'Yield p.a. %': '{:.1f} %'
-                        }),
-                        use_container_width=True,
-                        height=400
-                    )
-                    
-                    st.success(f"Gefunden: {len(df_display)} passende Strikes für den {target_date}.")
 
-    except Exception as e:
-        st.error(f"Fehler beim Laden der Daten: {e}")
+                    # --- AMPEL-STYLING FUNKTION ---
+                    def style_strike_rows(row):
+                        """Färbt Zeilen basierend auf dem Puffer-Risiko ein"""
+                        puffer = row['Puffer %']
+                        # Grün: Sicherer Bereich (> 12% Puffer)
+                        if puffer >= 12:
+                            color = 'background-color: rgba(39, 174, 96, 0.2)' 
+                        # Gelb: Moderat (8% - 12% Puffer)
+                        elif 8 <= puffer < 12:
+                            color = 'background-color: rgba(241, 196, 15, 0.2)'
+                        # Rot: Riskant (< 8% Puffer)
+                        else:
+                            color = 'background-color: rgba(231, 76, 60, 0.2)'
+                        return [color] * len(row)
+
+                    # Tabelle mit Styling anzeigen
+                    styled_df = df_display[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].style.apply(style_strike_rows, axis=1).format({
+                        'strike': '{:.1f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $',
+                        'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
+                    })
+                    
+                    st.dataframe(styled_df, use_container_width=True, height=450)
+                    
+                    st.caption("🟢 >12% Puffer (Sicher) | 🟡 8-12% Puffer (Moderat) | 🔴 <8% Puffer (Aggressiv)")
 
 
 
