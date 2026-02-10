@@ -216,12 +216,19 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             
             if only_uptrend and not uptrend: continue
 
-            # 3. Options-Suche (Nächste 11-45 Tage)
+            # 3. Options-Suche (Exakt 11 bis 24 Tage)
             heute = datetime.now()
-            valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
-            
-            if not valid_dates: continue
-            
+
+            # Hier filtern wir die Verfallstage
+            valid_dates = [
+                d for d in dates 
+                if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 24
+            ]
+
+            if not valid_dates: 
+            continue # Springe zum nächsten Ticker, wenn kein passendes Datum dabei ist
+
+            # Wir nehmen das erste Datum, das in dieses Fenster fällt
             target_date = valid_dates[0]
             chain = tk.option_chain(target_date).puts
             
@@ -381,6 +388,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
