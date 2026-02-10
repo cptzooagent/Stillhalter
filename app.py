@@ -187,7 +187,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     
     with st.spinner("Lade Ticker-Liste..."):
         # Logik: Testliste oder echte Watchlist
-        ticker_liste = ["APP", "AVGO", "NET", "CRWD", "NVDA", "HOOD"] if test_modus else get_combined_watchlist()
+        ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR"] if test_modus else get_combined_watchlist()
     
     status_text = st.empty()
     progress_bar = st.progress(0)
@@ -381,6 +381,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
