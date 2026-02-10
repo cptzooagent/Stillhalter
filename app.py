@@ -333,9 +333,9 @@ for i, item in enumerate(depot_data):
                 
                 if earn: st.warning(f"📅 ER: {earn}")
 
-# --- SEKTION 3: DESIGN-UPGRADE EINZELCHECK ---
+# --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
-symbol_input = st.text_input("Ticker Symbol", value="MU", help="Gib ein Ticker-Symbol ein (z.B. AAPL, NVDA, MU)").upper()
+symbol_input = st.text_input("Ticker Symbol", value="MU", help="Gib ein Ticker-Symbol ein").upper()
 
 if symbol_input:
     try:
@@ -348,22 +348,32 @@ if symbol_input:
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
                 analyst_txt, analyst_col = get_analyst_conviction(info)
                 
-                # Sterne & Ampel Logik
+                # Sterne-Logik (Basis für Qualität)
                 stars = 0
                 if "HYPER" in analyst_txt: stars = 3
                 elif "Stark" in analyst_txt: stars = 2
                 elif "Neutral" in analyst_txt: stars = 1
                 if uptrend and stars > 0: stars += 0.5
                 
+                # --- VERSCHÄRFTE AMPEL-LOGIK (PANIK-SCHUTZ) ---
                 ampel_color, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
-                if stars >= 2.5 and uptrend and rsi < 60:
+                
+                if rsi < 25:
+                    # Panik-Schutz greift zuerst
+                    ampel_color, ampel_text = "#e74c3c", "STOPP: PANIK-ABVERKAUF (RSI < 25)"
+                elif rsi > 75:
+                    ampel_color, ampel_text = "#e74c3c", "STOPP: ÜBERHITZT (RSI > 75)"
+                elif stars >= 2.5 and uptrend and 30 <= rsi <= 60:
+                    # Ideales Setup
                     ampel_color, ampel_text = "#27ae60", "TOP SETUP (Sicher)"
-                elif "Warnung" in analyst_txt or rsi > 75:
-                    ampel_color, ampel_text = "#e74c3c", "STOPP: ZU RISKANT"
+                elif "Warnung" in analyst_txt:
+                    ampel_color, ampel_text = "#e74c3c", "STOPP: ANALYSTEN-WARNUNG"
+                else:
+                    ampel_color, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
 
-                # 1. HEADER: Ampel & Basis-Infos
+                # 1. HEADER: Ampel
                 st.markdown(f"""
-                    <div style="background-color: {ampel_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
+                    <div style="background-color: {ampel_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
                         <h2 style="margin:0; font-size: 1.8em; letter-spacing: 1px;">● {ampel_text}</h2>
                     </div>
                 """, unsafe_allow_html=True)
@@ -373,17 +383,17 @@ if symbol_input:
                 with col1:
                     st.metric("Kurs", f"{price:.2f} $")
                 with col2:
-                    st.metric("RSI (14)", f"{int(rsi)}", delta="Heiß" if rsi > 70 else None, delta_color="inverse")
+                    st.metric("RSI (14)", f"{int(rsi)}", delta="PANIK" if rsi < 25 else None, delta_color="inverse")
                 with col3:
                     status_icon = "🛡️" if uptrend else "💎"
-                    st.metric("Markt-Phase", f"{status_icon} {'Trend' if uptrend else 'Dip'}")
+                    st.metric("Phase", f"{status_icon} {'Trend' if uptrend else 'Dip'}")
                 with col4:
-                    st.metric("Rating", "⭐" * int(stars))
+                    st.metric("Qualität", "⭐" * int(stars))
 
-                # 3. ANALYSTEN & FUNDAMENTALS BOX
+                # 3. ANALYSTEN BOX
                 st.markdown(f"""
                     <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 10px solid {analyst_col}; margin-top: 10px;">
-                        <h4 style="margin-top:0; color: #31333F;">💡 Analysten-Einschätzung</h4>
+                        <h4 style="margin-top:0; color: #31333F;">💡 Fundamentale Analyse</h4>
                         <p style="font-size: 1.1em; font-weight: bold; color: {analyst_col};">{analyst_txt}</p>
                         <hr style="margin: 10px 0;">
                         <span style="color: #555;">📅 Nächste Earnings: <b>{earn if earn else 'n.a.'}</b></span>
@@ -393,6 +403,7 @@ if symbol_input:
                 # 4. OPTIONEN TABELLE
                 st.markdown("### 🎯 Option-Chain Auswahl")
                 heute = datetime.now()
+                # Flexibles Fenster: 5 bis 35 Tage
                 valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
                 
                 if valid_dates:
@@ -418,10 +429,8 @@ if symbol_input:
                         'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
                     })
                     
-                    st.dataframe(styled_df, use_container_width=True, height=400)
-                    
-                    # 5. ZUSATZ-INFO (Footer)
-                    st.info(f"ℹ️ Bei Auswahl des 12%-Puffer Strikes (ca. {price*0.88:.1f} $) hast du ein hohes Sicherheitslevel.")
+                    st.dataframe(styled_df, use_container_width=True, height=450)
+                    st.caption("🟢 >12% Puffer | 🟡 8-12% Puffer | 🔴 <8% Puffer")
 
     except Exception as e:
-        st.error(f"Konnte Daten für {symbol_input} nicht vollständig laden. ({e})")
+        st.error(f"Fehler bei {symbol_input}: {e}")
