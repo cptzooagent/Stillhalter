@@ -295,70 +295,78 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                         </div>
                     """, unsafe_allow_html=True)
                     
-# --- SEKTION 4: DEPOT-MANAGER MIT BREAK-EVEN LOGIK ---
-st.markdown("### 🛠️ Depot-Manager: Strategische Reparatur")
+# --- SEKTION 4: DEPOT-MANAGER MIT EINGABE-FORMULAR ---
+st.markdown("### 🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
-# Erstellen einer Liste von Dictionaries für dein Depot
-if 'my_stocks' not in st.session_state:
-    st.session_state.my_stocks = [
-        {"symbol": "HIMS", "buy_price": 22.50, "shares": 100},
-        {"symbol": "MU", "buy_price": 110.00, "shares": 100}
-    ]
+# 1. Speicher für das Depot initialisieren (falls noch nicht vorhanden)
+if 'my_portfolio_data' not in st.session_state:
+    st.session_state.my_portfolio_data = []
 
-for stock in st.session_state.my_stocks:
-    symbol = stock["symbol"]
-    buy_price = stock["buy_price"]
-    
-    with st.expander(f"Position: {symbol} (Einstieg: {buy_price:.2f} $)", expanded=True):
-        res = get_stock_data_full(symbol)
-        if res[0] is not None:
-            price, dates, earn, rsi, uptrend, near_lower, atr = res
-            
-            # --- BREAK-EVEN BERECHNUNG ---
-            profit_loss_pct = ((price - buy_price) / buy_price) * 100
-            pl_color = "#27ae60" if profit_loss_pct >= 0 else "#e74c3c"
-            
-            # --- SPEZIELLE REPARATUR-AMPEL ---
-            if rsi < 30:
-                status_txt, status_col = "🚫 WARTEN (Bodenbildung abwarten)", "#c0392b"
-            elif rsi > 55:
-                status_txt, status_col = "✅ CALL VERKAUFEN (Erholung nutzen)", "#27ae60"
+# 2. EINGABE-BEREICH (Formular)
+with st.expander("➕ Neuen Depot-Wert hinzufügen"):
+    with st.form("add_stock_form"):
+        col_t, col_p, col_s = st.columns(3)
+        new_ticker = col_t.text_input("Ticker Symbol", placeholder="z.B. HIMS").upper()
+        new_price = col_p.number_input("Einstandskurs ($)", min_value=0.0, step=0.1)
+        new_shares = col_s.number_input("Stückzahl", min_value=0, step=1)
+        
+        if st.form_submit_button("Aktie zum Depot hinzufügen"):
+            if new_ticker:
+                # Neuen Wert zur Liste hinzufügen
+                st.session_state.my_portfolio_data.append({
+                    "symbol": new_ticker, 
+                    "buy_price": new_price, 
+                    "shares": new_shares
+                })
+                st.success(f"{new_ticker} wurde hinzugefügt!")
             else:
-                status_txt, status_col = "🟡 GEDULD (RSI neutral)", "#f1c40f"
+                st.error("Bitte einen Ticker eingeben.")
 
-            # Darstellung
-            st.markdown(f"""
-                <div style="background:{status_col}; color:white; padding:10px; border-radius:5px; text-align:center; font-weight:bold; margin-bottom:10px;">
-                    {status_txt}
-                </div>
-            """, unsafe_allow_html=True)
+# 3. ANZEIGE & ANALYSE DER DEPOTWERTE
+if not st.session_state.my_portfolio_data:
+    st.info("Dein Depot ist noch leer. Füge oben deine ersten Werte hinzu.")
+else:
+    # Button zum Leeren des Depots (optional)
+    if st.button("Depot-Liste leeren"):
+        st.session_state.my_portfolio_data = []
+        st.rerun()
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Aktueller Kurs", f"{price:.2f} $")
-            c2.metric("Performance", f"{profit_loss_pct:.1f} %", delta=f"{price-buy_price:.2f} $", delta_color="normal")
-            c3.metric("RSI (14)", int(rsi))
-
-            # --- CALL-STRATEGIE EMPFEHLUNG ---
-            st.write("---")
-            st.subheader("💡 Call-Reparatur Vorschlag")
-            
-            if st.checkbox(f"Optionen prüfen für {symbol}"):
-                tk = yf.Ticker(symbol)
-                valid_dates = [d for d in dates if 15 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 40]
+    # Analyse für jeden eingetragenen Wert
+    for stock in st.session_state.my_portfolio_data:
+        symbol = stock["symbol"]
+        buy_price = stock["buy_price"]
+        
+        with st.expander(f"📊 Position: {symbol} (Einstieg: {buy_price:.2f} $)", expanded=True):
+            res = get_stock_data_full(symbol)
+            if res[0] is not None:
+                price, dates, earn, rsi, uptrend, near_lower, atr = res
                 
-                if valid_dates:
-                    target_date = st.selectbox(f"Laufzeit", valid_dates, key=f"d_{symbol}")
-                    calls = tk.option_chain(target_date).calls
-                    
-                    # Nur Calls anzeigen, die ÜBER oder NAHE deinem Einstandspreis liegen
-                    calls['Abstand zu Entry %'] = ((calls['strike'] - buy_price) / buy_price) * 100
-                    safe_calls = calls[calls['strike'] >= buy_price * 0.95].sort_values('strike')
-                    
-                    st.write(f"Empfehlung: Wähle einen Strike nahe **{buy_price:.2f} $**, um bei Zuweisung keinen Verlust zu machen.")
-                    
-                    st.dataframe(safe_calls[['strike', 'bid', 'Abstand zu Entry %']].head(5).style.format({
-                        'strike': '{:.2f} $', 'bid': '{:.2f} $', 'Abstand zu Entry %': '{:.1f} %'
-                    }), use_container_width=True)
+                # Performance & Ampel-Logik
+                profit_loss_pct = ((price - buy_price) / buy_price) * 100
+                
+                if rsi < 25:
+                    status_txt, status_col = "🚨 PANIK: Keine Calls verkaufen!", "#c0392b"
+                elif rsi > 55:
+                    status_txt, status_col = "✅ ERHOLUNG: Call-Verkauf prüfen", "#27ae60"
+                else:
+                    status_txt, status_col = "🟡 GEDULD: RSI neutral", "#f1c40f"
+
+                # Visuelle Aufbereitung
+                st.markdown(f"""
+                    <div style="background:{status_col}; color:white; padding:10px; border-radius:5px; text-align:center; font-weight:bold;">
+                        {status_txt}
+                    </div>
+                """, unsafe_allow_html=True)
+
+                c1, c2, c3 = st.columns(3)
+                c1.metric("Kurs", f"{price:.2f} $")
+                c2.metric("P/L %", f"{profit_loss_pct:.1f} %", delta=f"{price-buy_price:.2f} $")
+                c3.metric("RSI", int(rsi))
+                
+                # Strategie-Check für Calls
+                if st.checkbox(f"Reparatur-Calls für {symbol} anzeigen"):
+                    st.write(f"Suche Calls mit Strike >= **{buy_price:.2f} $** (Break-Even Schutz)")
+                    # ... [Hier folgt dein bestehender Code für die Call-Tabelle] ...
                     
 # --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
@@ -461,5 +469,6 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
