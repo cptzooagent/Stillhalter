@@ -333,75 +333,80 @@ for i, item in enumerate(depot_data):
                 
                 if earn: st.warning(f"📅 ER: {earn}")
 
-# --- SEKTION 3: EINZEL-CHECK (STABILE AMPEL-VERSION) ---
-st.markdown("---")
-st.subheader("🔍 Einzel-Check & Option-Chain")
-c1, c2 = st.columns([1, 2])
-with c1: mode = st.radio("Typ", ["put", "call"], horizontal=True)
-with c2: t_in = st.text_input("Ticker Symbol", value="HOOD").upper()
+# --- SEKTION: VERBESSERTER EINZEL-CHECK ---
+st.markdown("### 🔍 Profi-Einzelcheck & Option-Chain")
+symbol_input = st.text_input("Ticker Symbol", value="MU").upper()
 
-if t_in:
-    ticker_symbol = t_in.strip().upper()
-    with st.spinner(f"Analysiere {ticker_symbol}..."):
-        price, dates, earn, rsi, uptrend, near_lower, atr = get_stock_data_full(ticker_symbol)
-    
-    if price is None:
-        st.error(f"❌ Keine Daten für '{ticker_symbol}' gefunden.")
-    elif not dates:
-        st.warning(f"⚠️ Keine Optionen für {ticker_symbol} verfügbar.")
-    else:
-        h1, h2, h3 = st.columns(3)
-        h1.metric("Kurs", f"{price:.2f}$")
-        h2.metric("Trend", "📈 Bullisch" if uptrend else "📉 Bärisch")
-        h3.metric("RSI", f"{rsi:.0f}")
-
-        if not uptrend: st.error("🛑 Achtung: Aktie notiert unter SMA 200!")
-        
-        d_sel = st.selectbox("Laufzeit wählen", dates)
-        try:
-            tk = yf.Ticker(ticker_symbol)
-            chain = tk.option_chain(d_sel).puts if mode == "put" else tk.option_chain(d_sel).calls
-            expiry_dt = datetime.strptime(d_sel, '%Y-%m-%d')
-            days_to_expiry = max(1, (expiry_dt - datetime.now()).days)
-            T = days_to_expiry / 365
+if symbol_input:
+    try:
+        with st.spinner(f"Analysiere {symbol_input}..."):
+            tk = yf.Ticker(symbol_input)
+            info = tk.info
             
-            chain['delta_calc'] = chain.apply(lambda opt: calculate_bsm_delta(
-                price, opt['strike'], T, (opt['impliedVolatility'] if opt['impliedVolatility'] else 0.4), option_type=mode
-            ), axis=1)
+            # 1. Daten abrufen
+            res = get_stock_data_full(symbol_input)
+            if res[0] is not None:
+                price, dates, earn, rsi, uptrend, near_lower, atr = res
+                analyst_txt, analyst_col = get_analyst_conviction(info)
+                
+                # Sterne-Logik wie im Profi-Scan
+                stars = 0
+                if "HYPER" in analyst_txt: stars = 3
+                elif "Stark" in analyst_txt: stars = 2
+                elif "Neutral" in analyst_txt: stars = 1
+                if uptrend and stars > 0: stars += 0.5
+                
+                stars_str = "⭐" * int(stars)
+                status_label = "🛡️ Trend" if uptrend else "💎 Dip"
+                s_color = "#27ae60" if uptrend else "#2980b9"
+                rsi_col = "#e74c3c" if rsi > 70 else ("#27ae60" if rsi < 30 else "#7f8c8d")
 
-            # --- VERBESSERTE FILTER-LOGIK (NUR OTM) ---
-            if mode == "put":
-                # Nur Strikes unterhalb des aktuellen Kurses (max. 98% vom Preis)
-                filtered_df = chain[chain['strike'] <= price * 0.98].sort_values('strike', ascending=False)
-            else:
-                # Nur Strikes oberhalb des aktuellen Kurses (min. 102% vom Preis)
-                filtered_df = chain[chain['strike'] >= price * 1.02].sort_values('strike', ascending=True)
-            
-            st.write("---")
-            # Falls keine Optionen im OTM-Bereich gefunden wurden
-            if filtered_df.empty:
-                st.warning(f"Keine attraktiven OTM {mode.upper()}s im gewählten Bereich gefunden.")
-            else:
-                for _, opt in filtered_df.head(15).iterrows():
-                    bid_val = opt['bid'] if not pd.isna(opt['bid']) and opt['bid'] > 0 else 0.05
-                    d_abs = abs(opt['delta_calc'])
+                # --- VISUELLE DARSTELLUNG (KACHEL-STYLING) ---
+                st.markdown(f"#### Analyse für {symbol_input} {stars_str}")
+                
+                c1, c2, c3 = st.columns([1, 1, 1])
+                c1.metric("Aktueller Kurs", f"{price:.2f}$")
+                c2.metric("RSI (14 Tage)", f"{int(rsi)}", delta=None, delta_color="normal")
+                c3.metric("Status", status_label)
+
+                with st.container(border=True):
+                    st.markdown(f"""
+                        <div style="font-size: 1.1em; border-left: 5px solid {analyst_col}; padding: 10px 15px; background: {analyst_col}10; border-radius: 0 5px 5px 0;">
+                            <b style="color:{analyst_col};">{analyst_txt}</b><br>
+                            <span style="font-size: 0.9em; color: #555;">Earnings am: <b>{earn if earn else 'n.a.'}</b> | RSI: <b style="color:{rsi_col};">{int(rsi)}</b></span>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+                # 2. Option Chain Analyse
+                st.write("---")
+                st.subheader("🎯 Passende Put-Optionen (11-24 Tage)")
+                
+                heute = datetime.now()
+                # Laufzeit-Filter (identisch zum Profi-Scan)
+                valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 24]
+                
+                if not valid_dates:
+                    st.warning("Keine passenden Verfallstage (11-24 Tage) gefunden.")
+                else:
+                    target_date = st.selectbox("Wähle Verfallstag", valid_dates)
+                    chain = tk.option_chain(target_date).puts
                     
-                    # Ampelsystem nach Delta (Konservativ)
-                    risk_emoji = "🟢" if d_abs < 0.15 else "🟡" if d_abs <= 0.25 else "🔴"
+                    # Berechne Puffer und Rendite für die Chain
+                    chain['Puffer %'] = ((price - chain['strike']) / price) * 100
+                    days_to_expiry = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
+                    chain['Yield p.a. %'] = (chain['bid'] / chain['strike']) * (365 / max(1, days_to_expiry)) * 100
                     
-                    y_pa = (bid_val / opt['strike']) * (365 / days_to_expiry) * 100
-                    puffer = (abs(opt['strike'] - price) / price) * 100
+                    # Filter: Nur OTM Optionen mit Mindestrendite
+                    filtered_chain = chain[(chain['strike'] < price) & (chain['bid'] > 0)].sort_values('strike', ascending=False)
                     
-                    # Anzeige
-                    st.markdown(
-                        f"{risk_emoji} **Strike: {opt['strike']:.1f}** | "
-                        f"Bid: **{bid_val:.2f}$** | "
-                        f"Delta: {d_abs:.2f} | "
-                        f"Puffer: {puffer:.1f}% | "
-                        f"Yield: {y_pa:.1f}% p.a.",
-                        unsafe_allow_html=True
-                    )
-        except Exception as e:
-            st.error(f"Fehler bei der Anzeige: {e}")
+                    st.dataframe(filtered_chain[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].style.format({
+                        'strike': '{:.1f}$', 'bid': '{:.2f}$', 'ask': '{:.2f}$', 
+                        'Puffer %': '{:.1f}%', 'Yield p.a. %': '{:.1f}%'
+                    }), use_container_width=True)
+                    
+                    st.info(f"💡 **Tipp:** Für {symbol_input} (RSI {int(rsi)}) empfehlen wir einen Puffer von mind. { '15%' if rsi > 65 else '10%' }.")
+
+    except Exception as e:
+        st.error(f"Fehler beim Laden von {symbol_input}. Eventuell Ticker falsch?")
 
 
