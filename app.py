@@ -143,15 +143,32 @@ except:
 st.markdown("---")
 
 
-# --- SEKTION 1: KOMBI-SCAN (MARKET-CAP & EARNINGS-SAFE) ---
+# --- SEKTION 1: KOMBI-SCAN (QUALITÄT & ANALYTIK) ---
 st.markdown("---")
-st.header(f"🔍 Kombi-Scan: Fokus auf {min_mkt_cap} Mrd.+ USD")
+st.header(f"🔍 Qualitäts-Scan: >{min_mkt_cap} Mrd. $ & Analysten-Check")
 
-if st.button("🚀 Safe-Scan starten", key="kombi_scan_mkt_cap_v1"):
+# Hilfsfunktion für die fundamentale Einordnung
+def get_analyst_conviction(info):
+    try:
+        current = info.get('currentPrice', 1)
+        target = info.get('targetMedianPrice', 0)
+        upside = ((target / current) - 1) * 100 if target > 0 else 0
+        rev_growth = info.get('revenueGrowth', 0) * 100
+        
+        if upside > 10 and rev_growth > 5:
+            return f"✅ Positiv (Ziel: +{upside:.0f}%, Wachst.: {rev_growth:.1f}%)", "#27ae60"
+        elif upside < 0 or rev_growth < 0:
+            return f"⚠️ Warnung (Ziel: {upside:.0f}%, Wachst.: {rev_growth:.1f}%)", "#e67e22"
+        else:
+            return f"⚖️ Neutral (Ziel: {upside:.0f}%)", "#7f8c8d"
+    except:
+        return "🔍 Keine Analysten-Daten", "#7f8c8d"
+
+if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     puffer_limit = otm_puffer_slider / 100 
-    mkt_cap_limit = min_mkt_cap * 1_000_000_000 # Umrechnung in echte USD
+    mkt_cap_limit = min_mkt_cap * 1_000_000_000
     
-    with st.spinner(f"Filtere Aktien über {min_mkt_cap} Mrd. $..."):
+    with st.spinner("Analysiere Markt & Fundamentaldaten..."):
         ticker_liste = get_combined_watchlist()
     
     status_text = st.empty()
@@ -160,24 +177,23 @@ if st.button("🚀 Safe-Scan starten", key="kombi_scan_mkt_cap_v1"):
     
     for i, symbol in enumerate(ticker_liste):
         progress_bar.progress((i + 1) / len(ticker_liste))
-        status_text.text(f"Analysiere {symbol}...")
+        status_text.text(f"Checke {symbol}...")
         
         try:
             tk = yf.Ticker(symbol)
-            
-            # --- NEU: MARKTKAPITALISIERUNGS-CHECK ---
             info = tk.info
+            
+            # 1. MARKTKAPITALISIERUNGS-FILTER
             current_mkt_cap = info.get('marketCap', 0)
-            
             if current_mkt_cap < mkt_cap_limit:
-                continue # Firma ist zu klein -> ignorieren
+                continue
             
-            # --- BASIS-DATEN LADEN ---
+            # 2. BASIS-DATEN LADEN
             res = get_stock_data_full(symbol)
             if res[0] is None: continue
             price, dates, earn, rsi, uptrend, near_lower, lower_band = res
             
-            # --- EARNINGS-SAFE LOGIK ---
+            # 3. EARNINGS-SICHERHEIT (Fenster: 11 bis 24 Tage)
             max_days_allowed = 24 
             if earn and isinstance(earn, str) and "." in earn:
                 try:
@@ -189,9 +205,9 @@ if st.button("🚀 Safe-Scan starten", key="kombi_scan_mkt_cap_v1"):
                     max_days_allowed = min(24, (er_datum - heute).days - 2)
                 except: pass
 
-            if max_days_allowed < 11: continue # Kein Fenster vor Earnings
+            if max_days_allowed < 11: continue
 
-            # --- OPTIONSSUCHE ---
+            # 4. OPTIONS-ANALYSE
             valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= max_days_allowed]
             if not valid_dates: continue
 
@@ -199,23 +215,24 @@ if st.button("🚀 Safe-Scan starten", key="kombi_scan_mkt_cap_v1"):
             max_y = -1
             for d_str in valid_dates:
                 chain = tk.option_chain(d_str).puts
-                m_strike = price * (1 - puffer_limit)
-                opts = chain[chain['strike'] <= m_strike].sort_values('strike', ascending=False)
+                target_strike = price * (1 - puffer_limit)
+                opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
                 
                 if not opts.empty:
                     o = opts.iloc[0]
                     d_days = (datetime.strptime(d_str, '%Y-%m-%d') - datetime.now()).days
                     d_bid = o['bid'] if o['bid'] > 0 else o['lastPrice']
                     
-                    if d_bid > (price * 0.05): continue # Split/Datenfehler-Schutz
+                    if d_bid > (price * 0.05): continue 
                     
                     curr_y = (d_bid / o['strike']) * (365 / max(1, d_days)) * 100
                     if curr_y > max_y:
                         max_y = curr_y
                         best_opt = {'o': o, 'days': d_days, 'date': d_str, 'bid': d_bid}
 
+            # 5. ERGEBNIS-SAMMLUNG
             if best_opt and max_y >= mindestrendite_slider:
-                # Status-Label vergeben
+                analyst_txt, analyst_col = get_analyst_conviction(info)
                 status_label = "🛡️ Trend-Follower" if uptrend else "💎 Quality-Dip"
                 
                 all_results.append({
@@ -224,7 +241,8 @@ if st.button("🚀 Safe-Scan starten", key="kombi_scan_mkt_cap_v1"):
                     'puffer': ((price - best_opt['o']['strike']) / price) * 100,
                     'bid': best_opt['bid'], 'rsi': rsi, 'earn': earn, 
                     'tage': best_opt['days'], 'status': status_label,
-                    'mkt_cap': current_mkt_cap / 1_000_000_000
+                    'mkt_cap': current_mkt_cap / 1_000_000_000,
+                    'analyst_txt': analyst_txt, 'analyst_col': analyst_col
                 })
         except: continue
 
@@ -232,28 +250,23 @@ if st.button("🚀 Safe-Scan starten", key="kombi_scan_mkt_cap_v1"):
     progress_bar.empty()
 
     if not all_results:
-        st.warning("Keine Treffer gefunden. Versuche die Marktkapitalisierung oder den Puffer zu senken.")
+        st.warning("Keine Treffer. Prüfe Marktkapitalisierung oder Puffer.")
     else:
         all_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
-        st.success(f"Scan fertig: {len(all_results)} Qualitäts-Werte gefunden!")
-        
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
-                # Farbe je nach Status
-                border_color = "#27ae60" if res['status'] == "🛡️ Trend-Follower" else "#3498db"
-                bg_color = "#f0fff0" if res['status'] == "🛡️ Trend-Follower" else "#f0f7ff"
-                
+                border_c = "#27ae60" if "🛡️" in res['status'] else "#3498db"
                 with st.container(border=True):
-                    st.markdown(f"**{res['symbol']}** <br><span style='font-size:0.75em; color:{border_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
+                    st.markdown(f"**{res['symbol']}** <span style='float:right; font-size:0.7em; color:{border_c};'>{res['status']}</span>", unsafe_allow_html=True)
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
                     st.markdown(f"""
-                    <div style="font-size: 0.82em; background:{bg_color}; padding:10px; border-radius:8px; border-left:4px solid {border_color};">
-                    <b>Cap: {res['mkt_cap']:.1f} Mrd. $</b><br>
-                    Kurs: {res['price']:.2f}$ | Strike: {res['strike']:.1f}$<br>
-                    <hr style="margin:5px 0; border-top:1px solid #ddd;">
-                    Laufzeit: <b>{res['tage']} Tage</b> | RSI: {res['rsi']:.0f}<br>
-                    Prämie: {res['bid']:.2f}$ | Puffer: {res['puffer']:.1f}%
+                    <div style="font-size: 0.85em; line-height:1.4;">
+                    <b>Cap: {res['mkt_cap']:.1f} Mrd. $</b> | RSI: {res['rsi']:.0f}<br>
+                    Puffer: {res['puffer']:.1f}% | ER: {res['earn']}<br>
+                    <div style="margin-top:8px; padding:5px; border-radius:4px; background:#f9f9f9; border-left:3px solid {res['analyst_col']}; color:{res['analyst_col']}; font-weight:bold;">
+                        {res['analyst_txt']}
+                    </div>
                     </div>
                     """, unsafe_allow_html=True)
                     
@@ -365,6 +378,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
