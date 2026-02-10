@@ -102,53 +102,92 @@ with st.sidebar:
     st.markdown("---")
     st.info("💡 Profi-Tipp: Für den S&P 500 Scan ab 16:00 Uhr 'Simulations-Modus' deaktivieren.")
     
-# --- DAS ULTIMATIVE MARKT-DASHBOARD (4 SPALTEN MIT DELTAS) ---
-st.markdown("## 📊 Globales Marktwetter")
-m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+# --- HILFSFUNKTIONEN FÜR DAS DASHBOARD ---
 
-# 1. Stock Fear & Greed (Proxy via SPY RSI)
-try:
-    spy_hist = yf.Ticker("SPY").history(period="30d")
-    spy_rsi_series = calculate_rsi(spy_hist['Close'])
-    rsi_val = spy_rsi_series.iloc[-1]
-    rsi_prev = spy_rsi_series.iloc[-2]
-    rsi_delta = rsi_val - rsi_prev
-    fng_text = "Neutral" if 40 < rsi_val < 60 else "Greed" if rsi_val >= 60 else "Fear"
-    m_col1.metric("Stock Sentiment (RSI)", f"{rsi_val:.0f}/100", f"{rsi_delta:+.1f} ({fng_text})")
-except:
-    m_col1.error("Stock F&G n.a.")
+def get_market_data():
+    try:
+        # Nasdaq & VIX
+        ndq = yf.Ticker("^IXIC")
+        vix = yf.Ticker("^VIX")
+        btc = yf.Ticker("BTC-USD")
+        
+        h_ndq = ndq.history(period="60d")
+        h_vix = vix.history(period="1d")
+        h_btc = btc.history(period="1d")
+        
+        # Nasdaq Berechnung
+        cp_ndq = h_ndq['Close'].iloc[-1]
+        sma20_ndq = h_ndq['Close'].rolling(window=20).mean().iloc[-1]
+        dist_ndq = ((cp_ndq - sma20_ndq) / sma20_ndq) * 100
+        
+        # Nasdaq RSI
+        delta = h_ndq['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        rsi_ndq = 100 - (100 / (1 + rs)).iloc[-1]
+        
+        # VIX & BTC
+        v_val = h_vix['Close'].iloc[-1]
+        b_val = h_btc['Close'].iloc[-1]
+        
+        return cp_ndq, rsi_ndq, dist_ndq, v_val, b_val
+    except:
+        return 0, 50, 0, 20, 0
 
-# 2. Crypto Fear & Greed (API)
-try:
-    import requests
-    fg_data = requests.get("https://api.alternative.me/fng/").json()
-    fg_crypto = int(fg_data['data'][0]['value'])
-    fg_c_text = fg_data['data'][0]['value_classification']
-    # Da die API kein Delta liefert, zeigen wir den Text als Delta-Ersatz
-    m_col2.metric("Crypto Fear & Greed", f"{fg_crypto}/100", fg_c_text)
-except:
-    m_col2.error("Crypto F&G n.a.")
+def get_crypto_fg():
+    try:
+        import requests
+        r = requests.get("https://api.alternative.me/fng/")
+        return int(r.json()['data'][0]['value'])
+    except:
+        return 50
 
-# 3. VIX (Angst-Index) mit Änderung
-try:
-    vix_data = yf.Ticker("^VIX").history(period="2d")
-    vix_val = vix_data['Close'].iloc[-1]
-    vix_prev = vix_data['Close'].iloc[-2]
-    v_delta = vix_val - vix_prev
-    # delta_color="inverse": VIX steigt = Rot, VIX sinkt = Grün
-    m_col3.metric("VIX (Angst-Index)", f"{vix_val:.2f}", f"{v_delta:+.2f}", delta_color="inverse")
-except:
-    m_col3.error("VIX n.a.")
+# --- HAUPT-BLOCK: GLOBAL MONITORING ---
 
-# 4. Bitcoin (Risk-On) mit Änderung
-try:
-    btc_data = yf.Ticker("BTC-USD").history(period="2d")
-    btc_price = btc_data['Close'].iloc[-1]
-    btc_prev = btc_data['Close'].iloc[-2]
-    btc_delta = btc_price - btc_prev
-    m_col4.metric("Bitcoin (Risk-On)", f"{btc_price:,.0f} $", f"{btc_delta:+.2f} $")
-except:
-    m_col4.error("BTC n.a.")
+st.markdown("## 🌍 Globales Markt-Monitoring")
+
+# Daten abrufen
+cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
+crypto_fg = get_crypto_fg()
+# Hinweis: fg_val (Stock) müsstest du aus deiner vorhandenen Funktion nehmen
+stock_fg = 50 # Platzhalter, falls deine Funktion anders heißt
+
+# Master-Banner Logik
+if dist_ndq < -2 or vix_val > 25:
+    m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Nasdaq-Schwäche / Hohe Volatilität"
+    m_advice = "Defensiv agieren. Fokus auf Call-Verkäufe zur Depot-Absicherung."
+elif rsi_ndq > 72 or stock_fg > 80:
+    m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT: Korrekturgefahr (Gier/RSI hoch)"
+    m_advice = "Keine neuen Puts mit engem Puffer. Gewinne sichern."
+else:
+    m_color, m_text = "#27ae60", "✅ TRENDSTARK: Marktumfeld ist konstruktiv"
+    m_advice = "Puts auf starke Aktien bei Rücksetzern möglich."
+
+st.markdown(f"""
+    <div style="background-color: {m_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
+        <h3 style="margin:0; font-size: 1.4em;">{m_text}</h3>
+        <p style="margin:0; opacity: 0.9;">{m_advice}</p>
+    </div>
+""", unsafe_allow_html=True)
+
+# Das 2x3 Raster
+r1c1, r1c2, r1c3 = st.columns(3)
+r2c1, r2c2, r2c3 = st.columns(3)
+
+with r1c1:
+    st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
+with r1c2:
+    st.metric("Bitcoin", f"{btc_val:,.0f} $")
+with r1c3:
+    st.metric("VIX (Angst)", f"{vix_val:.2f}", delta="HOCH" if vix_val > 22 else "Normal", delta_color="inverse")
+
+with r2c1:
+    st.metric("Fear & Greed (Stock)", f"{stock_fg}")
+with r2c2:
+    st.metric("Fear & Greed (Crypto)", f"{crypto_fg}")
+with r2c3:
+    st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_ndq > 70 else None, delta_color="inverse")
 
 st.markdown("---")
 
