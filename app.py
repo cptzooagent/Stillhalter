@@ -83,10 +83,6 @@ with st.sidebar:
     min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 0, 100, 15, key="yield_sid")
     min_stock_price, max_stock_price = st.slider("Aktienpreis-Spanne ($)", 0, 1000, (20, 500), key="price_sid")
 
-    # --- NEU: TEST-SCHALTER IN DER SIDEBAR ---
-    st.sidebar.markdown("---")
-    test_modus = st.sidebar.checkbox("🛠️ Simulations-Modus (ohne Live-Börse)")
-    
     # In deiner Sidebar-Sektion hinzufügen:
     st.sidebar.markdown("---")
     st.sidebar.subheader("Qualitäts-Filter")
@@ -396,6 +392,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
