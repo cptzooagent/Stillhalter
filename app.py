@@ -214,7 +214,6 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             
             if only_uptrend and not uptrend: continue
 
-            # Laufzeit-Logik (11-24 Tage + Earnings-Schutz)
             heute = datetime.now()
             max_days_allowed = 24
             if earn and "." in earn:
@@ -242,23 +241,20 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 if y_pa >= min_yield_pa:
                     analyst_txt, analyst_col = get_analyst_conviction(info)
                     
-                    # --- VERSCHÄRFTE STERNE LOGIK ---
+                    # Sterne Logik
                     stars = 0
-                    if "HYPER" in analyst_txt: stars = 3
-                    elif "Stark" in analyst_txt: stars = 2
-                    elif "Neutral" in analyst_txt: stars = 1
+                    if "HYPER" in analyst_txt: stars += 2
+                    elif "Stark" in analyst_txt: stars += 1
+                    if uptrend: stars += 1
                     if "Warnung" in analyst_txt: stars = 0
-                    
-                    # Bonus-Stern für Trend nur bei Nicht-Warnungen
-                    if uptrend and stars > 0: stars += 0.5 
                     
                     all_results.append({
                         'symbol': symbol, 'price': price, 'y_pa': y_pa, 
                         'strike': o['strike'], 'puffer': ((price - o['strike']) / price) * 100,
                         'bid': bid_val, 'rsi': rsi, 'earn': earn if earn else "n.a.", 
                         'tage': days, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                        'stars_val': stars, 
-                        'stars_str': "⭐" * int(stars),
+                        'stars_count': stars, # Numerischer Wert für Sortierung
+                        'stars_str': "⭐" * stars if stars > 0 else "",
                         'analyst_txt': analyst_txt, 'analyst_col': analyst_col,
                         'mkt_cap': m_cap / 1_000_000_000
                     })
@@ -270,16 +266,16 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     if not all_results:
         st.warning("Keine Treffer gefunden.")
     else:
-        # SORTIERUNG: Sterne (Qualität) wiegt 1000x schwerer als die Rendite
-        all_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
+        # SORTIERUNG: Erst Sterne (Anzahl), dann Rendite
+        # Damit stehen 3 Sterne über 2 Sternen, egal wie hoch die Rendite ist.
+        all_results = sorted(all_results, key=lambda x: (x['stars_count'], x['y_pa']), reverse=True)
 
         st.markdown(f"### 🎯 Top-Setups nach Qualität ({len(all_results)} Treffer)")
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
                 s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-                # Rahmen-Logik für Hyper-Growth und Stark
-                border_color = res['analyst_col'] if res['stars_val'] >= 2 else "#e0e0e0"
+                border_color = res['analyst_col'] if res['stars_count'] >= 2 else "#e0e0e0"
                 
                 with st.container(border=True):
                     st.markdown(f"**{res['symbol']}** {res['stars_str']} <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
@@ -406,6 +402,7 @@ if t_in:
                     )
         except Exception as e:
             st.error(f"Fehler bei der Anzeige: {e}")
+
 
 
 
