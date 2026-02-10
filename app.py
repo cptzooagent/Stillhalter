@@ -377,8 +377,8 @@ if symbol_input:
                 heute = datetime.now()
                 valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 24]
                 
-                if not valid_dates:
-                    st.warning("Keine passenden Verfallstage (11-24 Tage) gefunden.")
+                # Erweitert auf ca. 1 bis 5 Wochen Laufzeit
+                valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
                 else:
                     target_date = st.selectbox("Wähle Verfallstag", valid_dates)
                     chain = tk.option_chain(target_date).puts
@@ -412,3 +412,4 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler im Einzelcheck: {e}")
+
