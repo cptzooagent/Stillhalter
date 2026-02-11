@@ -407,26 +407,7 @@ else:
                     st.write(f"Suche Calls mit Strike >= **{buy_price:.2f} $** (Break-Even Schutz)")
                     # ... [Hier folgt dein bestehender Code für die Call-Tabelle] ...
                     
-# --- NEUE HILFSFUNKTION FÜR PIVOT-PUNKTE (Ganz oben bei den Funktionen einfügen) ---
-def calculate_pivots(symbol):
-    try:
-        tk = yf.Ticker(symbol)
-        # Wir benötigen 2 Tage, um den abgeschlossenen Vortag zu analysieren
-        hist = tk.history(period="2d")
-        if len(hist) < 2: return None
-        
-        # Daten des letzten abgeschlossenen Handelstages
-        last_day = hist.iloc[-2] 
-        h, l, c = last_day['High'], last_day['Low'], last_day['Close']
-        
-        pp = (h + l + c) / 3
-        s1 = (2 * pp) - h
-        s2 = pp - (h - l)
-        return {"PP": pp, "S1": s1, "S2": s2}
-    except:
-        return None
-
-# --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (AKTUALISIERTE VERSION) ---
+# --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
 symbol_input = st.text_input("Ticker Symbol", value="MU", help="Gib ein Ticker-Symbol ein").upper()
 
@@ -436,7 +417,6 @@ if symbol_input:
             tk = yf.Ticker(symbol_input)
             info = tk.info
             res = get_stock_data_full(symbol_input)
-            pivots = calculate_pivots(symbol_input) # Pivot-Punkte abrufen
             
             if res[0] is not None:
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
@@ -449,28 +429,21 @@ if symbol_input:
                 elif "Neutral" in analyst_txt: stars = 1
                 if uptrend and stars > 0: stars += 0.5
                 
-                # --- MASTER-CHECK: NASDAQ EINFLUSS ---
-                # Wir prüfen, ob dist_ndq aus dem globalen Block verfügbar ist
-                market_penalty = False
-                if 'dist_ndq' in locals() and dist_ndq < -1.5:
-                    stars -= 1
-                    market_penalty = True
-
-                # --- VERSCHÄRFTE AMPEL-LOGIK ---
+                # --- VERSCHÄRFTE AMPEL-LOGIK (PANIK-SCHUTZ) ---
                 ampel_color, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
                 
                 if rsi < 25:
-                    ampel_color, ampel_text = "#e74c3c", "🚨 STOPP: PANIK-ABVERKAUF (RSI < 25)"
-                elif market_penalty:
-                    ampel_color, ampel_text = "#e74c3c", "🚨 VORSICHT: NASDAQ SCHWÄCHE (MARKTPENALTY)"
+                    # Panik-Schutz greift zuerst
+                    ampel_color, ampel_text = "#e74c3c", "STOPP: PANIK-ABVERKAUF (RSI < 25)"
                 elif rsi > 75:
-                    ampel_color, ampel_text = "#e74c3c", "🚨 STOPP: ÜBERHITZT (RSI > 75)"
+                    ampel_color, ampel_text = "#e74c3c", "STOPP: ÜBERHITZT (RSI > 75)"
                 elif stars >= 2.5 and uptrend and 30 <= rsi <= 60:
-                    ampel_color, ampel_text = "#27ae60", "✅ TOP SETUP (Sicher)"
+                    # Ideales Setup
+                    ampel_color, ampel_text = "#27ae60", "TOP SETUP (Sicher)"
                 elif "Warnung" in analyst_txt:
-                    ampel_color, ampel_text = "#e74c3c", "🚨 STOPP: ANALYSTEN-WARNUNG"
+                    ampel_color, ampel_text = "#e74c3c", "STOPP: ANALYSTEN-WARNUNG"
                 else:
-                    ampel_color, ampel_text = "#f1c40f", "🟡 NEUTRAL / ABWARTEN"
+                    ampel_color, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
 
                 # 1. HEADER: Ampel
                 st.markdown(f"""
@@ -484,48 +457,27 @@ if symbol_input:
                 with col1:
                     st.metric("Kurs", f"{price:.2f} $")
                 with col2:
-                    st.metric("RSI (14)", f"{int(rsi)}", delta="PANIK" if rsi < 25 else ("DIP" if rsi < 35 else None), delta_color="inverse")
+                    st.metric("RSI (14)", f"{int(rsi)}", delta="PANIK" if rsi < 25 else None, delta_color="inverse")
                 with col3:
                     status_icon = "🛡️" if uptrend else "💎"
                     st.metric("Phase", f"{status_icon} {'Trend' if uptrend else 'Dip'}")
                 with col4:
-                    st.metric("Qualität", "⭐" * int(max(0, stars)))
+                    st.metric("Qualität", "⭐" * int(stars))
 
-                # 3. NEU: SICHERHEITS-CHECKLISTE (Bollinger & Pivot)
-                st.markdown("#### 🛡️ Technische Unterstützungen")
-                c1, c2, c3 = st.columns(3)
-                
-                with c1:
-                    is_bb = "✅" if near_lower else "⏳"
-                    st.write(f"{is_bb} **Bollinger Support**")
-                    st.caption("Nähe unteres Band")
-                
-                with c2:
-                    if pivots:
-                        is_piv = "✅" if price > pivots['S1'] else "⚠️"
-                        st.write(f"{is_piv} **Pivot S1 ({pivots['S1']:.1f}$)**")
-                        st.caption("Über erstem Support")
-                
-                with c3:
-                    if pivots:
-                        st.write(f"⚓ **Hard Support S2**")
-                        st.write(f"**{pivots['S2']:.2f} $**")
-                        st.caption("Letzte Auffanglinie")
-
-                # 4. ANALYSTEN BOX
+                # 3. ANALYSTEN BOX
                 st.markdown(f"""
                     <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 10px solid {analyst_col}; margin-top: 10px;">
                         <h4 style="margin-top:0; color: #31333F;">💡 Fundamentale Analyse</h4>
                         <p style="font-size: 1.1em; font-weight: bold; color: {analyst_col};">{analyst_txt}</p>
-                        {f'<p style="color:#e74c3c; font-weight:bold;">⚠️ Markt-Penalty: -1 Stern (Nasdaq unter SMA20)</p>' if market_penalty else ''}
                         <hr style="margin: 10px 0;">
                         <span style="color: #555;">📅 Nächste Earnings: <b>{earn if earn else 'n.a.'}</b></span>
                     </div>
                 """, unsafe_allow_html=True)
 
-                # 5. OPTIONEN TABELLE (Rest bleibt exakt gleich wie in deinem Code)
+                # 4. OPTIONEN TABELLE
                 st.markdown("### 🎯 Option-Chain Auswahl")
                 heute = datetime.now()
+                # Flexibles Fenster: 5 bis 35 Tage
                 valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
                 
                 if valid_dates:
