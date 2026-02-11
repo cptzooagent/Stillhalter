@@ -220,14 +220,13 @@ def get_analyst_conviction(info):
 
 
 
-# --- SEKTION: PROFI-SCANNER (RSI & STERNE EDITION) ---
+# --- SEKTION: PROFI-SCANNER (RSI-RISIKO & STERNE EDITION) ---
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     puffer_limit = otm_puffer_slider / 100 
     mkt_cap_limit = min_mkt_cap * 1_000_000_000
     
-    with st.spinner("Lade Ticker-Liste..."):
+    with st.spinner("Lade Ticker-Liste und analysiere Setups..."):
         if test_modus:
-            # HIER SIND ALLE DEINE SYMBOLE GESICHERT:
             ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"]
         else:
             ticker_liste = get_combined_watchlist()
@@ -247,6 +246,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             curr_price = info.get('currentPrice', 0)
             m_cap = info.get('marketCap', 0)
             
+            # Filter 1: Basis-Daten
             if m_cap < mkt_cap_limit: continue
             if not (min_stock_price <= curr_price <= max_stock_price): continue
             
@@ -254,9 +254,10 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             if res[0] is None: continue
             price, dates, earn, rsi, uptrend, near_lower, atr = res
             
+            # Filter 2: Trend
             if only_uptrend and not uptrend: continue
 
-            # Laufzeit & Earnings-Schutz
+            # Filter 3: Laufzeit & Earnings-Schutz
             heute = datetime.now()
             max_days_allowed = 24
             if earn and "." in earn:
@@ -270,6 +271,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= max_days_allowed]
             if not valid_dates: continue
             
+            # Options-Check
             target_date = valid_dates[0]
             chain = tk.option_chain(target_date).puts
             target_strike = price * (1 - puffer_limit)
@@ -284,19 +286,27 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 if y_pa >= min_yield_pa:
                     analyst_txt, analyst_col = get_analyst_conviction(info)
                     
-                    # Sterne Logik (Priorität)
+                    # --- OPTIMIERTE STERNE-LOGIK (RISIKO-FILTER) ---
                     stars = 0
                     if "HYPER" in analyst_txt: stars = 3
                     elif "Stark" in analyst_txt: stars = 2
                     elif "Neutral" in analyst_txt: stars = 1
+                    
+                    # Abzug bei technischer Gefahr (z.B. HOOD RSI 24)
+                    if rsi < 30: stars -= 1 
+                    if rsi > 75: stars -= 0.5 # Überhitzt
+                    
+                    # Bonus bei stabilem Trend
                     if uptrend and stars > 0: stars += 0.5 
+                    
+                    stars = max(0, float(stars)) # Verhindert negative Sterne
 
                     all_results.append({
                         'symbol': symbol, 'price': price, 'y_pa': y_pa, 
                         'strike': o['strike'], 'puffer': ((price - o['strike']) / price) * 100,
                         'bid': bid_val, 'rsi': rsi, 'earn': earn if earn else "n.a.", 
                         'tage': days, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                        'stars_val': stars, 'stars_str': "⭐" * int(stars),
+                        'stars_val': stars, 'stars_str': "⭐" * int(stars) if stars >= 1 else "⚠️",
                         'analyst_txt': analyst_txt, 'analyst_col': analyst_col,
                         'mkt_cap': m_cap / 1_000_000_000
                     })
@@ -306,7 +316,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     progress_bar.empty()
 
     if not all_results:
-        st.warning("Keine Treffer gefunden.")
+        st.warning("Keine Treffer gefunden, die den Kriterien entsprechen.")
     else:
         # Sortierung: Qualität (Sterne) -> Rendite
         all_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
@@ -315,14 +325,17 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         cols = st.columns(4)
         for idx, res in enumerate(all_results):
             with cols[idx % 4]:
+                # Farblogik für Karten-Design
                 s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
                 border_color = res['analyst_col'] if res['stars_val'] >= 2 else "#e0e0e0"
-                rsi_col = "#e74c3c" if res['rsi'] > 70 else ("#27ae60" if res['rsi'] < 30 else "#7f8c8d")
+                rsi_col = "#e74c3c" if res['rsi'] > 70 or res['rsi'] < 30 else "#7f8c8d"
                 
                 with st.container(border=True):
+                    # Header mit Symbol und Risiko-Check
                     st.markdown(f"**{res['symbol']}** {res['stars_str']} <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
                     st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
                     
+                    # Details
                     st.markdown(f"""
                         <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 2px solid {border_color}; margin-bottom: 8px; font-size: 0.85em;">
                             🎯 Strike: <b>{res['strike']:.1f}$</b> | 💰 Bid: <b>{res['bid']:.2f}$</b><br>
@@ -543,5 +556,6 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
