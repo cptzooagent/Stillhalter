@@ -22,6 +22,24 @@ def calculate_rsi(data, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
+def calculate_pivots(symbol):
+    try:
+        tk = yf.Ticker(symbol)
+        # Wir holen 5 Tage, um sicherzugehen, dass wir den letzten geschlossenen Handelstag haben
+        hist = tk.history(period="5d") 
+        if len(hist) < 2: return None
+        
+        # Vorletzte Zeile ist der letzte abgeschlossene Handelstag
+        last_day = hist.iloc[-2] 
+        h, l, c = last_day['High'], last_day['Low'], last_day['Close']
+        
+        p = (h + l + c) / 3
+        s1 = (2 * p) - h
+        s2 = p - (h - l)
+        return {"P": p, "S1": s1, "S2": s2}
+    except:
+        return None
+
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
 def get_combined_watchlist():
@@ -464,6 +482,39 @@ if symbol_input:
                 with col4:
                     st.metric("Qualität", "⭐" * int(stars))
 
+                # --- HIER EINFÜGEN: PIVOT ANALYSE ---
+                st.markdown("---")
+                pivots = calculate_pivots(symbol_input)
+                if pivots:
+                    st.markdown("#### 🛡️ Technische Absicherung (Vortages-Pivots)")
+                    pc1, pc2, pc3 = st.columns(3)
+                    
+                    pc1.markdown(f"""
+                        <div style="text-align:center; padding:10px; border:1px solid #ddd; border-radius:10px; background: white;">
+                            <small style="color: #7f8c8d;">Pivot Punkt (P)</small><br>
+                            <b style="font-size:1.2em; color: #2c3e50;">{pivots['P']:.2f} $</b>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
+                    pc2.markdown(f"""
+                        <div style="text-align:center; padding:10px; border:2px solid #27ae60; border-radius:10px; background: #27ae6005;">
+                            <small style="color: #27ae60;">Support S1</small><br>
+                            <b style="font-size:1.2em; color: #27ae60;">{pivots['S1']:.2f} $</b>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
+                    pc3.markdown(f"""
+                        <div style="text-align:center; padding:10px; border:2px solid #2ecc71; border-radius:10px; background: #2ecc7105;">
+                            <small style="color: #27ae60;">Support S2 (Stark)</small><br>
+                            <b style="font-size:1.2em; color: #27ae60;">{pivots['S2']:.2f} $</b>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Kleiner Hinweis-Text unter den Boxen
+                    st.caption(f"💡 Profi-Check: Liegt dein Strike unter S1 ({pivots['S1']:.2f} $)? Das wäre ein deutlich sichereres Setup.")
+                # --- ENDE PIVOT ANALYSE ---
+
+
                 # 3. ANALYSTEN BOX
                 st.markdown(f"""
                     <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 10px solid {analyst_col}; margin-top: 10px;">
@@ -508,3 +559,4 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
