@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
-# --- 1. MATHE: DELTA-BERECHNUNG ---
+# --- 1. MATHE & TECHNIK ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     if T <= 0 or sigma <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
@@ -23,16 +23,13 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 def calculate_pivots(symbol):
+    """Berechnet Pivot-Punkte basierend auf dem letzten abgeschlossenen Handelstag."""
     try:
         tk = yf.Ticker(symbol)
-        # Wir holen 5 Tage, um sicherzugehen, dass wir den letzten geschlossenen Handelstag haben
         hist = tk.history(period="5d") 
         if len(hist) < 2: return None
-        
-        # Vorletzte Zeile ist der letzte abgeschlossene Handelstag
-        last_day = hist.iloc[-2] 
+        last_day = hist.iloc[-2]
         h, l, c = last_day['High'], last_day['Low'], last_day['Close']
-        
         p = (h + l + c) / 3
         s1 = (2 * p) - h
         s2 = p - (h - l)
@@ -50,8 +47,8 @@ def get_combined_watchlist():
         nasdaq_extra = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR", "HOOD", "PLTR", "SQ"]
         full_list = list(set(tickers + nasdaq_extra))
         return [t.replace('.', '-') for t in full_list]
-    except Exception as e:
-        return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR"]
+    except:
+        return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META"]
 
 @st.cache_data(ttl=900)
 def get_stock_data_full(symbol):
@@ -59,35 +56,23 @@ def get_stock_data_full(symbol):
         tk = yf.Ticker(symbol)
         hist = tk.history(period="150d") 
         if hist.empty: return None, [], "", 50, True, False, 0
-            
         price = hist['Close'].iloc[-1] 
         dates = list(tk.options)
-        
-        # Indikatoren
         rsi_series = calculate_rsi(hist['Close'])
         rsi_val = rsi_series.iloc[-1]
         sma_200 = hist['Close'].mean() 
         is_uptrend = price > sma_200
-        
-        # Bollinger & ATR
         sma_20 = hist['Close'].rolling(window=20).mean()
         std_20 = hist['Close'].rolling(window=20).std()
         lower_band = (sma_20 - 2 * std_20).iloc[-1]
         is_near_lower = price <= (lower_band * 1.02)
-        high_low = hist['High'] - hist['Low']
-        atr = high_low.rolling(window=14).mean().iloc[-1]
-            
-        # Earnings-Check
+        atr = (hist['High'] - hist['Low']).rolling(window=14).mean().iloc[-1]
         earn_str = ""
         try:
             cal = tk.calendar
-            if cal is not None:
-                if isinstance(cal, dict) and 'Earnings Date' in cal:
-                    earn_str = cal['Earnings Date'][0].strftime('%d.%m.')
-                elif hasattr(cal, 'columns') and 'Earnings Date' in cal.columns:
-                    earn_str = cal['Earnings Date'].iloc[0].strftime('%d.%m.')
+            if cal is not None and 'Earnings Date' in cal:
+                earn_str = cal['Earnings Date'][0].strftime('%d.%m.')
         except: pass
-        
         return price, dates, earn_str, rsi_val, is_uptrend, is_near_lower, atr
     except:
         return None, [], "", 50, True, False, 0
@@ -123,31 +108,30 @@ with st.sidebar:
 # --- HILFSFUNKTIONEN FÜR DAS DASHBOARD ---
 
 def get_market_data():
+    """Holt globale Marktdaten mit korrektem Nasdaq 100 Index (^NDX)."""
     try:
-        # Nasdaq & VIX
-        ndq = yf.Ticker("^IXIC")
+        ndq = yf.Ticker("^NDX")
         vix = yf.Ticker("^VIX")
         btc = yf.Ticker("BTC-USD")
         
-        h_ndq = ndq.history(period="60d")
+        h_ndq = ndq.history(period="1mo")
         h_vix = vix.history(period="1d")
         h_btc = btc.history(period="1d")
         
-        # Nasdaq Berechnung
+        if h_ndq.empty: return 0, 50, 0, 20, 0
+        
         cp_ndq = h_ndq['Close'].iloc[-1]
         sma20_ndq = h_ndq['Close'].rolling(window=20).mean().iloc[-1]
         dist_ndq = ((cp_ndq - sma20_ndq) / sma20_ndq) * 100
         
-        # Nasdaq RSI
         delta = h_ndq['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         rsi_ndq = 100 - (100 / (1 + rs)).iloc[-1]
         
-        # VIX & BTC
-        v_val = h_vix['Close'].iloc[-1]
-        b_val = h_btc['Close'].iloc[-1]
+        v_val = h_vix['Close'].iloc[-1] if not h_vix.empty else 20
+        b_val = h_btc['Close'].iloc[-1] if not h_btc.empty else 0
         
         return cp_ndq, rsi_ndq, dist_ndq, v_val, b_val
     except:
@@ -559,4 +543,5 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
