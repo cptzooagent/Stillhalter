@@ -426,14 +426,13 @@ def calculate_pivots(symbol):
     except:
         return None
 
-# --- SEKTION 3: PROFI-ANALYSE & TRADING-COCKPIT (PUT/CALL SWITCH) ---
+# --- SEKTION 3: PROFI-ANALYSE & TRADING-COCKPIT (STABILE VERSION) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
 
 col_input, col_switch = st.columns([2, 2])
 with col_input:
     symbol_input = st.text_input("Ticker Symbol", value="MU").upper()
 with col_switch:
-    # Der Umschalter für die Strategie
     strategy_mode = st.radio("Strategie-Modus", ["🛡️ Short Put", "🛠️ Short Call"], horizontal=True)
 
 if symbol_input:
@@ -448,16 +447,9 @@ if symbol_input:
                 price, dates, earn, rsi, uptrend, near_lower, atr = res
                 analyst_txt, analyst_col = get_analyst_conviction(info)
                 
-                # Sterne & Markt-Penalty
-                stars = 0
-                if "HYPER" in analyst_txt: stars = 3
-                elif "Stark" in analyst_txt: stars = 2
-                elif "Neutral" in analyst_txt: stars = 1
-                if uptrend and stars > 0: stars += 0.5
-                
+                # Markt-Penalty Logik (basierend auf Nasdaq-Stand)
                 market_penalty = False
                 if 'dist_ndq' in locals() and dist_ndq < -1.5:
-                    stars -= 1
                     market_penalty = True
 
                 # Ampel-Logik
@@ -465,7 +457,6 @@ if symbol_input:
                 if rsi < 25: ampel_color, ampel_text = "#e74c3c", "🚨 PANIK-ABVERKAUF"
                 elif market_penalty: ampel_color, ampel_text = "#e74c3c", "🚨 NASDAQ SCHWÄCHE"
                 elif strategy_mode == "🛡️ Short Put" and rsi > 70: ampel_color, ampel_text = "#e74c3c", "🚨 ÜBERHITZT"
-                elif strategy_mode == "🛠️ Short Call" and rsi < 30: ampel_color, ampel_text = "#e74c3c", "🚨 BODENBILDUNG: Keinen Call verkaufen!"
                 else: ampel_color, ampel_text = "#27ae60", "✅ SETUP BEREIT"
 
                 st.markdown(f"""
@@ -474,14 +465,7 @@ if symbol_input:
                     </div>
                 """, unsafe_allow_html=True)
 
-                # Metriken & Checkliste (wie zuvor)
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Kurs", f"{price:.2f} $")
-                c2.metric("RSI", f"{int(rsi)}")
-                c3.metric("Modus", strategy_mode)
-                c4.metric("Qualität", "⭐" * int(max(0, stars)))
-
-                # --- OPTION-CHAIN LOGIK (MIT FEHLER-SCHUTZ) ---
+                # --- OPTION-CHAIN LOGIK (FIXED) ---
                 st.markdown(f"### 🎯 {strategy_mode} Auswahl")
                 heute = datetime.now()
                 valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
@@ -490,19 +474,18 @@ if symbol_input:
                     target_date = st.selectbox("📅 Verfallstag", valid_dates)
                     days_to_expiry = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                     
-                    # Daten abrufen
                     try:
+                        # Holen der Daten je nach Modus
                         if strategy_mode == "🛡️ Short Put":
                             chain = tk.option_chain(target_date).puts
                         else:
                             chain = tk.option_chain(target_date).calls
                         
-                        # PRÜFUNG: Sind Daten vorhanden?
-                        if chain.empty or 'bid' not in chain.columns:
-                            st.warning("⚠️ Keine Live-Preise (Bid/Ask) für diesen Verfallstag verfügbar. (Börse geschlossen?)")
-                        else:
+                        if not chain.empty and 'bid' in chain.columns:
                             # 1. Spalten berechnen
                             chain['strike'] = chain['strike'].astype(float)
+                            chain['Yield p.a. %'] = (chain['bid'] / price) * (365 / max(1, days_to_expiry)) * 100
+                            
                             if strategy_mode == "🛡️ Short Put":
                                 chain['Puffer %'] = ((price - chain['strike']) / price) * 100
                                 df_disp = chain[chain['strike'] < price].copy()
@@ -510,29 +493,21 @@ if symbol_input:
                                 chain['Puffer %'] = ((chain['strike'] - price) / price) * 100
                                 df_disp = chain[chain['strike'] > price].copy()
 
-                            # Rendite-Berechnung nur wenn Bid > 0
-                            chain['Yield p.a. %'] = (chain['bid'] / price) * (365 / max(1, days_to_expiry)) * 100
-                            
                             # 2. Sortierung
                             df_disp = df_disp.sort_values('strike', ascending=(strategy_mode == "🛠️ Short Call"))
+                            
+                            # 3. Anzeige
+                            st.dataframe(df_disp[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].format({
+                                'strike': '{:.2f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $',
+                                'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
+                            }), use_container_width=True)
+                        else:
+                            st.warning("Keine Live-Daten verfügbar (Börse evtl. geschlossen).")
+                            
+                    except Exception as opt_e:
+                        st.error(f"Fehler bei Optionsdaten: {opt_e}")
+                else:
+                    st.info("Keine passenden Verfallstage gefunden.")
 
-                            # 3. Anzeige (Nur wenn df_disp nicht leer ist)
-                            if not df_disp.empty:
-                                def style_rows(row):
-                                    p = row.get('Puffer %', 0)
-                                    if strategy_mode == "🛡️ Short Put":
-                                        color = "rgba(39, 174, 96, 0.1)" if p > 10 else "rgba(231, 76, 60, 0.1)"
-                                    else:
-                                        color = "rgba(39, 174, 96, 0.1)" if p > 5 else "rgba(241, 196, 15, 0.1)"
-                                    return [f'background-color: {color}'] * len(row)
-
-                                # Anzeige der gefilterten Spalten
-                                cols_to_show = ['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']
-                                st.dataframe(df_disp[cols_to_show].style.apply(style_rows, axis=1).format({
-                                    'strike': '{:.2f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $',
-                                    'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
-                                }), use_container_width=True)
-                            else:
-                                st.info("Keine passenden Strikes im gewählten Bereich gefunden.")
-                    except Exception as e:
-                        st.error(f"Daten-Fehler: {e}")
+    except Exception as e:
+        st.error(f"Allgemeiner Fehler: {e}")
