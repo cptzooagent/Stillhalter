@@ -512,18 +512,13 @@ if symbol_input:
                         st.write(f"**{pivots['S2']:.2f} $**")
                         st.caption("Letzte Auffanglinie")
 
-                # 1. Wir berechnen den Penalty-Text ZUERST in einer eigenen Variable
-                penalty_html = ""
-                if 'market_penalty' in locals() and market_penalty:
-                    penalty_html = f'<p style="color:#e74c3c; font-weight:bold;">⚠️ Markt-Penalty: -1 Stern (Nasdaq unter SMA20)</p>'
-
-                # 2. Jetzt fügen wir die Variable einfach in den sauberen HTML-Block ein
+                # 4. ANALYSTEN BOX
                 st.markdown(f"""
                     <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 10px solid {analyst_col}; margin-top: 10px;">
                         <h4 style="margin-top:0; color: #31333F;">💡 Fundamentale Analyse</h4>
                         <p style="font-size: 1.1em; font-weight: bold; color: {analyst_col};">{analyst_txt}</p>
-                        {penalty_html}
-                        <hr style="margin: 10px 0; border: none; border-top: 1px solid #ddd;">
+                        {f'<p style="color:#e74c3c; font-weight:bold;">⚠️ Markt-Penalty: -1 Stern (Nasdaq unter SMA20)</p>' if market_penalty else ''}
+                        <hr style="margin: 10px 0;">
                         <span style="color: #555;">📅 Nächste Earnings: <b>{earn if earn else 'n.a.'}</b></span>
                     </div>
                 """, unsafe_allow_html=True)
@@ -561,5 +556,3 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
-
-
