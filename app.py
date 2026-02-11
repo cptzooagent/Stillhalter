@@ -481,7 +481,7 @@ if symbol_input:
                 c3.metric("Modus", strategy_mode)
                 c4.metric("Qualität", "⭐" * int(max(0, stars)))
 
-                # --- OPTION-CHAIN LOGIK ---
+                # --- OPTION-CHAIN LOGIK (MIT FEHLER-SCHUTZ) ---
                 st.markdown(f"### 🎯 {strategy_mode} Auswahl")
                 heute = datetime.now()
                 valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
@@ -490,34 +490,49 @@ if symbol_input:
                     target_date = st.selectbox("📅 Verfallstag", valid_dates)
                     days_to_expiry = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                     
-                    if strategy_mode == "🛡️ Short Put":
-                        chain = tk.option_chain(target_date).puts
-                        # Puffer: Wie weit ist der Strike unter dem Kurs?
-                        chain['Puffer %'] = ((price - chain['strike']) / price) * 100
-                        df_disp = chain[chain['strike'] < price].copy()
-                    else:
-                        chain = tk.option_chain(target_date).calls
-                        # Puffer: Wie weit ist der Strike über dem Kurs?
-                        chain['Puffer %'] = ((chain['strike'] - price) / price) * 100
-                        df_disp = chain[chain['strike'] > price].copy()
-
-                    chain['Yield p.a. %'] = (chain['bid'] / price) * (365 / max(1, days_to_expiry)) * 100
-                    
-                    df_disp = df_disp.sort_values('strike', ascending=(strategy_mode == "🛠️ Short Call"))
-
-                    # Styling
-                    def style_rows(row):
-                        p = row['Puffer %']
+                    # Daten abrufen
+                    try:
                         if strategy_mode == "🛡️ Short Put":
-                            color = "rgba(39, 174, 96, 0.1)" if p > 10 else "rgba(231, 76, 60, 0.1)"
+                            chain = tk.option_chain(target_date).puts
                         else:
-                            color = "rgba(39, 174, 96, 0.1)" if p > 5 else "rgba(241, 196, 15, 0.1)"
-                        return [f'background-color: {color}'] * len(row)
+                            chain = tk.option_chain(target_date).calls
+                        
+                        # PRÜFUNG: Sind Daten vorhanden?
+                        if chain.empty or 'bid' not in chain.columns:
+                            st.warning("⚠️ Keine Live-Preise (Bid/Ask) für diesen Verfallstag verfügbar. (Börse geschlossen?)")
+                        else:
+                            # 1. Spalten berechnen
+                            chain['strike'] = chain['strike'].astype(float)
+                            if strategy_mode == "🛡️ Short Put":
+                                chain['Puffer %'] = ((price - chain['strike']) / price) * 100
+                                df_disp = chain[chain['strike'] < price].copy()
+                            else:
+                                chain['Puffer %'] = ((chain['strike'] - price) / price) * 100
+                                df_disp = chain[chain['strike'] > price].copy()
 
-                    st.dataframe(df_disp[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].style.apply(style_rows, axis=1).format({
-                        'strike': '{:.2f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $',
-                        'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
-                    }), use_container_width=True)
+                            # Rendite-Berechnung nur wenn Bid > 0
+                            chain['Yield p.a. %'] = (chain['bid'] / price) * (365 / max(1, days_to_expiry)) * 100
+                            
+                            # 2. Sortierung
+                            df_disp = df_disp.sort_values('strike', ascending=(strategy_mode == "🛠️ Short Call"))
 
-    except Exception as e:
-        st.error(f"Fehler: {e}")
+                            # 3. Anzeige (Nur wenn df_disp nicht leer ist)
+                            if not df_disp.empty:
+                                def style_rows(row):
+                                    p = row.get('Puffer %', 0)
+                                    if strategy_mode == "🛡️ Short Put":
+                                        color = "rgba(39, 174, 96, 0.1)" if p > 10 else "rgba(231, 76, 60, 0.1)"
+                                    else:
+                                        color = "rgba(39, 174, 96, 0.1)" if p > 5 else "rgba(241, 196, 15, 0.1)"
+                                    return [f'background-color: {color}'] * len(row)
+
+                                # Anzeige der gefilterten Spalten
+                                cols_to_show = ['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']
+                                st.dataframe(df_disp[cols_to_show].style.apply(style_rows, axis=1).format({
+                                    'strike': '{:.2f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $',
+                                    'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
+                                }), use_container_width=True)
+                            else:
+                                st.info("Keine passenden Strikes im gewählten Bereich gefunden.")
+                    except Exception as e:
+                        st.error(f"Daten-Fehler: {e}")
