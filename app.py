@@ -349,78 +349,86 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                         </div>
                     """, unsafe_allow_html=True)
                     
-# --- SEKTION 4: DEPOT-MANAGER MIT EINGABE-FORMULAR ---
-st.markdown("### 🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
+# --- SEKTION 4: DEPOT-MANAGER (FESTE BESTANDSVERWALTUNG) ---
+st.markdown("---")
+st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
-# 1. Speicher für das Depot initialisieren (falls noch nicht vorhanden)
-if 'my_portfolio_data' not in st.session_state:
-    st.session_state.my_portfolio_data = []
+# Hier trägst du deine festen Depot-Werte ein: "Symbol": [Stückzahl, Einstandspreis]
+my_assets = {
+    "MU": [100, 312.50],
+    "HOOD": [500, 24.10],
+    "PLTR": [200, 26.50]
+}
 
-# 2. EINGABE-BEREICH (Formular)
-with st.expander("➕ Neuen Depot-Wert hinzufügen"):
-    with st.form("add_stock_form"):
-        col_t, col_p, col_s = st.columns(3)
-        new_ticker = col_t.text_input("Ticker Symbol", placeholder="z.B. HIMS").upper()
-        new_price = col_p.number_input("Einstandskurs ($)", min_value=0.0, step=0.1)
-        new_shares = col_s.number_input("Stückzahl", min_value=0, step=1)
-        
-        if st.form_submit_button("Aktie zum Depot hinzufügen"):
-            if new_ticker:
-                # Neuen Wert zur Liste hinzufügen
-                st.session_state.my_portfolio_data.append({
-                    "symbol": new_ticker, 
-                    "buy_price": new_price, 
-                    "shares": new_shares
+with st.expander("📂 Meine aktuellen Depot-Werte einsehen", expanded=True):
+    if not my_assets:
+        st.info("Dein Depot ist aktuell noch leer.")
+    else:
+        depot_list = []
+        for symbol, data in my_assets.items():
+            try:
+                # Live-Daten für Depot-Check abrufen
+                tk = yf.Ticker(symbol)
+                hist = tk.history(period="1d")
+                if hist.empty: continue
+                
+                curr_p = hist['Close'].iloc[-1]
+                qty = data[0]
+                entry = data[1]
+                
+                total_val = qty * curr_p
+                perf_pct = ((curr_p - entry) / entry) * 100
+                perf_abs = (curr_p - entry) * qty
+                
+                depot_list.append({
+                    "Ticker": symbol,
+                    "Menge": qty,
+                    "Einstand": f"{entry:.2f} $",
+                    "Aktuell": f"{curr_p:.2f} $",
+                    "Perf. %": f"{perf_pct:+.2f}%",
+                    "GuV ($)": f"{perf_abs:+.2f} $",
+                    "Positionswert": f"{total_val:,.2f} $"
                 })
-                st.success(f"{new_ticker} wurde hinzugefügt!")
-            else:
-                st.error("Bitte einen Ticker eingeben.")
-
-# 3. ANZEIGE & ANALYSE DER DEPOTWERTE
-if not st.session_state.my_portfolio_data:
-    st.info("Dein Depot ist noch leer. Füge oben deine ersten Werte hinzu.")
-else:
-    # Button zum Leeren des Depots (optional)
-    if st.button("Depot-Liste leeren"):
-        st.session_state.my_portfolio_data = []
-        st.rerun()
-
-    # Analyse für jeden eingetragenen Wert
-    for stock in st.session_state.my_portfolio_data:
-        symbol = stock["symbol"]
-        buy_price = stock["buy_price"]
+            except:
+                continue
         
-        with st.expander(f"📊 Position: {symbol} (Einstieg: {buy_price:.2f} $)", expanded=True):
-            res = get_stock_data_full(symbol)
-            if res[0] is not None:
-                price, dates, earn, rsi, uptrend, near_lower, atr = res
+        # Anzeige der Depot-Tabelle
+        if depot_list:
+            df_depot = pd.DataFrame(depot_list)
+            st.table(df_depot)
+        
+        # --- AUTOMATISCHE REPARATUR-LOGIK ---
+        st.markdown("### 🔧 Strategische Reparatur-Vorschläge")
+        reparatur_found = False
+        
+        for symbol, data in my_assets.items():
+            entry = data[1]
+            tk = yf.Ticker(symbol)
+            curr = tk.history(period="1d")['Close'].iloc[-1]
+            
+            # Wenn der Wert > 5% unter Einstand liegt, triggere Hilfe
+            if curr < entry * 0.95:
+                reparatur_found = True
+                pivots = calculate_pivots(symbol)
+                s2_val = pivots['S2'] if pivots else 0
                 
-                # Performance & Ampel-Logik
-                profit_loss_pct = ((price - buy_price) / buy_price) * 100
-                
-                if rsi < 25:
-                    status_txt, status_col = "🚨 PANIK: Keine Calls verkaufen!", "#c0392b"
-                elif rsi > 55:
-                    status_txt, status_col = "✅ ERHOLUNG: Call-Verkauf prüfen", "#27ae60"
-                else:
-                    status_txt, status_col = "🟡 GEDULD: RSI neutral", "#f1c40f"
+                with st.container(border=True):
+                    st.error(f"⚠️ **{symbol}** benötigt Aufmerksamkeit (P/L: {((curr-entry)/entry)*100:.1f}%)")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.write("**Status:** Position im 'Underwater'-Modus.")
+                        st.write(f"**Ziel:** Break-Even bei {entry:.2f} $")
+                    with c2:
+                        if s2_val > 0:
+                            st.success(f"**Reparatur-Level (S2): {s2_val:.2f} $**")
+                            st.caption(f"Empfehlung: Bestehende Puts auf {s2_val:.2f} $ rollen.")
+                        else:
+                            st.write("Technischer Support aktuell nicht berechenbar.")
+        
+        if not reparatur_found:
+            st.write("✅ Alle Positionen sind aktuell stabil oder im Plus. Keine Reparatur nötig.")
 
-                # Visuelle Aufbereitung
-                st.markdown(f"""
-                    <div style="background:{status_col}; color:white; padding:10px; border-radius:5px; text-align:center; font-weight:bold;">
-                        {status_txt}
-                    </div>
-                """, unsafe_allow_html=True)
 
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Kurs", f"{price:.2f} $")
-                c2.metric("P/L %", f"{profit_loss_pct:.1f} %", delta=f"{price-buy_price:.2f} $")
-                c3.metric("RSI", int(rsi))
-                
-                # Strategie-Check für Calls
-                if st.checkbox(f"Reparatur-Calls für {symbol} anzeigen"):
-                    st.write(f"Suche Calls mit Strike >= **{buy_price:.2f} $** (Break-Even Schutz)")
-                    # ... [Hier folgt dein bestehender Code für die Call-Tabelle] ...
                     
 # --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
@@ -556,6 +564,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
