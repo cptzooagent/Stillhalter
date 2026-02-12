@@ -24,7 +24,7 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 def calculate_pivots(symbol):
-    """Berechnet Fibonacci-Pivots für Daily und Weekly Zeitrahmen."""
+    """Berechnet Hybrid-Pivots: Klassisch + Fibonacci (Daily & Weekly)."""
     try:
         tk = yf.Ticker(symbol)
         # Daily Daten
@@ -35,7 +35,7 @@ def calculate_pivots(symbol):
         range_d = h - l
         p_d = (h + l + c) / 3
         
-        # Weekly Daten (Die "Brandmauer")
+        # Weekly Daten (Brandmauer)
         hist_w = tk.history(period="3wk", interval="1wk")
         if len(hist_w) < 2: return None
         l_week = hist_w.iloc[-2]
@@ -45,12 +45,13 @@ def calculate_pivots(symbol):
 
         return {
             "P": p_d, 
-            "S1": p_d - (range_d * 0.382), # Fib 38.2%
-            "S2": p_d - (range_d * 0.618), # Fib 61.8% (Golden Ratio)
-            "W_S2": p_w - (range_w * 0.618) # Weekly Golden Ratio
+            "Std_S1": (2 * p_d) - h,        # Klassischer S1
+            "Std_S2": p_d - (h - l),       # Klassischer S2
+            "Fib_S2": p_d - (range_d * 0.618), # Fib 61.8% (Golden Ratio)
+            "W_Fib_S2": p_w - (range_w * 0.618) # Weekly Golden Ratio
         }
     except: return None
-
+        
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
 def get_combined_watchlist():
@@ -556,5 +557,6 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
