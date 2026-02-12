@@ -495,16 +495,16 @@ if symbol_input:
                     st.metric("Qualität", "⭐" * int(stars))
 
                 # --- FIBONACCI-ZONEN ANZEIGE ---
-        if pivots_res: # Nutzt die Rückgabe aus deinem get_stock_data_full
-            st.markdown("#### 🛡️ Fibonacci Support Level (Brandmauern)")
+                if pivots_res: # Nutzt die Rückgabe aus deinem get_stock_data_full
+                    st.markdown("#### 🛡️ Fibonacci Support Level (Brandmauern)")
             
-            fz1, fz2, fz3 = st.columns(3)
+                    fz1, fz2, fz3 = st.columns(3)
             
-            fz1.metric("Fib 38.2% (Soft)", f"{pivots_res['S1']:.2f} $")
-            fz2.metric("Fib 61.8% (Stark)", f"{pivots_res['S2']:.2f} $", help="Golden Ratio: Hier kaufen oft Institutionen")
-            fz3.metric("Weekly Fib (Boden)", f"{pivots_res['W_S2']:.2f} $", delta="Max Safe", delta_color="inverse")
+                    fz1.metric("Fib 38.2% (Soft)", f"{pivots_res['S1']:.2f} $")
+                    fz2.metric("Fib 61.8% (Stark)", f"{pivots_res['S2']:.2f} $", help="Golden Ratio: Hier kaufen oft Institutionen")
+                    fz3.metric("Weekly Fib (Boden)", f"{pivots_res['W_S2']:.2f} $", delta="Max Safe", delta_color="inverse")
             
-            st.info(f"💡 **Strategie:** Für 'Keine Einbuchung' wähle einen Strike unter **{pivots_res['W_S2']:.2f} $**.")
+                    st.info(f"💡 **Strategie:** Für 'Keine Einbuchung' wähle einen Strike unter **{pivots_res['W_S2']:.2f} $**.")
 
 
                 # 3. ANALYSTEN BOX
@@ -556,4 +556,5 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
