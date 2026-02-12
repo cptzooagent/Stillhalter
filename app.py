@@ -71,28 +71,40 @@ def get_stock_data_full(symbol):
     try:
         tk = yf.Ticker(symbol)
         hist = tk.history(period="150d") 
-        if hist.empty: return None, [], "", 50, True, False, 0
+        if hist.empty: return None, [], "", 50, True, False, 0, None
+        
         price = hist['Close'].iloc[-1] 
         dates = list(tk.options)
         rsi_series = calculate_rsi(hist['Close'])
         rsi_val = rsi_series.iloc[-1]
-        sma_200 = hist['Close'].mean() 
+        
+        # Trend-Check (SMA 200)
+        sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1] if len(hist) >= 200 else hist['Close'].mean()
         is_uptrend = price > sma_200
+        
+        # Bollinger-Band Check
         sma_20 = hist['Close'].rolling(window=20).mean()
         std_20 = hist['Close'].rolling(window=20).std()
         lower_band = (sma_20 - 2 * std_20).iloc[-1]
         is_near_lower = price <= (lower_band * 1.02)
+        
         atr = (hist['High'] - hist['Low']).rolling(window=14).mean().iloc[-1]
+        
+        # NEU: Pivots hier zentral abrufen
+        pivots = calculate_pivots(symbol)
+        
         earn_str = ""
         try:
             cal = tk.calendar
             if cal is not None and 'Earnings Date' in cal:
                 earn_str = cal['Earnings Date'][0].strftime('%d.%m.')
         except: pass
-        return price, dates, earn_str, rsi_val, is_uptrend, is_near_lower, atr
+        
+        # Rückgabe von 8 Werten (pivots ist der letzte)
+        return price, dates, earn_str, rsi_val, is_uptrend, is_near_lower, atr, pivots
     except:
-        return None, [], "", 50, True, False, 0
-
+        return None, [], "", 50, True, False, 0, None
+        
 # --- UI: SIDEBAR (KOMPLETT-REPARATUR) ---
 with st.sidebar:
     st.header("🛡️ Strategie-Einstellungen")
@@ -369,7 +381,6 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
 st.markdown("---")
 st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
-# Deine echten Depot-Werte: [Anzahl, Einstandspreis]
 my_assets = {
     "AFRM": [100, 76.00], "ELF": [100, 109.00], "ETSY": [100, 67.00],
     "GTLB": [100, 41.00], "GTM": [100, 17.00], "HIMS": [100, 36.00],
@@ -383,23 +394,20 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
         try:
             res = get_stock_data_full(symbol)
             if res[0] is None: continue
-            price, dates, earn, rsi, uptrend, near_lower, atr = res
+            
+            # Hier entpacken wir jetzt 8 Werte
+            price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
             qty, entry = data[0], data[1]
             perf_pct = ((price - entry) / entry) * 100
             
-            pivots = calculate_pivots(symbol)
             s2_d = pivots['S2'] if pivots else 0
             s2_w = pivots['W_S2'] if pivots else 0
             
-            # --- REPARATUR-LOGIK ---
-            # 1. Short Put Signal: Wenn RSI tief ODER Kurs bei Daily S2
+            # Reparatur-Logik
             put_action = "🟢 JETZT (S2/RSI)" if (rsi < 35 or price <= s2_d * 1.02) else "⏳ Warten"
-            
-            # Bonus-Signal: Wenn sogar der Wochen-Support erreicht ist
             if price <= s2_w * 1.01:
                 put_action = "🔥 EXTREM (Weekly S2)"
             
-            # 2. Covered Call Signal: Wenn Erholung eingesetzt hat
             call_action = "🟢 JETZT (RSI > 55)" if rsi > 55 else "⏳ Warten"
 
             depot_list.append({
@@ -417,6 +425,7 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
     
     if depot_list:
         st.table(pd.DataFrame(depot_list))
+        
     st.info("💡 **Strategie:** Wenn 'Short Put' auf 🔥 steht, ist die Aktie am wöchentlichen Tiefstand – technisch das sicherste Level zum Verbilligen.")
 
                     
@@ -431,8 +440,9 @@ if symbol_input:
             info = tk.info
             res = get_stock_data_full(symbol_input)
             
+            # Ändere diese Zeile in Sektion 3:
             if res[0] is not None:
-                price, dates, earn, rsi, uptrend, near_lower, atr = res
+                price, dates, earn, rsi, uptrend, near_lower, atr, pivots_res = res  # pivots_res hinzugefügt
                 analyst_txt, analyst_col = get_analyst_conviction(info)
                 
                 # Sterne-Logik (Basis für Qualität)
@@ -568,6 +578,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
