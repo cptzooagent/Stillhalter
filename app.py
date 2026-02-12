@@ -439,7 +439,7 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
     st.info("💡 **Strategie:** Wenn 'Short Put' auf 🔥 steht, ist die Aktie am wöchentlichen Tiefstand – technisch das sicherste Level zum Verbilligen.")
 
                     
-# --- SEKTION 3: PROFI-ANALYSE & TRADING-COCKPIT (FIXED EDITION) ---
+# --- SEKTION 3: PROFI-ANALYSE & TRADING-COCKPIT (VOLLSTÄNDIG) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
 
 col_input, col_strat = st.columns([1, 1])
@@ -455,49 +455,77 @@ if symbol_input:
             res = get_stock_data_full(symbol_input)
             
             if res[0] is not None:
+                # Entpacken der 8 Werte aus deiner Funktion
                 price, dates, earn, rsi, uptrend, near_lower, atr, pivots_res = res 
+                analyst_txt, analyst_col = get_analyst_conviction(tk.info)
                 
-                # --- AMPEL & METRIKEN (wie in deinem Screenshot) ---
-                # (Hier bleibt deine Ampel-Logik von oben bestehen...)
-                st.success("● TOP SETUP (Sicher)") # Beispielhaft
+                # Sterne-Logik für die Anzeige
+                stars = 0
+                if "HYPER" in analyst_txt: stars = 3
+                elif "Stark" in analyst_txt: stars = 2
+                elif "Neutral" in analyst_txt: stars = 1
+                if uptrend and stars > 0: stars += 0.5
+
+                # 1. AMPEL-BANNER
+                ampel_color = "#27ae60" if (uptrend and 30 < rsi < 65) else "#f1c40f"
+                st.markdown(f"""
+                    <div style="background-color: {ampel_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
+                        <h2 style="margin:0; font-size: 1.8em;">● {"TOP SETUP" if ampel_color == "#27ae60" else "CHECK LÄUFT"}</h2>
+                    </div>
+                """, unsafe_allow_html=True)
                 
+                # 2. BASIS-METRIKEN
                 c1, c2, c3, c4 = st.columns(4)
                 c1.metric("Kurs", f"{price:.2f} $")
                 c2.metric("RSI (14)", f"{int(rsi)}")
-                c3.metric("Phase", "Trend" if uptrend else "Dip")
-                c4.metric("Qualität", "⭐⭐⭐")
+                c3.metric("Phase", f"{'🛡️ Trend' if uptrend else '💎 Dip'}")
+                c4.metric("Qualität", "⭐" * int(stars))
 
-                # --- OPTION-CHAIN AUSWAHL ---
+                # 3. PIVOT-PUNKTE (WIEDER HERGESTELLT)
+                st.markdown("---")
+                st.markdown("#### 🛡️ Technische Absicherung")
+                pivots = calculate_pivots(symbol_input)
+                if pivots:
+                    pc1, pc2, pc3, pc4 = st.columns(4)
+                    pc1.metric("Pivot (P)", f"{pivots['P']:.2f}$")
+                    pc2.metric("Support S1", f"{pivots['S1']:.2f}$")
+                    pc3.metric("Daily S2", f"{pivots['S2']:.2f}$")
+                    pc4.metric("Weekly S2", f"{pivots['W_S2']:.2f}$")
+                    s2_val = pivots['S2']
+                else:
+                    st.warning("Pivot-Daten konnten nicht berechnet werden.")
+                    s2_val = 0
+
+                # 4. OPTION-CHAIN AUSWAHL & TABELLE
                 st.markdown("### 🎯 Option-Chain Auswahl")
                 heute = datetime.now()
                 valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
                 
                 if valid_dates:
-                    target_date = st.selectbox("📅 Verfallstag", valid_dates, key="exp_select")
+                    target_date = st.selectbox("📅 Verfallstag", valid_dates)
                     days_to_expiry = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                     
-                    # 1. Ganze Chain holen
+                    # Daten laden
                     full_chain = tk.option_chain(target_date)
                     df = full_chain.puts if "Put" in strat_mode else full_chain.calls
-                    df = df.copy() # Kopie erstellen gegen SettingWithCopyWarning
+                    df = df.copy()
                     
-                    # 2. BERECHNUNGEN (Zuerst alles berechnen!)
+                    # Berechnungen (Spalten sicher erstellen)
                     df['strike'] = df['strike'].astype(float)
                     if "Put" in strat_mode:
                         df['Puffer %'] = ((price - df['strike']) / price) * 100
-                        df = df[df['strike'] < price] # Nur OTM
+                        df = df[df['strike'] < price]
                     else:
                         df['Puffer %'] = ((df['strike'] - price) / price) * 100
-                        df = df[df['strike'] > price] # Nur OTM
+                        df = df[df['strike'] > price]
                     
-                    # Wichtig: Hier wird die fehlende Spalte berechnet
                     df['Yield p.a. %'] = (df['bid'] / df['strike']) * (365 / max(1, days_to_expiry)) * 100
                     
-                    # 3. FILTERN & SORTIEREN
+                    # Sortierung & Filterung
                     df_disp = df[df['Puffer %'] < 25].copy()
                     df_disp = df_disp.sort_values('strike', ascending=("Put" in strat_mode))
 
-                    # 4. ANZEIGE (Jetzt ist Yield p.a. % sicher im Index)
+                    # Anzeige-Setup
                     show_cols = ['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']
                     
                     def style_rows(row):
@@ -513,5 +541,7 @@ if symbol_input:
                         }), 
                         use_container_width=True, height=400
                     )
+                    st.caption("🟢 >12% Puffer | 🟡 8-12% Puffer | 🔴 <8% Puffer")
+
     except Exception as e:
         st.error(f"Fehler im Cockpit: {e}")
