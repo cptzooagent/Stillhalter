@@ -477,37 +477,51 @@ if symbol_input:
                 with col4:
                     st.metric("Qualität", "⭐" * int(stars))
 
-                # --- HIER EINFÜGEN: PIVOT ANALYSE ---
+                # --- VOLLSTÄNDIGE PIVOT ANALYSE ANZEIGE (Sektion 3) ---
                 st.markdown("---")
                 pivots = calculate_pivots(symbol_input)
                 if pivots:
-                    st.markdown("#### 🛡️ Technische Absicherung (Vortages-Pivots)")
-                    pc1, pc2, pc3 = st.columns(3)
+                    st.markdown("#### 🛡️ Technische Absicherung (Daily & Weekly Pivots)")
+                    pc1, pc2, pc3, pc4 = st.columns(4)
                     
+                    # Pivot Punkt
                     pc1.markdown(f"""
                         <div style="text-align:center; padding:10px; border:1px solid #ddd; border-radius:10px; background: white;">
                             <small style="color: #7f8c8d;">Pivot Punkt (P)</small><br>
-                            <b style="font-size:1.2em; color: #2c3e50;">{pivots['P']:.2f} $</b>
+                            <b style="font-size:1.1em; color: #2c3e50;">{pivots['P']:.2f} $</b>
                         </div>
                     """, unsafe_allow_html=True)
                     
+                    # Support S1
                     pc2.markdown(f"""
                         <div style="text-align:center; padding:10px; border:2px solid #27ae60; border-radius:10px; background: #27ae6005;">
                             <small style="color: #27ae60;">Support S1</small><br>
-                            <b style="font-size:1.2em; color: #27ae60;">{pivots['S1']:.2f} $</b>
+                            <b style="font-size:1.1em; color: #27ae60;">{pivots['S1']:.2f} $</b>
                         </div>
                     """, unsafe_allow_html=True)
                     
+                    # Daily S2
                     pc3.markdown(f"""
                         <div style="text-align:center; padding:10px; border:2px solid #2ecc71; border-radius:10px; background: #2ecc7105;">
-                            <small style="color: #27ae60;">Support S2 (Stark)</small><br>
-                            <b style="font-size:1.2em; color: #27ae60;">{pivots['S2']:.2f} $</b>
+                            <small style="color: #2ecc71;">Daily S2 (Stark)</small><br>
+                            <b style="font-size:1.1em; color: #2ecc71;">{pivots['S2']:.2f} $</b>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+                    # Weekly S2
+                    # Farblogik: Wenn der Preis unter dem Weekly S2 ist, wird die Box rot (Kaufzone für Reparatur)
+                    w_bg = "#e74c3c10" if price <= pivots['W_S2'] else "#3498db05"
+                    w_border = "#e74c3c" if price <= pivots['W_S2'] else "#3498db"
+                    
+                    pc4.markdown(f"""
+                        <div style="text-align:center; padding:10px; border:2px solid {w_border}; border-radius:10px; background: {w_bg};">
+                            <small style="color: {w_border};">Weekly S2 (Boden)</small><br>
+                            <b style="font-size:1.1em; color: {w_border};">{pivots['W_S2']:.2f} $</b>
                         </div>
                     """, unsafe_allow_html=True)
                     
-                    # Kleiner Hinweis-Text unter den Boxen
-                    st.caption(f"💡 Profi-Check: Liegt dein Strike unter S1 ({pivots['S1']:.2f} $)? Das wäre ein deutlich sichereres Setup.")
-                # --- ENDE PIVOT ANALYSE ---
+                    # Profi-Tipp unter den Boxen
+                    st.caption(f"💡 **Profi-Check:** Liegt dein Strike unter dem Weekly S2 ({pivots['W_S2']:.2f} $)? Das ist historisch gesehen der sicherste Bereich für Stillhalter.")
 
 
                 # 3. ANALYSTEN BOX
@@ -554,6 +568,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
