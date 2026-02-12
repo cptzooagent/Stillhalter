@@ -278,9 +278,12 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             if m_cap < mkt_cap_limit: continue
             if not (min_stock_price <= curr_price <= max_stock_price): continue
             
+            # Finde diese Zeile im Scanner (ca. Zeile 193):
             res = get_stock_data_full(symbol)
             if res[0] is None: continue
-            price, dates, earn, rsi, uptrend, near_lower, atr = res
+
+            # ÄNDERE DIESE ZEILE (füge ', pivots' am Ende hinzu):
+            price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
             
             # Filter 2: Trend
             if only_uptrend and not uptrend: continue
@@ -578,13 +581,3 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
-
-
-
-
-
-
-
-
-
-
