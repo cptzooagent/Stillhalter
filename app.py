@@ -349,11 +349,11 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                         </div>
                     """, unsafe_allow_html=True)
                     
-# --- SEKTION 4: DEPOT-MANAGER (FESTE BESTANDSVERWALTUNG) ---
+# --- SEKTION 4: DEPOT-MANAGER (DEIN ECHTES DEPOT) ---
 st.markdown("---")
 st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
-# Hier trägst du deine festen Depot-Werte ein: "Symbol": [Stückzahl, Einstandspreis]
+# Deine echten Depot-Werte
 my_assets = {
     "AFRM": [100, 76.00],
     "ELF": [100, 109.00],
@@ -369,74 +369,44 @@ my_assets = {
     "TTD": [100, 102.00]
 }
 
-with st.expander("📂 Meine aktuellen Depot-Werte einsehen", expanded=True):
-    if not my_assets:
-        st.info("Dein Depot ist aktuell noch leer.")
-    else:
-        depot_list = []
-        for symbol, data in my_assets.items():
-            try:
-                # Live-Daten für Depot-Check abrufen
-                tk = yf.Ticker(symbol)
-                hist = tk.history(period="1d")
-                if hist.empty: continue
-                
-                curr_p = hist['Close'].iloc[-1]
-                qty = data[0]
-                entry = data[1]
-                
-                total_val = qty * curr_p
-                perf_pct = ((curr_p - entry) / entry) * 100
-                perf_abs = (curr_p - entry) * qty
-                
-                depot_list.append({
-                    "Ticker": symbol,
-                    "Menge": qty,
-                    "Einstand": f"{entry:.2f} $",
-                    "Aktuell": f"{curr_p:.2f} $",
-                    "Perf. %": f"{perf_pct:+.2f}%",
-                    "GuV ($)": f"{perf_abs:+.2f} $",
-                    "Positionswert": f"{total_val:,.2f} $"
-                })
-            except:
-                continue
-        
-        # Anzeige der Depot-Tabelle
-        if depot_list:
-            df_depot = pd.DataFrame(depot_list)
-            st.table(df_depot)
-        
-        # --- AUTOMATISCHE REPARATUR-LOGIK ---
-        st.markdown("### 🔧 Strategische Reparatur-Vorschläge")
-        reparatur_found = False
-        
-        for symbol, data in my_assets.items():
-            entry = data[1]
+with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
+    depot_list = []
+    for symbol, data in my_assets.items():
+        try:
             tk = yf.Ticker(symbol)
-            curr = tk.history(period="1d")['Close'].iloc[-1]
+            res = get_stock_data_full(symbol)
+            if res[0] is None: continue
             
-            # Wenn der Wert > 5% unter Einstand liegt, triggere Hilfe
-            if curr < entry * 0.95:
-                reparatur_found = True
-                pivots = calculate_pivots(symbol)
-                s2_val = pivots['S2'] if pivots else 0
-                
-                with st.container(border=True):
-                    st.error(f"⚠️ **{symbol}** benötigt Aufmerksamkeit (P/L: {((curr-entry)/entry)*100:.1f}%)")
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.write("**Status:** Position im 'Underwater'-Modus.")
-                        st.write(f"**Ziel:** Break-Even bei {entry:.2f} $")
-                    with c2:
-                        if s2_val > 0:
-                            st.success(f"**Reparatur-Level (S2): {s2_val:.2f} $**")
-                            st.caption(f"Empfehlung: Bestehende Puts auf {s2_val:.2f} $ rollen.")
-                        else:
-                            st.write("Technischer Support aktuell nicht berechenbar.")
-        
-        if not reparatur_found:
-            st.write("✅ Alle Positionen sind aktuell stabil oder im Plus. Keine Reparatur nötig.")
+            price, dates, earn, rsi, uptrend, near_lower, atr = res
+            qty, entry = data[0], data[1]
+            perf_pct = ((price - entry) / entry) * 100
+            pivots = calculate_pivots(symbol)
+            s2_level = pivots['S2'] if pivots else 0
+            
+            # REPARATUR-LOGIK FÜR BESTANDS-AKTIEN
+            # 1. Wann Short Put zur Verbilligung? (Angst-Phase nutzen)
+            put_action = "🟢 JETZT (S2/RSI)" if (rsi < 35 or price <= s2_level * 1.02) else "⏳ Warten"
+            
+            # 2. Wann Covered Call zur Prämie? (Erholungs-Phase nutzen)
+            call_action = "🟢 JETZT (RSI > 55)" if rsi > 55 else "⏳ Warten"
 
+            depot_list.append({
+                "Ticker": symbol,
+                "Einstand": f"{entry:.2f} $",
+                "Aktuell": f"{price:.2f} $",
+                "P/L %": f"{perf_pct:+.1f}%",
+                "RSI": int(rsi),
+                "Short Put (Repair)": put_action,
+                "Covered Call": call_action,
+                "S2-Support": f"{s2_level:.2f} $"
+            })
+        except: continue
+    
+    if depot_list:
+        df_depot = pd.DataFrame(depot_list)
+        st.table(df_depot)
+
+    st.info("💡 **Strategie:** Wenn 'Short Put' auf 🟢 steht, ist die Aktie technisch so tief, dass du durch den Verkauf eines Puts am S2-Level deinen Einstand sicher verbilligen kannst.")
 
                     
 # --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
@@ -573,6 +543,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
