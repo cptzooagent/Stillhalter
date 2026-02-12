@@ -518,45 +518,44 @@ if symbol_input:
                     </div>
                 """, unsafe_allow_html=True)
 
-                # --- OPTION-CHAIN MIT FIBONACCI-VALIDIERUNG ---
-        st.markdown("### 🎯 Option-Chain Auswahl (Put-Fokus)")
-        if dates:
-            target_date = st.selectbox("📅 Verfallstag wählen", dates[:5])
-            chain = tk.option_chain(target_date).puts
+                # --- OPTION-CHAIN MIT TIEFEN-PUFFER-LOGIK ---
+                st.markdown("### 🎯 Option-Chain Auswahl (Sicherheits-Fokus)")
+                if dates:
+                    target_date = st.selectbox("📅 Verfallstag wählen", dates[:5])
+                    chain = tk.option_chain(target_date).puts
             
-            # Nur OTM Puts (Strikes unter aktuellem Preis)
-            df_puts = chain[chain['strike'] < price].sort_values('strike', ascending=False).head(12).copy()
+                    # NEU: Wir filtern hier bewusst auf Strikes, die mind. 8% unter dem Kurs liegen
+                    min_puffer_filter = 0.08 
+                    df_puts = chain[chain['strike'] < (price * (1 - min_puffer_filter))].sort_values('strike', ascending=False).head(15).copy()
             
-            # Sicherheits-Validierung gegen Fibonacci-Zonen
-            def check_safety(strike):
-                if strike < pivots_res['W_S2']: return "✅ EXTREM SICHER"
-                if strike < pivots_res['S2']: return "🟢 SICHER (Fib 61.8)"
-                if strike < pivots_res['S1']: return "🟡 MODERAT"
-                return "🔴 RISIKO"
+                    # Falls die Liste leer ist (weil Puffer zu extrem), zeigen wir die nächsten verfügbaren an
+                    if df_puts.empty:
+                        df_puts = chain[chain['strike'] < price].sort_values('strike', ascending=False).head(12).copy()
 
-            df_puts['Sicherheit'] = df_puts['strike'].apply(check_safety)
-            df_puts['Puffer %'] = ((price - df_puts['strike']) / price) * 100
-            df_puts['Yield p.a. %'] = (df_puts['bid'] / df_puts['strike']) * (365 / max(1, (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days)) * 100
+                    def check_hybrid_safety(strike):
+                        if strike < pivots_res['W_Fib_S2']: return "💎 MAX SAFETY (Weekly)"
+                        if strike < min(pivots_res['Std_S2'], pivots_res['Fib_S2']): return "🟢 DOUBLE SUPPORT"
+                        if strike < pivots_res['Fib_S2'] or strike < pivots_res['Std_S2']: return "🟡 SINGLE SUPPORT"
+                        return "🔴 AGGRESSIV"
+
+                    df_puts['Sicherheit'] = df_puts['strike'].apply(check_hybrid_safety)
+                    df_puts['Puffer %'] = ((price - df_puts['strike']) / price) * 100
             
-            # Styling für die Sicherheits-Spalte
-            def color_safety(val):
-                colors = {
-                    "✅ EXTREM SICHER": "background-color: #1e8449; color: white;", 
-                    "🟢 SICHER (Fib 61.8)": "background-color: #27ae60; color: white;", 
-                    "🟡 MODERAT": "background-color: #f1c40f; color: black;", 
-                    "🔴 RISIKO": "background-color: #e74c3c; color: white;"
-                }
-                return colors.get(val, "")
+                    # Styling bleibt gleich
+                    def color_hybrid(val):
+                        colors = {"💎 MAX SAFETY (Weekly)": "#1a5276", "🟢 DOUBLE SUPPORT": "#1e8449", 
+                                  "🟡 SINGLE SUPPORT": "#d4ac0d", "🔴 AGGRESSIV": "#922b21"}
+                        return f'background-color: {colors.get(val, "white")}; color: white; font-weight: bold'
 
-            styled_df = df_puts[['strike', 'bid', 'Puffer %', 'Yield p.a. %', 'Sicherheit']].style.applymap(color_safety, subset=['Sicherheit']).format({
-                'strike': '{:.2f} $', 'bid': '{:.2f} $', 'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
-            })
+                    styled_df = df_puts[['strike', 'bid', 'Puffer %', 'Sicherheit']].style.applymap(color_hybrid, subset=['Sicherheit']).format({
+                        'strike': '{:.2f} $', 'bid': '{:.2f} $', 'Puffer %': '{:.1f} %'
+                    })
 
-            st.dataframe(styled_df, use_container_width=True, height=400)
-            st.caption("Legende: ✅ Strike unter Weekly Fib | 🟢 Strike unter Daily Fib 61.8% | 🔴 Hohes Einbuchungsrisiko")
+                    st.dataframe(styled_df, use_container_width=True)
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
