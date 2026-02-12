@@ -441,7 +441,13 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
                     
 # --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
-symbol_input = st.text_input("Ticker Symbol", value="MU", help="Gib ein Ticker-Symbol ein").upper()
+
+# Spalten für Ticker und Strategie-Wahl
+col_input, col_strat = st.columns([1, 1])
+with col_input:
+    symbol_input = st.text_input("Ticker Symbol", value="MU", help="Gib ein Ticker-Symbol ein").upper()
+with col_strat:
+    strat_mode = st.radio("Strategie wählen:", ["Short Put (Cash Secured)", "Short Call (Covered Call)"], horizontal=True)
 
 if symbol_input:
     try:
@@ -450,128 +456,74 @@ if symbol_input:
             info = tk.info
             res = get_stock_data_full(symbol_input)
             
-            # Ändere diese Zeile in Sektion 3:
             if res[0] is not None:
-                price, dates, earn, rsi, uptrend, near_lower, atr, pivots_res = res  # pivots_res hinzugefügt
+                price, dates, earn, rsi, uptrend, near_lower, atr, pivots_res = res 
                 analyst_txt, analyst_col = get_analyst_conviction(info)
                 
-                # Sterne-Logik (Basis für Qualität)
+                # Sterne-Logik
                 stars = 0
                 if "HYPER" in analyst_txt: stars = 3
                 elif "Stark" in analyst_txt: stars = 2
                 elif "Neutral" in analyst_txt: stars = 1
                 if uptrend and stars > 0: stars += 0.5
                 
-                # --- VERSCHÄRFTE AMPEL-LOGIK (PANIK-SCHUTZ) ---
+                # Ampel-Logik (Angepasst an Put/Call)
                 ampel_color, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
-                
-                if rsi < 25:
-                    # Panik-Schutz greift zuerst
-                    ampel_color, ampel_text = "#e74c3c", "STOPP: PANIK-ABVERKAUF (RSI < 25)"
-                elif rsi > 75:
-                    ampel_color, ampel_text = "#e74c3c", "STOPP: ÜBERHITZT (RSI > 75)"
-                elif stars >= 2.5 and uptrend and 30 <= rsi <= 60:
-                    # Ideales Setup
-                    ampel_color, ampel_text = "#27ae60", "TOP SETUP (Sicher)"
-                elif "Warnung" in analyst_txt:
-                    ampel_color, ampel_text = "#e74c3c", "STOPP: ANALYSTEN-WARNUNG"
-                else:
-                    ampel_color, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
+                if "Put" in strat_mode:
+                    if rsi < 25: ampel_color, ampel_text = "#e74c3c", "STOPP: PANIK (RSI < 25)"
+                    elif rsi > 70: ampel_color, ampel_text = "#f39c12", "VORSICHT: ÜBERHITZT FÜR PUTS"
+                    elif stars >= 2.5 and uptrend: ampel_color, ampel_text = "#27ae60", "TOP SETUP (Sicher)"
+                else: # Call Logik
+                    if rsi > 75: ampel_color, ampel_text = "#27ae60", "TOP CALL-ZEITPUNKT (Überkauft)"
+                    elif rsi < 30: ampel_color, ampel_text = "#e74c3c", "STOPP: NICHTS MEHR ZU HOLEN (RSI tief)"
 
-                # 1. HEADER: Ampel
                 st.markdown(f"""
-                    <div style="background-color: {ampel_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                        <h2 style="margin:0; font-size: 1.8em; letter-spacing: 1px;">● {ampel_text}</h2>
+                    <div style="background-color: {ampel_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
+                        <h2 style="margin:0; font-size: 1.8em;">● {ampel_text}</h2>
                     </div>
                 """, unsafe_allow_html=True)
 
-                # 2. METRIKEN-BOARD
+                # Metriken
                 col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Kurs", f"{price:.2f} $")
-                with col2:
-                    st.metric("RSI (14)", f"{int(rsi)}", delta="PANIK" if rsi < 25 else None, delta_color="inverse")
-                with col3:
-                    status_icon = "🛡️" if uptrend else "💎"
-                    st.metric("Phase", f"{status_icon} {'Trend' if uptrend else 'Dip'}")
-                with col4:
-                    st.metric("Qualität", "⭐" * int(stars))
+                col1.metric("Kurs", f"{price:.2f} $")
+                col2.metric("RSI (14)", f"{int(rsi)}")
+                col3.metric("Phase", f"{'🛡️ Trend' if uptrend else '💎 Dip'}")
+                col4.metric("Qualität", "⭐" * int(stars))
 
-                # --- VOLLSTÄNDIGE PIVOT ANALYSE ANZEIGE (Sektion 3) ---
+                # Pivot Analyse
                 st.markdown("---")
                 pivots = calculate_pivots(symbol_input)
                 if pivots:
-                    st.markdown("#### 🛡️ Technische Absicherung (Daily & Weekly Pivots)")
+                    st.markdown("#### 🛡️ Technische Absicherung")
                     pc1, pc2, pc3, pc4 = st.columns(4)
-                    
-                    # Pivot Punkt
-                    pc1.markdown(f"""
-                        <div style="text-align:center; padding:10px; border:1px solid #ddd; border-radius:10px; background: white;">
-                            <small style="color: #7f8c8d;">Pivot Punkt (P)</small><br>
-                            <b style="font-size:1.1em; color: #2c3e50;">{pivots['P']:.2f} $</b>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Support S1
-                    pc2.markdown(f"""
-                        <div style="text-align:center; padding:10px; border:2px solid #27ae60; border-radius:10px; background: #27ae6005;">
-                            <small style="color: #27ae60;">Support S1</small><br>
-                            <b style="font-size:1.1em; color: #27ae60;">{pivots['S1']:.2f} $</b>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Daily S2
-                    pc3.markdown(f"""
-                        <div style="text-align:center; padding:10px; border:2px solid #2ecc71; border-radius:10px; background: #2ecc7105;">
-                            <small style="color: #2ecc71;">Daily S2 (Stark)</small><br>
-                            <b style="font-size:1.1em; color: #2ecc71;">{pivots['S2']:.2f} $</b>
-                        </div>
-                    """, unsafe_allow_html=True)
+                    pc1.metric("Pivot (P)", f"{pivots['P']:.2f}$")
+                    pc2.metric("Support S1", f"{pivots['S1']:.2f}$")
+                    pc3.metric("Daily S2", f"{pivots['S2']:.2f}$")
+                    pc4.metric("Weekly S2", f"{pivots['W_S2']:.2f}$")
 
-                    # Weekly S2
-                    # Farblogik: Wenn der Preis unter dem Weekly S2 ist, wird die Box rot (Kaufzone für Reparatur)
-                    w_bg = "#e74c3c10" if price <= pivots['W_S2'] else "#3498db05"
-                    w_border = "#e74c3c" if price <= pivots['W_S2'] else "#3498db"
-                    
-                    pc4.markdown(f"""
-                        <div style="text-align:center; padding:10px; border:2px solid {w_border}; border-radius:10px; background: {w_bg};">
-                            <small style="color: {w_border};">Weekly S2 (Boden)</small><br>
-                            <b style="font-size:1.1em; color: {w_border};">{pivots['W_S2']:.2f} $</b>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Profi-Tipp unter den Boxen
-                    st.caption(f"💡 **Profi-Check:** Liegt dein Strike unter dem Weekly S2 ({pivots['W_S2']:.2f} $)? Das ist historisch gesehen der sicherste Bereich für Stillhalter.")
-
-
-                # 3. ANALYSTEN BOX
-                st.markdown(f"""
-                    <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 10px solid {analyst_col}; margin-top: 10px;">
-                        <h4 style="margin-top:0; color: #31333F;">💡 Fundamentale Analyse</h4>
-                        <p style="font-size: 1.1em; font-weight: bold; color: {analyst_col};">{analyst_txt}</p>
-                        <hr style="margin: 10px 0;">
-                        <span style="color: #555;">📅 Nächste Earnings: <b>{earn if earn else 'n.a.'}</b></span>
-                    </div>
-                """, unsafe_allow_html=True)
-
-                # 4. OPTIONEN TABELLE
+                # Optionen Auswahl
                 st.markdown("### 🎯 Option-Chain Auswahl")
                 heute = datetime.now()
-                # Flexibles Fenster: 5 bis 35 Tage
-                valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
+                valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
                 
                 if valid_dates:
-                    target_date = st.selectbox("📅 Wähle deinen Verfallstag", valid_dates)
-                    chain = tk.option_chain(target_date).puts
+                    target_date = st.selectbox("📅 Verfallstag", valid_dates)
                     days_to_expiry = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                     
-                    chain['strike'] = chain['strike'].astype(float)
-                    chain['Puffer %'] = ((price - chain['strike']) / price) * 100
-                    chain['Yield p.a. %'] = (chain['bid'] / chain['strike']) * (365 / max(1, days_to_expiry)) * 100
-                    
-                    df_disp = chain[(chain['strike'] < price) & (chain['Puffer %'] < 25)].copy()
-                    df_disp = df_disp.sort_values('strike', ascending=False)
+                    # Logik-Umschaltung Put/Call
+                    if "Put" in strat_mode:
+                        chain = tk.option_chain(target_date).puts
+                        chain['Puffer %'] = ((price - chain['strike']) / price) * 100
+                        df_disp = chain[(chain['strike'] < price) & (chain['Puffer %'] < 25)].copy()
+                    else:
+                        chain = tk.option_chain(target_date).calls
+                        chain['Puffer %'] = ((chain['strike'] - price) / price) * 100
+                        df_disp = chain[(chain['strike'] > price) & (chain['Puffer %'] < 25)].copy()
 
+                    chain['Yield p.a. %'] = (chain['bid'] / chain['strike']) * (365 / max(1, days_to_expiry)) * 100
+                    df_disp = df_disp.sort_values('strike', ascending=("Put" in strat_mode))
+
+                    # Styling
                     def style_rows(row):
                         p = row['Puffer %']
                         if p >= 12: return ['background-color: rgba(39, 174, 96, 0.1)'] * len(row)
@@ -583,9 +535,8 @@ if symbol_input:
                         'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
                     })
                     
-                    st.dataframe(styled_df, use_container_width=True, height=450)
+                    st.dataframe(styled_df, use_container_width=True, height=400)
                     st.caption("🟢 >12% Puffer | 🟡 8-12% Puffer | 🔴 <8% Puffer")
 
     except Exception as e:
-        st.error(f"Fehler bei {symbol_input}: {e}")
-
+        st.error(f"Fehler: {e}")
