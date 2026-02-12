@@ -419,8 +419,6 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
         st.table(pd.DataFrame(depot_list))
     st.info("💡 **Strategie:** Wenn 'Short Put' auf 🔥 steht, ist die Aktie am wöchentlichen Tiefstand – technisch das sicherste Level zum Verbilligen.")
 
-    st.info("💡 **Strategie:** Wenn 'Short Put' auf 🟢 steht, ist die Aktie technisch so tief, dass du durch den Verkauf eines Puts am S2-Level deinen Einstand sicher verbilligen kannst.")
-
                     
 # --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
@@ -556,6 +554,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
