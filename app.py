@@ -24,34 +24,36 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 def calculate_pivots(symbol):
-    """Berechnet Hybrid-Pivots: Klassisch + Fibonacci (Daily & Weekly)."""
+    """Berechnet Daily und Weekly Pivot-Punkte für maximale Sicherheit."""
     try:
         tk = yf.Ticker(symbol)
-        # Daily Daten
+        
+        # 1. Daily Pivots (Vortag)
         hist_d = tk.history(period="5d") 
         if len(hist_d) < 2: return None
-        l_day = hist_d.iloc[-2]
-        h, l, c = l_day['High'], l_day['Low'], l_day['Close']
-        range_d = h - l
-        p_d = (h + l + c) / 3
-        
-        # Weekly Daten (Brandmauer)
+        last_day = hist_d.iloc[-2]
+        h_d, l_d, c_d = last_day['High'], last_day['Low'], last_day['Close']
+        p_d = (h_d + l_d + c_d) / 3
+        s1_d = (2 * p_d) - h_d
+        s2_d = p_d - (h_d - l_d)
+
+        # 2. Weekly Pivots (Vorwoche für den "echten" Boden)
         hist_w = tk.history(period="3wk", interval="1wk")
-        if len(hist_w) < 2: return None
-        l_week = hist_w.iloc[-2]
-        hw, lw, cw = l_week['High'], l_week['Low'], l_week['Close']
-        range_w = hw - lw
-        p_w = (hw + lw + cw) / 3
+        if len(hist_w) < 2: 
+            return {"P": p_d, "S1": s1_d, "S2": s2_d, "W_S2": s2_d}
+        
+        last_week = hist_w.iloc[-2]
+        h_w, l_w, c_w = last_week['High'], last_week['Low'], last_week['Close']
+        p_w = (h_w + l_w + c_w) / 3
+        s2_w = p_w - (h_w - l_w)
 
         return {
-            "P": p_d, 
-            "Std_S1": (2 * p_d) - h,        # Klassischer S1
-            "Std_S2": p_d - (h - l),       # Klassischer S2
-            "Fib_S2": p_d - (range_d * 0.618), # Fib 61.8% (Golden Ratio)
-            "W_Fib_S2": p_w - (range_w * 0.618) # Weekly Golden Ratio
+            "P": p_d, "S1": s1_d, "S2": s2_d, 
+            "W_S2": s2_w  # Wöchentlicher starker Support
         }
-    except: return None
-        
+    except:
+        return None
+
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
 def get_combined_watchlist():
@@ -495,17 +497,51 @@ if symbol_input:
                 with col4:
                     st.metric("Qualität", "⭐" * int(stars))
 
-                # --- FIBONACCI-ZONEN ANZEIGE ---
-                if pivots_res: # Nutzt die Rückgabe aus deinem get_stock_data_full
-                    st.markdown("#### 🛡️ Fibonacci Support Level (Brandmauern)")
-            
-                    fz1, fz2, fz3 = st.columns(3)
-            
-                    fz1.metric("Fib 38.2% (Soft)", f"{pivots_res['S1']:.2f} $")
-                    fz2.metric("Fib 61.8% (Stark)", f"{pivots_res['S2']:.2f} $", help="Golden Ratio: Hier kaufen oft Institutionen")
-                    fz3.metric("Weekly Fib (Boden)", f"{pivots_res['W_S2']:.2f} $", delta="Max Safe", delta_color="inverse")
-            
-                    st.info(f"💡 **Strategie:** Für 'Keine Einbuchung' wähle einen Strike unter **{pivots_res['W_S2']:.2f} $**.")
+                # --- VOLLSTÄNDIGE PIVOT ANALYSE ANZEIGE (Sektion 3) ---
+                st.markdown("---")
+                pivots = calculate_pivots(symbol_input)
+                if pivots:
+                    st.markdown("#### 🛡️ Technische Absicherung (Daily & Weekly Pivots)")
+                    pc1, pc2, pc3, pc4 = st.columns(4)
+                    
+                    # Pivot Punkt
+                    pc1.markdown(f"""
+                        <div style="text-align:center; padding:10px; border:1px solid #ddd; border-radius:10px; background: white;">
+                            <small style="color: #7f8c8d;">Pivot Punkt (P)</small><br>
+                            <b style="font-size:1.1em; color: #2c3e50;">{pivots['P']:.2f} $</b>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Support S1
+                    pc2.markdown(f"""
+                        <div style="text-align:center; padding:10px; border:2px solid #27ae60; border-radius:10px; background: #27ae6005;">
+                            <small style="color: #27ae60;">Support S1</small><br>
+                            <b style="font-size:1.1em; color: #27ae60;">{pivots['S1']:.2f} $</b>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Daily S2
+                    pc3.markdown(f"""
+                        <div style="text-align:center; padding:10px; border:2px solid #2ecc71; border-radius:10px; background: #2ecc7105;">
+                            <small style="color: #2ecc71;">Daily S2 (Stark)</small><br>
+                            <b style="font-size:1.1em; color: #2ecc71;">{pivots['S2']:.2f} $</b>
+                        </div>
+                    """, unsafe_allow_html=True)
+
+                    # Weekly S2
+                    # Farblogik: Wenn der Preis unter dem Weekly S2 ist, wird die Box rot (Kaufzone für Reparatur)
+                    w_bg = "#e74c3c10" if price <= pivots['W_S2'] else "#3498db05"
+                    w_border = "#e74c3c" if price <= pivots['W_S2'] else "#3498db"
+                    
+                    pc4.markdown(f"""
+                        <div style="text-align:center; padding:10px; border:2px solid {w_border}; border-radius:10px; background: {w_bg};">
+                            <small style="color: {w_border};">Weekly S2 (Boden)</small><br>
+                            <b style="font-size:1.1em; color: {w_border};">{pivots['W_S2']:.2f} $</b>
+                        </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Profi-Tipp unter den Boxen
+                    st.caption(f"💡 **Profi-Check:** Liegt dein Strike unter dem Weekly S2 ({pivots['W_S2']:.2f} $)? Das ist historisch gesehen der sicherste Bereich für Stillhalter.")
 
 
                 # 3. ANALYSTEN BOX
@@ -518,44 +554,37 @@ if symbol_input:
                     </div>
                 """, unsafe_allow_html=True)
 
-                # --- OPTION-CHAIN MIT TIEFEN-PUFFER-LOGIK ---
-                st.markdown("### 🎯 Option-Chain Auswahl (Sicherheits-Fokus)")
-                if dates:
-                    target_date = st.selectbox("📅 Verfallstag wählen", dates[:5])
+                # 4. OPTIONEN TABELLE
+                st.markdown("### 🎯 Option-Chain Auswahl")
+                heute = datetime.now()
+                # Flexibles Fenster: 5 bis 35 Tage
+                valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
+                
+                if valid_dates:
+                    target_date = st.selectbox("📅 Wähle deinen Verfallstag", valid_dates)
                     chain = tk.option_chain(target_date).puts
-            
-                    # NEU: Wir filtern hier bewusst auf Strikes, die mind. 8% unter dem Kurs liegen
-                    min_puffer_filter = 0.08 
-                    df_puts = chain[chain['strike'] < (price * (1 - min_puffer_filter))].sort_values('strike', ascending=False).head(15).copy()
-            
-                    # Falls die Liste leer ist (weil Puffer zu extrem), zeigen wir die nächsten verfügbaren an
-                    if df_puts.empty:
-                        df_puts = chain[chain['strike'] < price].sort_values('strike', ascending=False).head(12).copy()
+                    days_to_expiry = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
+                    
+                    chain['strike'] = chain['strike'].astype(float)
+                    chain['Puffer %'] = ((price - chain['strike']) / price) * 100
+                    chain['Yield p.a. %'] = (chain['bid'] / chain['strike']) * (365 / max(1, days_to_expiry)) * 100
+                    
+                    df_disp = chain[(chain['strike'] < price) & (chain['Puffer %'] < 25)].copy()
+                    df_disp = df_disp.sort_values('strike', ascending=False)
 
-                    def check_hybrid_safety(strike):
-                        if strike < pivots_res['W_Fib_S2']: return "💎 MAX SAFETY (Weekly)"
-                        if strike < min(pivots_res['Std_S2'], pivots_res['Fib_S2']): return "🟢 DOUBLE SUPPORT"
-                        if strike < pivots_res['Fib_S2'] or strike < pivots_res['Std_S2']: return "🟡 SINGLE SUPPORT"
-                        return "🔴 AGGRESSIV"
+                    def style_rows(row):
+                        p = row['Puffer %']
+                        if p >= 12: return ['background-color: rgba(39, 174, 96, 0.1)'] * len(row)
+                        elif 8 <= p < 12: return ['background-color: rgba(241, 196, 15, 0.1)'] * len(row)
+                        return ['background-color: rgba(231, 76, 60, 0.1)'] * len(row)
 
-                    df_puts['Sicherheit'] = df_puts['strike'].apply(check_hybrid_safety)
-                    df_puts['Puffer %'] = ((price - df_puts['strike']) / price) * 100
-            
-                    # Styling bleibt gleich
-                    def color_hybrid(val):
-                        colors = {"💎 MAX SAFETY (Weekly)": "#1a5276", "🟢 DOUBLE SUPPORT": "#1e8449", 
-                                  "🟡 SINGLE SUPPORT": "#d4ac0d", "🔴 AGGRESSIV": "#922b21"}
-                        return f'background-color: {colors.get(val, "white")}; color: white; font-weight: bold'
-
-                    styled_df = df_puts[['strike', 'bid', 'Puffer %', 'Sicherheit']].style.applymap(color_hybrid, subset=['Sicherheit']).format({
-                        'strike': '{:.2f} $', 'bid': '{:.2f} $', 'Puffer %': '{:.1f} %'
+                    styled_df = df_disp[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].style.apply(style_rows, axis=1).format({
+                        'strike': '{:.2f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $',
+                        'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
                     })
-
-                    st.dataframe(styled_df, use_container_width=True)
+                    
+                    st.dataframe(styled_df, use_container_width=True, height=450)
+                    st.caption("🟢 >12% Puffer | 🟡 8-12% Puffer | 🔴 <8% Puffer")
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
-
-
-
-
