@@ -439,7 +439,7 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
     st.info("💡 **Strategie:** Wenn 'Short Put' auf 🔥 steht, ist die Aktie am wöchentlichen Tiefstand – technisch das sicherste Level zum Verbilligen.")
 
                     
-# --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
+# --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (KORRIGIERT) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
 
 # Spalten für Ticker und Strategie-Wahl
@@ -473,9 +473,9 @@ if symbol_input:
                     if rsi < 25: ampel_color, ampel_text = "#e74c3c", "STOPP: PANIK (RSI < 25)"
                     elif rsi > 70: ampel_color, ampel_text = "#f39c12", "VORSICHT: ÜBERHITZT FÜR PUTS"
                     elif stars >= 2.5 and uptrend: ampel_color, ampel_text = "#27ae60", "TOP SETUP (Sicher)"
-                else: # Call Logik
+                else: # Call Logik (Covered Call)
                     if rsi > 75: ampel_color, ampel_text = "#27ae60", "TOP CALL-ZEITPUNKT (Überkauft)"
-                    elif rsi < 30: ampel_color, ampel_text = "#e74c3c", "STOPP: NICHTS MEHR ZU HOLEN (RSI tief)"
+                    elif rsi < 30: ampel_color, ampel_text = "#e74c3c", "STOPP: NICHTS ZU HOLEN (RSI tief)"
 
                 st.markdown(f"""
                     <div style="background-color: {ampel_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
@@ -483,7 +483,7 @@ if symbol_input:
                     </div>
                 """, unsafe_allow_html=True)
 
-                # Metriken
+                # Metriken (wie in Screenshot 8.png)
                 col1, col2, col3, col4 = st.columns(4)
                 col1.metric("Kurs", f"{price:.2f} $")
                 col2.metric("RSI (14)", f"{int(rsi)}")
@@ -493,6 +493,7 @@ if symbol_input:
                 # Pivot Analyse
                 st.markdown("---")
                 pivots = calculate_pivots(symbol_input)
+                s2_val = pivots['S2'] if pivots else 0
                 if pivots:
                     st.markdown("#### 🛡️ Technische Absicherung")
                     pc1, pc2, pc3, pc4 = st.columns(4)
@@ -504,33 +505,50 @@ if symbol_input:
                 # Optionen Auswahl
                 st.markdown("### 🎯 Option-Chain Auswahl")
                 heute = datetime.now()
+                # Zeitraum 5-45 Tage für Flexibilität
                 valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
                 
                 if valid_dates:
                     target_date = st.selectbox("📅 Verfallstag", valid_dates)
                     days_to_expiry = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                     
-                    # Logik-Umschaltung Put/Call
+                    # Daten holen
+                    opt_chain = tk.option_chain(target_date)
+                    chain = opt_chain.puts if "Put" in strat_mode else opt_chain.calls
+                    
+                    # WICHTIG: Erst Berechnungen durchführen
+                    chain['strike'] = chain['strike'].astype(float)
                     if "Put" in strat_mode:
-                        chain = tk.option_chain(target_date).puts
                         chain['Puffer %'] = ((price - chain['strike']) / price) * 100
+                        # Filter für Puts: Strike < Aktueller Kurs
                         df_disp = chain[(chain['strike'] < price) & (chain['Puffer %'] < 25)].copy()
                     else:
-                        chain = tk.option_chain(target_date).calls
                         chain['Puffer %'] = ((chain['strike'] - price) / price) * 100
+                        # Filter für Calls: Strike > Aktueller Kurs
                         df_disp = chain[(chain['strike'] > price) & (chain['Puffer %'] < 25)].copy()
 
+                    # Rendite berechnen (Sicherstellen, dass bid > 0)
                     chain['Yield p.a. %'] = (chain['bid'] / chain['strike']) * (365 / max(1, days_to_expiry)) * 100
+                    
+                    # Sortierung
                     df_disp = df_disp.sort_values('strike', ascending=("Put" in strat_mode))
 
-                    # Styling
+                    # Sicherheits-Tag für S2
+                    if "Put" in strat_mode:
+                        df_disp['Sicherheit'] = df_disp['strike'].apply(lambda x: "✅ Unter S2" if x < s2_val else "⚠️ Über S2")
+
+                    # Anzeige-Spalten definieren (Inklusive Yield!)
+                    display_cols = ['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']
+                    if "Put" in strat_mode: display_cols.append('Sicherheit')
+
+                    # Styling-Funktion
                     def style_rows(row):
                         p = row['Puffer %']
                         if p >= 12: return ['background-color: rgba(39, 174, 96, 0.1)'] * len(row)
                         elif 8 <= p < 12: return ['background-color: rgba(241, 196, 15, 0.1)'] * len(row)
                         return ['background-color: rgba(231, 76, 60, 0.1)'] * len(row)
 
-                    styled_df = df_disp[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].style.apply(style_rows, axis=1).format({
+                    styled_df = df_disp[display_cols].style.apply(style_rows, axis=1).format({
                         'strike': '{:.2f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $',
                         'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
                     })
@@ -539,4 +557,4 @@ if symbol_input:
                     st.caption("🟢 >12% Puffer | 🟡 8-12% Puffer | 🔴 <8% Puffer")
 
     except Exception as e:
-        st.error(f"Fehler: {e}")
+        st.error(f"Fehler im Cockpit: {e}")
