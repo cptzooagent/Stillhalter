@@ -23,17 +23,33 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 def calculate_pivots(symbol):
-    """Berechnet Pivot-Punkte basierend auf dem letzten abgeschlossenen Handelstag."""
+    """Berechnet Daily und Weekly Pivot-Punkte für maximale Sicherheit."""
     try:
         tk = yf.Ticker(symbol)
-        hist = tk.history(period="5d") 
-        if len(hist) < 2: return None
-        last_day = hist.iloc[-2]
-        h, l, c = last_day['High'], last_day['Low'], last_day['Close']
-        p = (h + l + c) / 3
-        s1 = (2 * p) - h
-        s2 = p - (h - l)
-        return {"P": p, "S1": s1, "S2": s2}
+        
+        # 1. Daily Pivots (Vortag)
+        hist_d = tk.history(period="5d") 
+        if len(hist_d) < 2: return None
+        last_day = hist_d.iloc[-2]
+        h_d, l_d, c_d = last_day['High'], last_day['Low'], last_day['Close']
+        p_d = (h_d + l_d + c_d) / 3
+        s1_d = (2 * p_d) - h_d
+        s2_d = p_d - (h_d - l_d)
+
+        # 2. Weekly Pivots (Vorwoche für den "echten" Boden)
+        hist_w = tk.history(period="3wk", interval="1wk")
+        if len(hist_w) < 2: 
+            return {"P": p_d, "S1": s1_d, "S2": s2_d, "W_S2": s2_d}
+        
+        last_week = hist_w.iloc[-2]
+        h_w, l_w, c_w = last_week['High'], last_week['Low'], last_week['Close']
+        p_w = (h_w + l_w + c_w) / 3
+        s2_w = p_w - (h_w - l_w)
+
+        return {
+            "P": p_d, "S1": s1_d, "S2": s2_d, 
+            "W_S2": s2_w  # Wöchentlicher starker Support
+        }
     except:
         return None
 
@@ -353,41 +369,37 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
 st.markdown("---")
 st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
-# Deine echten Depot-Werte
+# Deine echten Depot-Werte: [Anzahl, Einstandspreis]
 my_assets = {
-    "AFRM": [100, 76.00],
-    "ELF": [100, 109.00],
-    "ETSY": [100, 67.00],
-    "GTLB": [100, 41.00],
-    "GTM": [100, 17.00],
-    "HIMS": [100, 36.00],
-    "HOOD": [100, 120.00],
-    "JKS": [100, 50.00],
-    "NVO": [100, 97.00],
-    "RBRK": [100, 70.00],
-    "SE": [100, 170.00],
-    "TTD": [100, 102.00]
+    "AFRM": [100, 76.00], "ELF": [100, 109.00], "ETSY": [100, 67.00],
+    "GTLB": [100, 41.00], "GTM": [100, 17.00], "HIMS": [100, 36.00],
+    "HOOD": [100, 120.00], "JKS": [100, 50.00], "NVO": [100, 97.00],
+    "RBRK": [100, 70.00], "SE": [100, 170.00], "TTD": [100, 102.00]
 }
 
 with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
     depot_list = []
     for symbol, data in my_assets.items():
         try:
-            tk = yf.Ticker(symbol)
             res = get_stock_data_full(symbol)
             if res[0] is None: continue
-            
             price, dates, earn, rsi, uptrend, near_lower, atr = res
             qty, entry = data[0], data[1]
             perf_pct = ((price - entry) / entry) * 100
+            
             pivots = calculate_pivots(symbol)
-            s2_level = pivots['S2'] if pivots else 0
+            s2_d = pivots['S2'] if pivots else 0
+            s2_w = pivots['W_S2'] if pivots else 0
             
-            # REPARATUR-LOGIK FÜR BESTANDS-AKTIEN
-            # 1. Wann Short Put zur Verbilligung? (Angst-Phase nutzen)
-            put_action = "🟢 JETZT (S2/RSI)" if (rsi < 35 or price <= s2_level * 1.02) else "⏳ Warten"
+            # --- REPARATUR-LOGIK ---
+            # 1. Short Put Signal: Wenn RSI tief ODER Kurs bei Daily S2
+            put_action = "🟢 JETZT (S2/RSI)" if (rsi < 35 or price <= s2_d * 1.02) else "⏳ Warten"
             
-            # 2. Wann Covered Call zur Prämie? (Erholungs-Phase nutzen)
+            # Bonus-Signal: Wenn sogar der Wochen-Support erreicht ist
+            if price <= s2_w * 1.01:
+                put_action = "🔥 EXTREM (Weekly S2)"
+            
+            # 2. Covered Call Signal: Wenn Erholung eingesetzt hat
             call_action = "🟢 JETZT (RSI > 55)" if rsi > 55 else "⏳ Warten"
 
             depot_list.append({
@@ -398,13 +410,14 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
                 "RSI": int(rsi),
                 "Short Put (Repair)": put_action,
                 "Covered Call": call_action,
-                "S2-Support": f"{s2_level:.2f} $"
+                "S2 Daily": f"{s2_d:.2f} $",
+                "S2 Weekly": f"{s2_w:.2f} $"
             })
         except: continue
     
     if depot_list:
-        df_depot = pd.DataFrame(depot_list)
-        st.table(df_depot)
+        st.table(pd.DataFrame(depot_list))
+    st.info("💡 **Strategie:** Wenn 'Short Put' auf 🔥 steht, ist die Aktie am wöchentlichen Tiefstand – technisch das sicherste Level zum Verbilligen.")
 
     st.info("💡 **Strategie:** Wenn 'Short Put' auf 🟢 steht, ist die Aktie technisch so tief, dass du durch den Verkauf eines Puts am S2-Level deinen Einstand sicher verbilligen kannst.")
 
@@ -543,6 +556,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
