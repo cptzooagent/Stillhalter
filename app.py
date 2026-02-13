@@ -72,6 +72,7 @@ def get_combined_watchlist():
     except:
         return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META"]
 
+# --- 2. DATEN-FUNKTIONEN (REPARATUR BILD 5) ---
 @st.cache_data(ttl=900)
 def get_stock_data_full(symbol):
     try:
@@ -84,11 +85,9 @@ def get_stock_data_full(symbol):
         rsi_series = calculate_rsi(hist['Close'])
         rsi_val = rsi_series.iloc[-1]
         
-        # Trend-Check (SMA 200)
         sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1] if len(hist) >= 200 else hist['Close'].mean()
         is_uptrend = price > sma_200
         
-        # Bollinger-Band Check
         sma_20 = hist['Close'].rolling(window=20).mean()
         std_20 = hist['Close'].rolling(window=20).std()
         lower_band = (sma_20 - 2 * std_20).iloc[-1]
@@ -96,7 +95,7 @@ def get_stock_data_full(symbol):
         
         atr = (hist['High'] - hist['Low']).rolling(window=14).mean().iloc[-1]
         
-        # NEU: Pivots hier zentral abrufen
+        # WICHTIG: Pivots berechnen
         pivots = calculate_pivots(symbol)
         
         earn_str = ""
@@ -106,9 +105,10 @@ def get_stock_data_full(symbol):
                 earn_str = cal['Earnings Date'][0].strftime('%d.%m.')
         except: pass
         
-        # Rückgabe von 8 Werten (pivots ist der letzte)
+        # Rückgabe von 8 Werten im Erfolgsfall
         return price, dates, earn_str, rsi_val, is_uptrend, is_near_lower, atr, pivots
     except:
+        # Rückgabe von 8 Werten im Fehlerfall (ZUSÄTZLICHES 'None' am Ende!)
         return None, [], "", 50, True, False, 0, None
         
 # --- UI: SIDEBAR (KOMPLETT-REPARATUR) ---
@@ -403,45 +403,42 @@ my_assets = {
     "RBRK": [100, 70.00], "SE": [100, 170.00], "TTD": [100, 102.00]
 }
 
+# --- SEKTION 4: DEPOT-MANAGER (REPARATUR BILD 3) ---
 with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
-    depot_data_list = []  # Umbenannt zur Eindeutigkeit
-    
-    # Wir nutzen einen Platzhalter, um die Tabelle erst zu rendern, wenn alle Daten da sind
-    table_placeholder = st.empty()
-    
+    depot_list = []
     for symbol, data in my_assets.items():
         try:
-            # Daten abrufen
             res = get_stock_data_full(symbol)
-            if res is None or res[0] is None:
-                continue
+            if res[0] is None: continue
             
+            # Hier entpacken wir die 8 Werte
             price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
             qty, entry = data[0], data[1]
             perf_pct = ((price - entry) / entry) * 100
             
-            # Sicherheits-Check für Pivots
-            if not pivots:
-                continue
-
-            s2_d = pivots.get('S2', 0)
-            s2_w = pivots.get('W_S2', 0)
-            r2_d = pivots.get('R2', 0)
-            r2_w = pivots.get('W_R2', 0)
+            # Werte sicher aus dem pivots-dictionary holen
+            # Falls pivots None ist oder Key fehlt, setzen wir None statt 0!
+            r2_d = pivots.get('R2') if pivots else None
+            r2_w = pivots.get('W_R2') if pivots else None
+            s2_d = pivots.get('S2') if pivots else None
+            s2_w = pivots.get('W_S2') if pivots else None
             
             # Reparatur-Logik (Put)
             put_action = "⏳ Warten"
-            if rsi < 35 or price <= s2_d * 1.02:
+            if rsi < 35 or (s2_d and price <= s2_d * 1.02):
                 put_action = "🟢 JETZT (S2/RSI)"
-            if price <= s2_w * 1.01:
+            if s2_w and price <= s2_w * 1.01:
                 put_action = "🔥 EXTREM (Weekly S2)"
             
-            # Strategie-Logik (Covered Call)
+            # Covered Call Logik (NUR GRÜN WENN R2 EXISTIERT UND > 0 IST)
             call_action = "⏳ Warten"
-            if rsi > 55 or price >= r2_d * 0.98:
-                call_action = "🟢 JETZT (R2/RSI)"
+            if rsi > 55:
+                if r2_d and price >= r2_d * 0.98:
+                    call_action = "🟢 JETZT (R2/RSI)"
+                else:
+                    call_action = "🟡 RSI HOCH (Warte auf R2)"
 
-            depot_data_list.append({
+            depot_list.append({
                 "Ticker": symbol,
                 "Einstand": f"{entry:.2f} $",
                 "Aktuell": f"{price:.2f} $",
@@ -449,20 +446,15 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
                 "RSI": int(rsi),
                 "Short Put (Repair)": put_action,
                 "Covered Call": call_action,
-                "S2 Daily": f"{s2_d:.2f} $",
-                "S2 Weekly": f"{s2_w:.2f} $",
-                "R2 Daily": f"{r2_d:.2f} $",
-                "R2 Weekly": f"{r2_w:.2f} $"
+                "S2 Daily": f"{s2_d:.2f} $" if s2_d else "---",
+                "S2 Weekly": f"{s2_w:.2f} $" if s2_w else "---",
+                "R2 Daily": f"{r2_d:.2f} $" if r2_d else "---",
+                "R2 Weekly": f"{r2_w:.2f} $" if r2_w else "---"
             })
-        except Exception as e:
-            print(f"Fehler bei {symbol}: {e}")
-            continue
+        except: continue
     
-    if depot_data_list:
-        df_depot = pd.DataFrame(depot_data_list)
-        st.table(df_depot)
-    else:
-        st.warning("Konnte keine Depotdaten laden. Bitte API-Limit oder Internetverbindung prüfen.")
+    if depot_list:
+        st.table(pd.DataFrame(depot_list))
         
 st.info("💡 **Strategie:** Wenn 'Short Put' auf 🔥 steht, ist die Aktie am wöchentlichen Tiefstand – technisch das sicherste Level zum Verbilligen.")
                     
@@ -583,6 +575,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
