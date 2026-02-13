@@ -24,7 +24,7 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 def calculate_pivots(symbol):
-    """Berechnet Daily und Weekly Pivot-Punkte für maximale Sicherheit."""
+    """Berechnet Daily und Weekly Pivot-Punkte (inkl. R2 für CC-Ziele)."""
     try:
         tk = yf.Ticker(symbol)
         
@@ -36,24 +36,29 @@ def calculate_pivots(symbol):
         p_d = (h_d + l_d + c_d) / 3
         s1_d = (2 * p_d) - h_d
         s2_d = p_d - (h_d - l_d)
+        r2_d = p_d + (h_d - l_d)  # Widerstand 2 Daily
 
-        # 2. Weekly Pivots (Vorwoche für den "echten" Boden)
+        # 2. Weekly Pivots (Vorwoche)
         hist_w = tk.history(period="3wk", interval="1wk")
         if len(hist_w) < 2: 
-            return {"P": p_d, "S1": s1_d, "S2": s2_d, "W_S2": s2_d}
+            return {
+                "P": p_d, "S1": s1_d, "S2": s2_d, "R2": r2_d, 
+                "W_S2": s2_d, "W_R2": r2_d
+            }
         
         last_week = hist_w.iloc[-2]
         h_w, l_w, c_w = last_week['High'], last_week['Low'], last_week['Close']
         p_w = (h_w + l_w + c_w) / 3
         s2_w = p_w - (h_w - l_w)
+        r2_w = p_w + (h_w - l_w)  # Widerstand 2 Weekly
 
         return {
-            "P": p_d, "S1": s1_d, "S2": s2_d, 
-            "W_S2": s2_w  # Wöchentlicher starker Support
+            "P": p_d, "S1": s1_d, "S2": s2_d, "R2": r2_d,
+            "W_S2": s2_w, "W_R2": r2_w 
         }
     except:
         return None
-
+        
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
 def get_combined_watchlist():
@@ -405,20 +410,22 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
             res = get_stock_data_full(symbol)
             if res[0] is None: continue
             
-            # Hier entpacken wir jetzt 8 Werte
             price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
             qty, entry = data[0], data[1]
             perf_pct = ((price - entry) / entry) * 100
             
             s2_d = pivots['S2'] if pivots else 0
             s2_w = pivots['W_S2'] if pivots else 0
+            r2_d = pivots['R2'] if pivots else 0
+            r2_w = pivots['W_R2'] if pivots else 0
             
             # Reparatur-Logik
             put_action = "🟢 JETZT (S2/RSI)" if (rsi < 35 or price <= s2_d * 1.02) else "⏳ Warten"
             if price <= s2_w * 1.01:
                 put_action = "🔥 EXTREM (Weekly S2)"
             
-            call_action = "🟢 JETZT (RSI > 55)" if rsi > 55 else "⏳ Warten"
+            # Covered Call Logik (Neu mit R2-Check)
+            call_action = "🟢 JETZT (R2/RSI)" if (rsi > 55 or price >= r2_d * 0.98) else "⏳ Warten"
 
             depot_list.append({
                 "Ticker": symbol,
@@ -429,7 +436,9 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
                 "Short Put (Repair)": put_action,
                 "Covered Call": call_action,
                 "S2 Daily": f"{s2_d:.2f} $",
-                "S2 Weekly": f"{s2_w:.2f} $"
+                "S2 Weekly": f"{s2_w:.2f} $",
+                "R2 Daily": f"{r2_d:.2f} $",
+                "R2 Weekly": f"{r2_w:.2f} $"
             })
         except: continue
     
@@ -497,52 +506,20 @@ if symbol_input:
                 with col4:
                     st.metric("Qualität", "⭐" * int(stars))
 
-                # --- VOLLSTÄNDIGE PIVOT ANALYSE ANZEIGE (Sektion 3) ---
+                # --- VOLLSTÄNDIGE PIVOT ANALYSE ANZEIGE ---
                 st.markdown("---")
                 pivots = calculate_pivots(symbol_input)
                 if pivots:
-                    st.markdown("#### 🛡️ Technische Absicherung (Daily & Weekly Pivots)")
-                    pc1, pc2, pc3, pc4 = st.columns(4)
+                    st.markdown("#### 🛡️ Technische Absicherung & Ziele (Pivots)")
+                    pc1, pc2, pc3, pc4, pc5 = st.columns(5)
                     
-                    # Pivot Punkt
-                    pc1.markdown(f"""
-                        <div style="text-align:center; padding:10px; border:1px solid #ddd; border-radius:10px; background: white;">
-                            <small style="color: #7f8c8d;">Pivot Punkt (P)</small><br>
-                            <b style="font-size:1.1em; color: #2c3e50;">{pivots['P']:.2f} $</b>
-                        </div>
-                    """, unsafe_allow_html=True)
+                    pc1.metric("Weekly S2 (Boden)", f"{pivots['W_S2']:.2f} $")
+                    pc2.metric("Daily S2", f"{pivots['S2']:.2f} $")
+                    pc3.metric("Pivot (P)", f"{pivots['P']:.2f} $")
+                    pc4.metric("Daily R2 (Ziel)", f"{pivots['R2']:.2f} $")
+                    pc5.metric("Weekly R2 (Top)", f"{pivots['W_R2']:.2f} $")
                     
-                    # Support S1
-                    pc2.markdown(f"""
-                        <div style="text-align:center; padding:10px; border:2px solid #27ae60; border-radius:10px; background: #27ae6005;">
-                            <small style="color: #27ae60;">Support S1</small><br>
-                            <b style="font-size:1.1em; color: #27ae60;">{pivots['S1']:.2f} $</b>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Daily S2
-                    pc3.markdown(f"""
-                        <div style="text-align:center; padding:10px; border:2px solid #2ecc71; border-radius:10px; background: #2ecc7105;">
-                            <small style="color: #2ecc71;">Daily S2 (Stark)</small><br>
-                            <b style="font-size:1.1em; color: #2ecc71;">{pivots['S2']:.2f} $</b>
-                        </div>
-                    """, unsafe_allow_html=True)
-
-                    # Weekly S2
-                    # Farblogik: Wenn der Preis unter dem Weekly S2 ist, wird die Box rot (Kaufzone für Reparatur)
-                    w_bg = "#e74c3c10" if price <= pivots['W_S2'] else "#3498db05"
-                    w_border = "#e74c3c" if price <= pivots['W_S2'] else "#3498db"
-                    
-                    pc4.markdown(f"""
-                        <div style="text-align:center; padding:10px; border:2px solid {w_border}; border-radius:10px; background: {w_bg};">
-                            <small style="color: {w_border};">Weekly S2 (Boden)</small><br>
-                            <b style="font-size:1.1em; color: {w_border};">{pivots['W_S2']:.2f} $</b>
-                        </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Profi-Tipp unter den Boxen
-                    st.caption(f"💡 **Profi-Check:** Liegt dein Strike unter dem Weekly S2 ({pivots['W_S2']:.2f} $)? Das ist historisch gesehen der sicherste Bereich für Stillhalter.")
-
+                    st.caption(f"💡 **CC-Tipp:** Ein Covered Call am R2 Weekly ({pivots['W_R2']:.2f} $) bietet die höchste statistische Sicherheit gegen Ausstoppen.")
 
                 # 3. ANALYSTEN BOX
                 st.markdown(f"""
@@ -588,5 +565,6 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
