@@ -16,6 +16,10 @@ def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
+def check_single_stock(symbol):
+    time.sleep(0.2) # 200ms Pause zwischen den Aktien
+    try:
+
 def calculate_rsi(data, window=14):
     if len(data) < window + 1: return pd.Series([50] * len(data))
     delta = data.diff()
@@ -605,5 +609,6 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
