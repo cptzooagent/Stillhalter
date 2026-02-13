@@ -5,6 +5,11 @@ import numpy as np
 from scipy.stats import norm
 from datetime import datetime, timedelta
 import concurrent.futures
+import time
+
+def check_single_stock(symbol):
+    time.sleep(0.2) # 200ms Pause zwischen den Aktien
+    try:
 
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
@@ -73,7 +78,7 @@ def get_combined_watchlist():
         return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META"]
 
 # --- 2. DATEN-FUNKTIONEN (REPARATUR BILD 5) ---
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=3600)
 def get_stock_data_full(symbol):
     try:
         tk = yf.Ticker(symbol)
@@ -604,3 +609,4 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
