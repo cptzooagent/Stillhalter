@@ -343,11 +343,15 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
         except: return None
         return None
 
-    # --- EXECUTION: 15 THREADS GLEICHZEITIG ---
+    # --- EXECUTION: 15 THREADS GLEICHZEITIG (KORRIGIERTE VERSION) ---
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+        # Hier wird das Dictionary erstellt: 'future' ist der Schlüssel, 's' (der Ticker) der Wert
         futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
         
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            # KORREKTUR: Wir holen uns den Ticker-Namen direkt aus dem 'futures' Dictionary
+            current_ticker = futures[future] 
+            
             res_data = future.result()
             if res_data:
                 all_results.append(res_data)
@@ -355,7 +359,8 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
             # UI Update
             progress_bar.progress((i + 1) / len(ticker_liste))
             if i % 5 == 0:
-                status_text.text(f"Analysiere {i}/{len(ticker_liste)}: {future_to_symbol[future] if 'future_to_symbol' in locals() else 'Ticker'}...")
+                # Hier nutzen wir jetzt die korrekte Variable 'current_ticker'
+                status_text.text(f"Analysiere {i}/{len(ticker_liste)}: {current_ticker}...")
 
     status_text.empty()
     progress_bar.empty()
@@ -574,6 +579,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
