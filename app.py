@@ -7,10 +7,6 @@ from datetime import datetime, timedelta
 import concurrent.futures
 import time
 
-def check_single_stock(symbol):
-    time.sleep(0.2) # 200ms Pause zwischen den Aktien
-    try:
-
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
@@ -609,4 +605,5 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
