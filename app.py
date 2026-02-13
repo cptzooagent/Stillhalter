@@ -392,7 +392,7 @@ st.markdown("---")
 st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
 my_assets = {
-    "MU": [100, 390], "AFRM": [100, 76.00], "ELF": [100, 109.00], "ETSY": [100, 67.00],
+    "LRCX": [100, 210], "MU": [100, 390], "AFRM": [100, 76.00], "ELF": [100, 109.00], "ETSY": [100, 67.00],
     "GTLB": [100, 41.00], "GTM": [100, 17.00], "HIMS": [100, 36.00],
     "HOOD": [100, 120.00], "JKS": [100, 50.00], "NVO": [100, 97.00],
     "RBRK": [100, 70.00], "SE": [100, 170.00], "TTD": [100, 102.00]
@@ -588,4 +588,5 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
