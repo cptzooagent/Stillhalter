@@ -254,7 +254,7 @@ def get_analyst_conviction(info):
 
 
 
-# --- SEKTION: PROFI-SCANNER (HIGH-SPEED MULTITHREADING EDITION) ---
+# --- SEKTION 1: PROFI-SCANNER (HIGH-SPEED MULTITHREADING EDITION) ---
 if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
     puffer_limit = otm_puffer_slider / 100 
     mkt_cap_limit = min_mkt_cap * 1_000_000_000
@@ -392,7 +392,7 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
                         </div>
                     """, unsafe_allow_html=True)
                     
-# --- SEKTION 4: DEPOT-MANAGER (STABILISIERTE VERSION) ---
+# --- SEKTION 2: DEPOT-MANAGER (STABILISIERTE VERSION) ---
 st.markdown("---")
 st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
@@ -403,7 +403,6 @@ my_assets = {
     "RBRK": [100, 70.00], "SE": [100, 170.00], "TTD": [100, 102.00]
 }
 
-# --- SEKTION 4: DEPOT-MANAGER (REPARATUR BILD 3) ---
 with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
     depot_list = []
     for symbol, data in my_assets.items():
@@ -575,6 +574,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
