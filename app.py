@@ -392,7 +392,7 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
                         </div>
                     """, unsafe_allow_html=True)
                     
-# --- SEKTION 4: DEPOT-MANAGER (DEIN ECHTES DEPOT) ---
+# --- SEKTION 4: DEPOT-MANAGER (STABILISIERTE VERSION) ---
 st.markdown("---")
 st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
@@ -404,30 +404,44 @@ my_assets = {
 }
 
 with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
-    depot_list = []
+    depot_data_list = []  # Umbenannt zur Eindeutigkeit
+    
+    # Wir nutzen einen Platzhalter, um die Tabelle erst zu rendern, wenn alle Daten da sind
+    table_placeholder = st.empty()
+    
     for symbol, data in my_assets.items():
         try:
+            # Daten abrufen
             res = get_stock_data_full(symbol)
-            if res[0] is None: continue
+            if res is None or res[0] is None:
+                continue
             
             price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
             qty, entry = data[0], data[1]
             perf_pct = ((price - entry) / entry) * 100
             
-            s2_d = pivots['S2'] if pivots else 0
-            s2_w = pivots['W_S2'] if pivots else 0
-            r2_d = pivots['R2'] if pivots else 0
-            r2_w = pivots['W_R2'] if pivots else 0
+            # Sicherheits-Check für Pivots
+            if not pivots:
+                continue
+
+            s2_d = pivots.get('S2', 0)
+            s2_w = pivots.get('W_S2', 0)
+            r2_d = pivots.get('R2', 0)
+            r2_w = pivots.get('W_R2', 0)
             
-            # Reparatur-Logik
-            put_action = "🟢 JETZT (S2/RSI)" if (rsi < 35 or price <= s2_d * 1.02) else "⏳ Warten"
+            # Reparatur-Logik (Put)
+            put_action = "⏳ Warten"
+            if rsi < 35 or price <= s2_d * 1.02:
+                put_action = "🟢 JETZT (S2/RSI)"
             if price <= s2_w * 1.01:
                 put_action = "🔥 EXTREM (Weekly S2)"
             
-            # Covered Call Logik (Neu mit R2-Check)
-            call_action = "🟢 JETZT (R2/RSI)" if (rsi > 55 or price >= r2_d * 0.98) else "⏳ Warten"
+            # Strategie-Logik (Covered Call)
+            call_action = "⏳ Warten"
+            if rsi > 55 or price >= r2_d * 0.98:
+                call_action = "🟢 JETZT (R2/RSI)"
 
-            depot_list.append({
+            depot_data_list.append({
                 "Ticker": symbol,
                 "Einstand": f"{entry:.2f} $",
                 "Aktuell": f"{price:.2f} $",
@@ -440,13 +454,17 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
                 "R2 Daily": f"{r2_d:.2f} $",
                 "R2 Weekly": f"{r2_w:.2f} $"
             })
-        except: continue
+        except Exception as e:
+            print(f"Fehler bei {symbol}: {e}")
+            continue
     
-    if depot_list:
-        st.table(pd.DataFrame(depot_list))
+    if depot_data_list:
+        df_depot = pd.DataFrame(depot_data_list)
+        st.table(df_depot)
+    else:
+        st.warning("Konnte keine Depotdaten laden. Bitte API-Limit oder Internetverbindung prüfen.")
         
-    st.info("💡 **Strategie:** Wenn 'Short Put' auf 🔥 steht, ist die Aktie am wöchentlichen Tiefstand – technisch das sicherste Level zum Verbilligen.")
-
+st.info("💡 **Strategie:** Wenn 'Short Put' auf 🔥 steht, ist die Aktie am wöchentlichen Tiefstand – technisch das sicherste Level zum Verbilligen.")
                     
 # --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
@@ -565,6 +583,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
