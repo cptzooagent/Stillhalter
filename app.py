@@ -545,44 +545,62 @@ if symbol_input:
                     </div>
                 """, unsafe_allow_html=True)
 
-                # 4. OPTIONEN TABELLE
+                # --- 4. OPTIONEN TABELLE & UMSCHALTER (AKTUALISIERTE VERSION) ---
+                st.markdown("---")
                 st.markdown("### 🎯 Option-Chain Auswahl")
+                
+                # Der neue Umschalter
+                option_mode = st.radio("Strategie wählen:", ["Put (Cash Secured)", "Call (Covered)"], horizontal=True)
+                
                 heute = datetime.now()
-                # Flexibles Fenster: 5 bis 35 Tage
+                # Zeitfenster: 5 bis 35 Tage
                 valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
                 
                 if valid_dates:
                     target_date = st.selectbox("📅 Wähle deinen Verfallstag", valid_dates)
-                    chain = tk.option_chain(target_date).puts
                     days_to_expiry = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                     
-                    chain['strike'] = chain['strike'].astype(float)
-                    chain['Puffer %'] = ((price - chain['strike']) / price) * 100
-                    chain['Yield p.a. %'] = (chain['bid'] / chain['strike']) * (365 / max(1, days_to_expiry)) * 100
-                    
-                    df_disp = chain[(chain['strike'] < price) & (chain['Puffer %'] < 25)].copy()
-                    df_disp = df_disp.sort_values('strike', ascending=False)
+                    # Holen der Daten je nach Modus
+                    if "Put" in option_mode:
+                        chain = tk.option_chain(target_date).puts
+                        # Filter: Nur Strikes unter aktuellem Preis
+                        df_disp = chain[chain['strike'] < price].copy()
+                        df_disp['Puffer %'] = ((price - df_disp['strike']) / price) * 100
+                        sort_order = False # Höchster Strike zuerst
+                    else:
+                        chain = tk.option_chain(target_date).calls
+                        # Filter: Nur Strikes über aktuellem Preis
+                        df_disp = chain[chain['strike'] > price].copy()
+                        df_disp['Puffer %'] = ((df_disp['strike'] - price) / price) * 100
+                        sort_order = True # Niedrigster Strike (über Preis) zuerst
 
+                    # Berechnungen
+                    df_disp['strike'] = df_disp['strike'].astype(float)
+                    df_disp['Yield p.a. %'] = (df_disp['bid'] / df_disp['strike']) * (365 / max(1, days_to_expiry)) * 100
+                    
+                    # Sortierung für bessere Übersicht
+                    df_disp = df_disp.sort_values('strike', ascending=sort_order)
+
+                    # Styling Funktion
                     def style_rows(row):
                         p = row['Puffer %']
-                        if p >= 12: return ['background-color: rgba(39, 174, 96, 0.1)'] * len(row)
-                        elif 8 <= p < 12: return ['background-color: rgba(241, 196, 15, 0.1)'] * len(row)
+                        if p >= 10: return ['background-color: rgba(39, 174, 96, 0.1)'] * len(row)
+                        elif 5 <= p < 10: return ['background-color: rgba(241, 196, 15, 0.1)'] * len(row)
                         return ['background-color: rgba(231, 76, 60, 0.1)'] * len(row)
 
-                    styled_df = df_disp[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].style.apply(style_rows, axis=1).format({
+                    # Tabelle anzeigen (Top 15 Strikes)
+                    styled_df = df_disp[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].head(15).style.apply(style_rows, axis=1).format({
                         'strike': '{:.2f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $',
                         'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
                     })
                     
                     st.dataframe(styled_df, use_container_width=True, height=450)
-                    st.caption("🟢 >12% Puffer | 🟡 8-12% Puffer | 🔴 <8% Puffer")
+                    
+                    # Dynamische Legende
+                    if "Put" in option_mode:
+                        st.caption("🟢 >10% Puffer (Sicherer) | 🟡 5-10% | 🔴 <5% (Aggressiv)")
+                    else:
+                        st.caption("🟢 >10% Abstand (Konservativer Call) | 🟡 5-10% | 🔴 <5% (Hohes Ausbuchungs-Risiko)")
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
-
-
-
-
-
-
-
