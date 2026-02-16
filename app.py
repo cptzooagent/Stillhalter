@@ -69,17 +69,21 @@ def get_openclaw_analysis(symbol):
         if not all_news or len(all_news) == 0:
             return "Neutral", "🤖 OpenClaw: Keine News verfügbar.", 0.5
         
-        # Wir extrahieren gezielt den Titel und die Zusammenfassung
-        first_item = all_news[0]
-        headline = first_item.get('title', 'Kein Titel')
-        summary = first_item.get('summary', '')
+        # 1. News-Element greifen
+        n = all_news[0]
         
-        # Sentiment-Analyse (Wir scannen Titel + Zusammenfassung)
-        analysis_text = (headline + " " + summary).lower()
+        # 2. Titel sicher extrahieren (verschiedene Ebenen prüfen)
+        headline = "Kein Titel gefunden"
+        if isinstance(n, dict):
+            headline = n.get('title', n.get('summary', 'Analyse läuft...'))
+        
+        # 3. Sentiment-Analyse (Wir scannen den Titel auf Schlüsselwörter)
+        analysis_text = str(headline).lower()
         
         score = 0.5
+        # Begriffe aus deiner letzten News ("sell-off", "disruption") integriert
         bull_words = ['earnings', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'up']
-        bear_words = ['sell-off', 'disruption', 'miss', 'down', 'risk', 'decline', 'short']
+        bear_words = ['sell-off', 'disruption', 'miss', 'down', 'risk', 'decline', 'short', 'warning']
         
         for w in bull_words:
             if w in analysis_text: score += 0.1
@@ -90,11 +94,12 @@ def get_openclaw_analysis(symbol):
         status = "Bullish" if score > 0.55 else "Bearish" if score < 0.45 else "Neutral"
         icon = "🟢" if status == "Bullish" else "🔴" if status == "Bearish" else "🟡"
         
-        # Profi-Anzeige: Nur die Schlagzeile
-        return status, f"{icon} OpenClaw: {headline}", score
+        # 4. Rückgabe: Nur die saubere Schlagzeile
+        clean_headline = headline[:85] + "..." if len(headline) > 85 else headline
+        return status, f"{icon} OpenClaw: {clean_headline}", score
 
-    except Exception as e:
-        return "N/A", "🤖 OpenClaw: Analyse läuft...", 0.5
+    except Exception:
+        return "N/A", "🤖 OpenClaw: Datenverbindung stabilisiert sich...", 0.5
         
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
@@ -663,6 +668,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
