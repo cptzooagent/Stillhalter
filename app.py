@@ -69,26 +69,27 @@ def get_openclaw_analysis(symbol):
         if not all_news or len(all_news) == 0:
             return "Neutral", "🤖 OpenClaw: Yahoo liefert aktuell keine Daten.", 0.5
         
-        # Wir machen aus allen News einen einzigen riesigen Text-Klumpen
-        # Das ignoriert alle ID-Strukturen und konzentriert sich nur auf den Inhalt
         huge_blob = str(all_news).lower()
-        
-        # Wir suchen uns trotzdem den ersten Text für die Anzeige, der kein technischer Code ist
-        display_text = "Marktstimmung wird berechnet..."
+        display_text = ""
+
+        # Wir suchen jetzt nach JEDEM String, der mindestens 3 Leerzeichen hat 
+        # (ein sicheres Zeichen für einen Satz, keine ID)
         for n in all_news:
             for val in n.values():
-                if isinstance(val, str) and len(val) > 30 and " " in val:
+                if isinstance(val, str) and val.count(" ") > 3:
                     display_text = val
                     break
-            if display_text != "Marktstimmung wird berechnet...": break
+            if display_text: break
 
-        # Sentiment-Check auf den GESAMTEN Datenblock
+        if not display_text:
+            # Fallback: Falls gar kein Satz gefunden wird, nimm das Feld 'title' direkt
+            display_text = all_news[0].get('title', 'Marktstimmung aktiv (Text folgt)')
+
+        # Sentiment-Logik
         score = 0.5
-        # Wir erweitern die Liste um die Begriffe, die wir vorhin im JSON gesehen haben
-        bull_words = ['earnings', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'up', 'bull', 'upgrade', 'spending']
-        bear_words = ['sell-off', 'disruption', 'miss', 'down', 'risk', 'decline', 'short', 'warning', 'sell', 'holiday-shortened']
+        bull_words = ['earnings', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'up', 'bull', 'upgrade']
+        bear_words = ['sell-off', 'disruption', 'miss', 'down', 'risk', 'decline', 'short', 'warning', 'sell']
         
-        # Zähle Vorkommen
         for w in bull_words:
             if w in huge_blob: score += 0.08
         for w in bear_words:
@@ -98,8 +99,7 @@ def get_openclaw_analysis(symbol):
         status = "Bullish" if score > 0.55 else "Bearish" if score < 0.45 else "Neutral"
         icon = "🟢" if status == "Bullish" else "🔴" if status == "Bearish" else "🟡"
         
-        # Wenn wir keinen schönen Titel finden, zeigen wir das Sentiment trotzdem an
-        return status, f"{icon} OpenClaw: {display_text[:85]}", score
+        return status, f"{icon} OpenClaw: {display_text[:90]}", score
 
     except Exception:
         return "N/A", "🤖 OpenClaw: System-Reset...", 0.5
@@ -671,6 +671,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
