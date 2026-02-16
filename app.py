@@ -507,7 +507,7 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
                     call_action = "🟡 RSI HOCH (Warte auf R2)"
 
             depot_list.append({
-                "Ticker": symbol,
+                "Ticker": f"{symbol} {star_display}",
                 "Einstand": f"{entry:.2f} $",
                 "Aktuell": f"{price:.2f} $",
                 "P/L %": f"{perf_pct:+.1f}%",
@@ -516,9 +516,9 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
                 "Short Put (Repair)": put_action,
                 "Covered Call": call_action,
                 "S2 Daily": f"{s2_d:.2f} $" if s2_d else "---",
-                "S2 Weekly": f"{s2_w:.2f} $" if s2_w else "---",
+                "S2 Weekly": f"{s2_w:.2f} $" if s2_w else "---", # JETZT DABEI
                 "R2 Daily": f"{r2_d:.2f} $" if r2_d else "---",
-                "R2 Weekly": f"{r2_w:.2f} $" if r2_w else "---"
+                "R2 Weekly": f"{r2_w:.2f} $" if r2_w else "---"  # JETZT DABEI
             })
         except: continue
     
@@ -680,6 +680,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
