@@ -69,27 +69,27 @@ def get_openclaw_analysis(symbol):
         if not all_news or len(all_news) == 0:
             return "Neutral", "🤖 OpenClaw: Keine News verfügbar.", 0.5
         
-        n = all_news[0]
         headline = ""
+        # Wir gehen alle News durch, nicht nur die erste!
+        for n in all_news:
+            if isinstance(n, dict):
+                # Wir probieren alle Textfelder
+                temp_text = n.get('title') or n.get('summary')
+                
+                # Check: Ist es ein echter Titel? (Länger als 25 Zeichen und keine reine ID)
+                if temp_text and len(temp_text) > 25 and "-" not in temp_text[:12]:
+                    headline = temp_text
+                    break # Wir haben eine echte Schlagzeile gefunden!
 
-        # Wir greifen jetzt ganz gezielt die Felder ab, die wir in deinem Dump gesehen haben
-        if isinstance(n, dict):
-            # Yahoo liefert den Titel oft direkt unter 'title'
-            headline = n.get('title')
-            
-            # Falls das Feld 'title' die ID enthält, nehmen wir 'summary'
-            if not headline or (len(headline) < 40 and "-" in headline):
-                headline = n.get('summary')
-            
-            # Letzter Rettungsanker: Falls immer noch nichts, nehmen wir den Publisher-Namen oder 'description'
-            if not headline:
-                headline = n.get('description', "Marktanalyse läuft...")
+        if not headline:
+            # Letzter Versuch: Wenn absolut nichts gefunden wurde, nimm das allererste Element
+            headline = str(all_news[0].get('title', 'Analyse verzögert...'))
 
-        # Sentiment-Wörter (erweitert um deine News-Inhalte)
-        analysis_text = str(headline).lower()
+        # Sentiment-Check
+        analysis_text = headline.lower()
         score = 0.5
-        bull_words = ['earnings', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'up', 'bull']
-        bear_words = ['sell-off', 'disruption', 'miss', 'down', 'risk', 'decline', 'short', 'warning']
+        bull_words = ['earnings', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'up', 'bull', 'upgrade']
+        bear_words = ['sell-off', 'disruption', 'miss', 'down', 'risk', 'decline', 'short', 'warning', 'sell']
         
         for w in bull_words:
             if w in analysis_text: score += 0.1
@@ -103,7 +103,7 @@ def get_openclaw_analysis(symbol):
         return status, f"{icon} OpenClaw: {headline[:95]}", score
 
     except Exception:
-        return "N/A", "🤖 OpenClaw: Daten werden formatiert...", 0.5
+        return "N/A", "🤖 OpenClaw: Verbindung wird stabilisiert...", 0.5
         
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
@@ -672,6 +672,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
