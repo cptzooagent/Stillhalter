@@ -63,41 +63,48 @@ def calculate_pivots(symbol):
 # --- HIER EINFÜGEN (ca. Zeile 55) ---
 def get_openclaw_analysis(symbol):
     try:
-        # Ticker neu initialisieren
         tk = yf.Ticker(symbol)
         # News abrufen
-        news_list = tk.news
+        all_news = tk.news
         
-        if not news_list or len(news_list) == 0:
-            return "Neutral", "Keine News-Daten von Yahoo empfangen.", 0.5
-        
-        # OpenClaw Sentiment-Logik
-        bullish_words = ['upgrade', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'top']
-        bearish_words = ['downgrade', 'miss', 'lawsuit', 'decline', 'risk', 'bubble', 'sell']
+        # Prüfung 1: Gibt es überhaupt News?
+        if not all_news or len(all_news) == 0:
+            return "Neutral", "🤖 OpenClaw: Aktuell keine News-Schlagzeilen verfügbar.", 0.5
         
         score = 0.5
-        # Wir nehmen den Titel der ersten News
-        first_news = news_list[0]
-        headline = first_news.get('title', 'Kein Titel verfügbar')
+        found_headlines = []
         
-        # Analyse der ersten 5 Schlagzeilen
-        for n in news_list[:5]:
-            text = n.get('title', '').lower()
-            if any(w in text for w in bullish_words): score += 0.1
-            if any(w in text for w in bearish_words): score -= 0.1
+        # Prüfung 2: Die ersten 5 News scannen und nur Titel nehmen, die existieren
+        for n in all_news[:5]:
+            # Wir prüfen ganz genau, ob 'title' im Dictionary existiert
+            if isinstance(n, dict) and 'title' in n:
+                found_headlines.append(n['title'])
+            elif isinstance(n, dict) and 'summary' in n: # Fallback auf Zusammenfassung
+                found_headlines.append(n['summary'])
+
+        if not found_headlines:
+            return "Neutral", "🤖 OpenClaw: News vorhanden, aber Titel-Format unbekannt.", 0.5
+
+        # Sentiment-Logik auf die gefundenen Titel
+        bullish_words = ['upgrade', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'top', 'bull']
+        bearish_words = ['downgrade', 'miss', 'lawsuit', 'decline', 'risk', 'bubble', 'sell', 'bear']
+        
+        for title in found_headlines:
+            t_lower = title.lower()
+            if any(w in t_lower for w in bullish_words): score += 0.1
+            if any(w in t_lower for w in bearish_words): score -= 0.1
             
         score = max(0.1, min(0.9, score))
         status = "Bullish" if score > 0.55 else "Bearish" if score < 0.45 else "Neutral"
-        
-        # Farbliches Icon für Streamlit
         icon = "🟢" if status == "Bullish" else "🔴" if status == "Bearish" else "🟡"
         
-        return status, f"{icon} OpenClaw: {headline}", score
+        # Wir zeigen den aktuellsten echten Titel an
+        display_title = found_headlines[0][:80] + "..." if len(found_headlines[0]) > 80 else found_headlines[0]
+        
+        return status, f"{icon} OpenClaw: {display_title}", score
 
     except Exception as e:
-        # Hier loggen wir den echten Fehler in die Konsole
-        print(f"KI-Fehler bei {symbol}: {e}")
-        return "N/A", f"Warten auf News-Daten... (Yahoo-Limit)", 0.5
+        return "N/A", f"🤖 OpenClaw: Datenverbindung wird neu aufgebaut...", 0.5
         
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
@@ -666,6 +673,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
