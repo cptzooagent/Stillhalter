@@ -64,26 +64,37 @@ def calculate_pivots(symbol):
 def get_openclaw_analysis(symbol):
     try:
         tk = yf.Ticker(symbol)
+        # Wir versuchen es mit einer robusteren Abfrage
         all_news = tk.news
         
         if not all_news or len(all_news) == 0:
-            return "Neutral", "🤖 OpenClaw: Keine News verfügbar.", 0.5
+            return "Neutral", "🤖 OpenClaw: Yahoo liefert aktuell keine News-Daten.", 0.5
         
         headline = ""
-        # Wir gehen alle News durch, nicht nur die erste!
+        # Wir filtern ALLES, was nach ID aussieht, radikal aus
         for n in all_news:
-            if isinstance(n, dict):
-                # Wir probieren alle Textfelder
-                temp_text = n.get('title') or n.get('summary')
-                
-                # Check: Ist es ein echter Titel? (Länger als 25 Zeichen und keine reine ID)
-                if temp_text and len(temp_text) > 25 and "-" not in temp_text[:12]:
-                    headline = temp_text
-                    break # Wir haben eine echte Schlagzeile gefunden!
+            # Suche nach dem Titel in verschiedenen möglichen Feldern
+            text_pool = [n.get('title', ''), n.get('summary', ''), n.get('description', '')]
+            
+            for text in text_pool:
+                if text and len(text) > 30:
+                    # Ein Titel hat normalerweise Leerzeichen und keine Bindestriche in den ersten 8 Zeichen
+                    if " " in text and "-" not in text[:8]:
+                        headline = text
+                        break
+            if headline: break
+
+        # Wenn immer noch nichts gefunden wurde, nehmen wir den ersten verfügbaren Text, 
+        # egal wie kurz, solange es keine reine ID ist.
+        if not headline:
+            for n in all_news:
+                cand = n.get('title', '')
+                if cand and len(cand) > 5 and "-" not in cand:
+                    headline = cand
+                    break
 
         if not headline:
-            # Letzter Versuch: Wenn absolut nichts gefunden wurde, nimm das allererste Element
-            headline = str(all_news[0].get('title', 'Analyse verzögert...'))
+            return "Neutral", "🤖 OpenClaw: Warte auf sauberen News-Stream...", 0.5
 
         # Sentiment-Check
         analysis_text = headline.lower()
@@ -102,8 +113,8 @@ def get_openclaw_analysis(symbol):
         
         return status, f"{icon} OpenClaw: {headline[:95]}", score
 
-    except Exception:
-        return "N/A", "🤖 OpenClaw: Verbindung wird stabilisiert...", 0.5
+    except Exception as e:
+        return "N/A", f"🤖 OpenClaw: Reconnecting...", 0.5
         
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
@@ -672,6 +683,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
