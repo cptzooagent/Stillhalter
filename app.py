@@ -72,20 +72,24 @@ def get_openclaw_analysis(symbol):
         n = all_news[0]
         headline = ""
 
-        # Deep-Scan: Wir suchen in allen möglichen Feldern nach dem Text
         if isinstance(n, dict):
-            # Priorität: Titel -> Zusammenfassung -> Beschreibung
-            headline = n.get('title') or n.get('summary') or n.get('description')
+            # 1. Gezielte Suche nach Textfeldern
+            for key in ['title', 'summary', 'description']:
+                val = n.get(key)
+                # Wir nehmen den Text nur, wenn er kein ID-Format hat (ID-Check)
+                if val and isinstance(val, str) and len(val) > 20 and "-" not in val[:10]:
+                    headline = val
+                    break
             
-            # Falls immer noch leer, nehmen wir das erste Text-Fragment aus dem Dictionary
+            # 2. Fallback: Wenn oben nichts gefunden wurde, nimm das erste lange Textfeld
             if not headline:
                 for val in n.values():
-                    if isinstance(val, str) and len(val) > 10:
+                    if isinstance(val, str) and len(val) > 25 and "http" not in val:
                         headline = val
                         break
 
-        if not headline or headline == "":
-            headline = "Marktanalyse wird geladen..."
+        if not headline:
+            headline = "Marktanalyse läuft..."
 
         # Sentiment-Check
         analysis_text = str(headline).lower()
@@ -102,10 +106,10 @@ def get_openclaw_analysis(symbol):
         status = "Bullish" if score > 0.55 else "Bearish" if score < 0.45 else "Neutral"
         icon = "🟢" if status == "Bullish" else "🔴" if status == "Bearish" else "🟡"
         
-        return status, f"{icon} OpenClaw: {headline[:90]}", score
+        return status, f"{icon} OpenClaw: {headline[:95]}", score
 
     except Exception:
-        return "N/A", "🤖 OpenClaw: Verbindung wird stabilisiert...", 0.5
+        return "N/A", "🤖 OpenClaw: Daten-Update...", 0.5
         
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
@@ -674,6 +678,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
