@@ -461,35 +461,34 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
             res = get_stock_data_full(symbol)
             if res[0] is None: continue
             
-            # Hier entpacken wir die 8 Werte
+            # 1. Daten entpacken
             price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
             qty, entry = data[0], data[1]
             perf_pct = ((price - entry) / entry) * 100
 
-            # --- NEU: KI & STERNE INTEGRATION (Einmalig und effizient) ---
+            # 2. KI-Stimmung (OpenClaw) - NUR EINMAL AUFRUFEN
             ki_status, ki_text, _ = get_openclaw_analysis(symbol)
-
-            # Bestimme das Icon für die Depot-Spalte
             ki_icon = "🟢" if ki_status == "Bullish" else "🔴" if ki_status == "Bearish" else "🟡"
 
-            # Sterne-Rating holen
-            info_temp = yf.Ticker(symbol).info
-            analyst_txt_temp, _ = get_analyst_conviction(info_temp)
+            # 3. Sterne-Rating (Optimiert mit Try-Except für Speed)
+            try:
+                # Wir holen info nur einmal
+                info_temp = yf.Ticker(symbol).info
+                analyst_txt_temp, _ = get_analyst_conviction(info_temp)
+                # Kompakte Sterne-Zuweisung
+                stars_count = 3 if "HYPER" in analyst_txt_temp else 2 if "Stark" in analyst_txt_temp else 1
+                star_display = "⭐" * stars_count
+            except:
+                star_display = "⭐" # Fallback auf 1 Stern bei Fehler
 
-            # Sterne vergeben (1, 2 oder 3)
-            d_stars = 0
-            if "HYPER" in analyst_txt_temp: d_stars = 3
-            elif "Stark" in analyst_txt_temp: d_stars = 2
-            elif "Neutral" in analyst_txt_temp: d_stars = 1
-
-            star_display = "⭐" * d_stars
-            
-            # Werte sicher aus dem pivots-dictionary holen
-            # Falls pivots None ist oder Key fehlt, setzen wir None statt 0!
+            # 4. Pivot-Werte sicher extrahieren (ACHTUNG: Unterstrich nutzen!)
             r2_d = pivots.get('R2') if pivots else None
             r2_w = pivots.get('W_R2') if pivots else None
             s2_d = pivots.get('S2') if pivots else None
             s2_w = pivots.get('W_S2') if pivots else None
+            
+            # --- Hier folgt deine bestehende Put/Call Action Logik ---
+            # ... (put_action = ..., call_action = ...)
             
             # Reparatur-Logik (Put)
             put_action = "⏳ Warten"
@@ -680,6 +679,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
