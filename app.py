@@ -64,47 +64,47 @@ def calculate_pivots(symbol):
 def get_openclaw_analysis(symbol):
     try:
         tk = yf.Ticker(symbol)
-        # News abrufen
         all_news = tk.news
         
-        # Prüfung 1: Gibt es überhaupt News?
         if not all_news or len(all_news) == 0:
-            return "Neutral", "🤖 OpenClaw: Aktuell keine News-Schlagzeilen verfügbar.", 0.5
+            return "Neutral", "🤖 OpenClaw: Aktuell keine News verfügbar.", 0.5
         
         score = 0.5
-        found_headlines = []
+        found_text = ""
         
-        # Prüfung 2: Die ersten 5 News scannen und nur Titel nehmen, die existieren
-        for n in all_news[:5]:
-            # Wir prüfen ganz genau, ob 'title' im Dictionary existiert
-            if isinstance(n, dict) and 'title' in n:
-                found_headlines.append(n['title'])
-            elif isinstance(n, dict) and 'summary' in n: # Fallback auf Zusammenfassung
-                found_headlines.append(n['summary'])
-
-        if not found_headlines:
-            return "Neutral", "🤖 OpenClaw: News vorhanden, aber Titel-Format unbekannt.", 0.5
-
-        # Sentiment-Logik auf die gefundenen Titel
-        bullish_words = ['upgrade', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'top', 'bull']
-        bearish_words = ['downgrade', 'miss', 'lawsuit', 'decline', 'risk', 'bubble', 'sell', 'bear']
+        # Wir nehmen die erste News und versuchen, IRGENDWELCHEN Text zu extrahieren
+        sample_news = all_news[0]
         
-        for title in found_headlines:
-            t_lower = title.lower()
-            if any(w in t_lower for w in bullish_words): score += 0.1
-            if any(w in t_lower for w in bearish_words): score -= 0.1
+        # Strategie: Wir suchen nach 'title', 'summary' oder 'content'
+        for key in ['title', 'summary', 'content', 'description']:
+            if key in sample_news and sample_news[key]:
+                found_text = sample_news[key]
+                break
+        
+        # Falls immer noch nichts gefunden wurde, nehmen wir den rohen String-Inhalt
+        if not found_text:
+            found_text = str(sample_news)[:100] # Notlösung: Rohe Daten
+
+        # Sentiment-Wörter
+        bull_words = ['upgrade', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'bull', 'stark']
+        bear_words = ['downgrade', 'miss', 'lawsuit', 'decline', 'risk', 'bubble', 'sell', 'bear', 'schwach']
+        
+        # Gesamten News-Block nach Wörtern scannen
+        full_blob = str(all_news).lower()
+        for w in bull_words:
+            if w in full_blob: score += 0.05
+        for w in bear_words:
+            if w in full_blob: score -= 0.05
             
         score = max(0.1, min(0.9, score))
         status = "Bullish" if score > 0.55 else "Bearish" if score < 0.45 else "Neutral"
         icon = "🟢" if status == "Bullish" else "🔴" if status == "Bearish" else "🟡"
         
-        # Wir zeigen den aktuellsten echten Titel an
-        display_title = found_headlines[0][:80] + "..." if len(found_headlines[0]) > 80 else found_headlines[0]
-        
-        return status, f"{icon} OpenClaw: {display_title}", score
+        display_msg = found_text[:75] + "..." if len(found_text) > 75 else found_text
+        return status, f"{icon} OpenClaw: {display_msg}", score
 
     except Exception as e:
-        return "N/A", f"🤖 OpenClaw: Datenverbindung wird neu aufgebaut...", 0.5
+        return "N/A", "🤖 OpenClaw: Verbindung wird stabilisiert...", 0.5
         
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
@@ -673,6 +673,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
