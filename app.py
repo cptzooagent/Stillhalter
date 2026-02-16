@@ -63,29 +63,41 @@ def calculate_pivots(symbol):
 # --- HIER EINFÜGEN (ca. Zeile 55) ---
 def get_openclaw_analysis(symbol):
     try:
+        # Ticker neu initialisieren
         tk = yf.Ticker(symbol)
-        news = tk.news
-        # Wenn keine News da sind, nicht abstürzen, sondern Neutral zurückgeben
-        if not news or len(news) == 0:
-            return "Neutral", "Keine aktuellen Schlagzeilen für dieses Symbol.", 0.5
+        # News abrufen
+        news_list = tk.news
         
-        # OpenClaw-Logik: Bewertung von Schlagwörtern
-        bullish_words = ['upgrade', 'growth', 'beat', 'buy', 'dividend', 'profit', 'surpass']
-        bearish_words = ['downgrade', 'miss', 'lawsuit', 'decline', 'risk', 'cut', 'fall']
+        if not news_list or len(news_list) == 0:
+            return "Neutral", "Keine News-Daten von Yahoo empfangen.", 0.5
+        
+        # OpenClaw Sentiment-Logik
+        bullish_words = ['upgrade', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'top']
+        bearish_words = ['downgrade', 'miss', 'lawsuit', 'decline', 'risk', 'bubble', 'sell']
         
         score = 0.5
-        top_news = news[0]['title'] if news else "Keine News"
+        # Wir nehmen den Titel der ersten News
+        first_news = news_list[0]
+        headline = first_news.get('title', 'Kein Titel verfügbar')
         
-        for n in news[:5]:
-            title = n['title'].lower()
-            if any(w in title for w in bullish_words): score += 0.1
-            if any(w in title for w in bearish_words): score -= 0.1
+        # Analyse der ersten 5 Schlagzeilen
+        for n in news_list[:5]:
+            text = n.get('title', '').lower()
+            if any(w in text for w in bullish_words): score += 0.1
+            if any(w in text for w in bearish_words): score -= 0.1
             
         score = max(0.1, min(0.9, score))
-        status = "Bullish" if score > 0.6 else "Bearish" if score < 0.4 else "Neutral"
-        return status, f"🤖 OpenClaw: {top_news}", score
-    except:
-        return "N/A", "KI-Check aktuell nicht möglich.", 0.5
+        status = "Bullish" if score > 0.55 else "Bearish" if score < 0.45 else "Neutral"
+        
+        # Farbliches Icon für Streamlit
+        icon = "🟢" if status == "Bullish" else "🔴" if status == "Bearish" else "🟡"
+        
+        return status, f"{icon} OpenClaw: {headline}", score
+
+    except Exception as e:
+        # Hier loggen wir den echten Fehler in die Konsole
+        print(f"KI-Fehler bei {symbol}: {e}")
+        return "N/A", f"Warten auf News-Daten... (Yahoo-Limit)", 0.5
         
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
@@ -654,6 +666,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
