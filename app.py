@@ -72,26 +72,20 @@ def get_openclaw_analysis(symbol):
         n = all_news[0]
         headline = ""
 
+        # Wir greifen jetzt ganz gezielt die Felder ab, die wir in deinem Dump gesehen haben
         if isinstance(n, dict):
-            # 1. Gezielte Suche nach Textfeldern
-            for key in ['title', 'summary', 'description']:
-                val = n.get(key)
-                # Wir nehmen den Text nur, wenn er kein ID-Format hat (ID-Check)
-                if val and isinstance(val, str) and len(val) > 20 and "-" not in val[:10]:
-                    headline = val
-                    break
+            # Yahoo liefert den Titel oft direkt unter 'title'
+            headline = n.get('title')
             
-            # 2. Fallback: Wenn oben nichts gefunden wurde, nimm das erste lange Textfeld
+            # Falls das Feld 'title' die ID enthält, nehmen wir 'summary'
+            if not headline or (len(headline) < 40 and "-" in headline):
+                headline = n.get('summary')
+            
+            # Letzter Rettungsanker: Falls immer noch nichts, nehmen wir den Publisher-Namen oder 'description'
             if not headline:
-                for val in n.values():
-                    if isinstance(val, str) and len(val) > 25 and "http" not in val:
-                        headline = val
-                        break
+                headline = n.get('description', "Marktanalyse läuft...")
 
-        if not headline:
-            headline = "Marktanalyse läuft..."
-
-        # Sentiment-Check
+        # Sentiment-Wörter (erweitert um deine News-Inhalte)
         analysis_text = str(headline).lower()
         score = 0.5
         bull_words = ['earnings', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'up', 'bull']
@@ -109,7 +103,7 @@ def get_openclaw_analysis(symbol):
         return status, f"{icon} OpenClaw: {headline[:95]}", score
 
     except Exception:
-        return "N/A", "🤖 OpenClaw: Daten-Update...", 0.5
+        return "N/A", "🤖 OpenClaw: Daten werden formatiert...", 0.5
         
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
@@ -678,6 +672,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
