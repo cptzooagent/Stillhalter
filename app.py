@@ -59,6 +59,33 @@ def calculate_pivots(symbol):
         }
     except:
         return None
+
+# --- HIER EINFÜGEN (ca. Zeile 55) ---
+def get_openclaw_analysis(symbol):
+    """KI-Sentiment-Check basierend auf aktuellen News (OpenClaw Logik)."""
+    try:
+        tk = yf.Ticker(symbol)
+        news = tk.news
+        if not news:
+            return "Neutral", "Keine aktuellen News gefunden.", 0.5
+        
+        # OpenClaw-Logik: Bewertung von Schlagwörtern
+        bullish_words = ['upgrade', 'growth', 'beat', 'buy', 'dividend', 'profit', 'surpass']
+        bearish_words = ['downgrade', 'miss', 'lawsuit', 'decline', 'risk', 'cut', 'fall']
+        
+        score = 0.5
+        top_news = news[0]['title'] if news else "Keine News"
+        
+        for n in news[:5]:
+            title = n['title'].lower()
+            if any(w in title for w in bullish_words): score += 0.1
+            if any(w in title for w in bearish_words): score -= 0.1
+            
+        score = max(0.1, min(0.9, score))
+        status = "Bullish" if score > 0.6 else "Bearish" if score < 0.4 else "Neutral"
+        return status, f"🤖 OpenClaw: {top_news}", score
+    except:
+        return "N/A", "KI-Check aktuell nicht möglich.", 0.5
         
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
@@ -421,6 +448,16 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
             price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
             qty, entry = data[0], data[1]
             perf_pct = ((price - entry) / entry) * 100
+
+            # NEU: KI & Sterne für das Depot holen
+            ki_status, _, _ = get_openclaw_analysis(symbol)
+            info_temp = yf.Ticker(symbol).info
+            analyst_txt_temp, _ = get_analyst_conviction(info_temp)
+            
+            d_stars = 0
+            if "HYPER" in analyst_txt_temp: d_stars = 3
+            elif "Stark" in analyst_txt_temp: d_stars = 2
+            elif "Neutral" in analyst_txt_temp: d_stars = 1
             
             # Werte sicher aus dem pivots-dictionary holen
             # Falls pivots None ist oder Key fehlt, setzen wir None statt 0!
@@ -561,6 +598,17 @@ if symbol_input:
                 if valid_dates:
                     target_date = st.selectbox("📅 Wähle deinen Verfallstag", valid_dates)
                     days_to_expiry = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
+
+                    # NEU: OpenClaw KI-Box VOR der Tabelle
+                    ki_status, ki_text, ki_score = get_openclaw_analysis(symbol_input)
+                    st.info(ki_text) # Zeigt die KI-News direkt an
+
+                    opt_chain = tk.option_chain(target_date)
+                    chain = opt_chain.puts if "Put" in option_mode else opt_chain.calls
+                    df_disp = chain.copy()
+
+                    # NEU: Filter für Liquidität (Open Interest)
+                    df_disp = df_disp[df_disp['openInterest'] > 50]
                     
                     # Holen der Daten je nach Modus
                     if "Put" in option_mode:
@@ -606,6 +654,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
