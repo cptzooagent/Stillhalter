@@ -62,12 +62,12 @@ def calculate_pivots(symbol):
 
 # --- HIER EINFÜGEN (ca. Zeile 55) ---
 def get_openclaw_analysis(symbol):
-    """KI-Sentiment-Check basierend auf aktuellen News (OpenClaw Logik)."""
     try:
         tk = yf.Ticker(symbol)
         news = tk.news
-        if not news:
-            return "Neutral", "Keine aktuellen News gefunden.", 0.5
+        # Wenn keine News da sind, nicht abstürzen, sondern Neutral zurückgeben
+        if not news or len(news) == 0:
+            return "Neutral", "Keine aktuellen Schlagzeilen für dieses Symbol.", 0.5
         
         # OpenClaw-Logik: Bewertung von Schlagwörtern
         bullish_words = ['upgrade', 'growth', 'beat', 'buy', 'dividend', 'profit', 'surpass']
@@ -654,6 +654,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
