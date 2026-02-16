@@ -69,20 +69,28 @@ def get_openclaw_analysis(symbol):
         if not all_news or len(all_news) == 0:
             return "Neutral", "🤖 OpenClaw: Keine News verfügbar.", 0.5
         
-        # 1. News-Element greifen
         n = all_news[0]
-        
-        # 2. Titel sicher extrahieren (verschiedene Ebenen prüfen)
-        headline = "Kein Titel gefunden"
+        headline = ""
+
+        # Deep-Scan: Wir suchen in allen möglichen Feldern nach dem Text
         if isinstance(n, dict):
-            headline = n.get('title', n.get('summary', 'Analyse läuft...'))
-        
-        # 3. Sentiment-Analyse (Wir scannen den Titel auf Schlüsselwörter)
+            # Priorität: Titel -> Zusammenfassung -> Beschreibung
+            headline = n.get('title') or n.get('summary') or n.get('description')
+            
+            # Falls immer noch leer, nehmen wir das erste Text-Fragment aus dem Dictionary
+            if not headline:
+                for val in n.values():
+                    if isinstance(val, str) and len(val) > 10:
+                        headline = val
+                        break
+
+        if not headline or headline == "":
+            headline = "Marktanalyse wird geladen..."
+
+        # Sentiment-Check
         analysis_text = str(headline).lower()
-        
         score = 0.5
-        # Begriffe aus deiner letzten News ("sell-off", "disruption") integriert
-        bull_words = ['earnings', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'up']
+        bull_words = ['earnings', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'up', 'bull']
         bear_words = ['sell-off', 'disruption', 'miss', 'down', 'risk', 'decline', 'short', 'warning']
         
         for w in bull_words:
@@ -94,12 +102,10 @@ def get_openclaw_analysis(symbol):
         status = "Bullish" if score > 0.55 else "Bearish" if score < 0.45 else "Neutral"
         icon = "🟢" if status == "Bullish" else "🔴" if status == "Bearish" else "🟡"
         
-        # 4. Rückgabe: Nur die saubere Schlagzeile
-        clean_headline = headline[:85] + "..." if len(headline) > 85 else headline
-        return status, f"{icon} OpenClaw: {clean_headline}", score
+        return status, f"{icon} OpenClaw: {headline[:90]}", score
 
     except Exception:
-        return "N/A", "🤖 OpenClaw: Datenverbindung stabilisiert sich...", 0.5
+        return "N/A", "🤖 OpenClaw: Verbindung wird stabilisiert...", 0.5
         
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
@@ -668,6 +674,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
