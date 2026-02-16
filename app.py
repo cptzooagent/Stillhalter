@@ -466,15 +466,23 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
             qty, entry = data[0], data[1]
             perf_pct = ((price - entry) / entry) * 100
 
-            # NEU: KI & Sterne für das Depot holen
-            ki_status, _, _ = get_openclaw_analysis(symbol)
+            # --- NEU: KI & STERNE INTEGRATION (Einmalig und effizient) ---
+            ki_status, ki_text, _ = get_openclaw_analysis(symbol)
+
+            # Bestimme das Icon für die Depot-Spalte
+            ki_icon = "🟢" if ki_status == "Bullish" else "🔴" if ki_status == "Bearish" else "🟡"
+
+            # Sterne-Rating holen
             info_temp = yf.Ticker(symbol).info
             analyst_txt_temp, _ = get_analyst_conviction(info_temp)
-            
+
+            # Sterne vergeben (1, 2 oder 3)
             d_stars = 0
             if "HYPER" in analyst_txt_temp: d_stars = 3
             elif "Stark" in analyst_txt_temp: d_stars = 2
             elif "Neutral" in analyst_txt_temp: d_stars = 1
+
+            star_display = "⭐" * d_stars
             
             # Werte sicher aus dem pivots-dictionary holen
             # Falls pivots None ist oder Key fehlt, setzen wir None statt 0!
@@ -503,6 +511,7 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
                 "Einstand": f"{entry:.2f} $",
                 "Aktuell": f"{price:.2f} $",
                 "P/L %": f"{perf_pct:+.1f}%",
+                "KI-Check": f"{ki_icon} {ki_status}",
                 "RSI": int(rsi),
                 "Short Put (Repair)": put_action,
                 "Covered Call": call_action,
@@ -671,6 +680,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
