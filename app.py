@@ -67,44 +67,34 @@ def get_openclaw_analysis(symbol):
         all_news = tk.news
         
         if not all_news or len(all_news) == 0:
-            return "Neutral", "🤖 OpenClaw: Aktuell keine News verfügbar.", 0.5
+            return "Neutral", "🤖 OpenClaw: Keine News verfügbar.", 0.5
+        
+        # Wir extrahieren gezielt den Titel und die Zusammenfassung
+        first_item = all_news[0]
+        headline = first_item.get('title', 'Kein Titel')
+        summary = first_item.get('summary', '')
+        
+        # Sentiment-Analyse (Wir scannen Titel + Zusammenfassung)
+        analysis_text = (headline + " " + summary).lower()
         
         score = 0.5
-        found_text = ""
+        bull_words = ['earnings', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'up']
+        bear_words = ['sell-off', 'disruption', 'miss', 'down', 'risk', 'decline', 'short']
         
-        # Wir nehmen die erste News und versuchen, IRGENDWELCHEN Text zu extrahieren
-        sample_news = all_news[0]
-        
-        # Strategie: Wir suchen nach 'title', 'summary' oder 'content'
-        for key in ['title', 'summary', 'content', 'description']:
-            if key in sample_news and sample_news[key]:
-                found_text = sample_news[key]
-                break
-        
-        # Falls immer noch nichts gefunden wurde, nehmen wir den rohen String-Inhalt
-        if not found_text:
-            found_text = str(sample_news)[:100] # Notlösung: Rohe Daten
-
-        # Sentiment-Wörter
-        bull_words = ['upgrade', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'bull', 'stark']
-        bear_words = ['downgrade', 'miss', 'lawsuit', 'decline', 'risk', 'bubble', 'sell', 'bear', 'schwach']
-        
-        # Gesamten News-Block nach Wörtern scannen
-        full_blob = str(all_news).lower()
         for w in bull_words:
-            if w in full_blob: score += 0.05
+            if w in analysis_text: score += 0.1
         for w in bear_words:
-            if w in full_blob: score -= 0.05
+            if w in analysis_text: score -= 0.1
             
         score = max(0.1, min(0.9, score))
         status = "Bullish" if score > 0.55 else "Bearish" if score < 0.45 else "Neutral"
         icon = "🟢" if status == "Bullish" else "🔴" if status == "Bearish" else "🟡"
         
-        display_msg = found_text[:75] + "..." if len(found_text) > 75 else found_text
-        return status, f"{icon} OpenClaw: {display_msg}", score
+        # Profi-Anzeige: Nur die Schlagzeile
+        return status, f"{icon} OpenClaw: {headline}", score
 
     except Exception as e:
-        return "N/A", "🤖 OpenClaw: Verbindung wird stabilisiert...", 0.5
+        return "N/A", "🤖 OpenClaw: Analyse läuft...", 0.5
         
 # --- 2. DATEN-FUNKTIONEN ---
 @st.cache_data(ttl=86400)
@@ -673,6 +663,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
