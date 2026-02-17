@@ -507,6 +507,7 @@ with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
 
             depot_list.append({
                 "Ticker": f"{symbol} {star_display}",
+                "Earnings": earn if earn else "---",
                 "Einstand": f"{entry:.2f} $",
                 "Aktuell": f"{price:.2f} $",
                 "P/L %": f"{perf_pct:+.1f}%",
@@ -679,6 +680,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
