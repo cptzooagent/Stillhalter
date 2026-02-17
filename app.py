@@ -537,6 +537,17 @@ if symbol_input:
             tk = yf.Ticker(symbol_input)
             info = tk.info
             res = get_stock_data_full(symbol_input)
+
+            # --- NEU: Earnings-Anzeige im Scanner (vor der Ampel) ---
+            if earn and earn != "---":
+                # Optischer Hinweis, falls Earnings in Kürze anstehen (Beispiel Feb/März 2026)
+                if "Feb" in earn or "Mar" in earn:
+                    st.error(f"⚠️ **Earnings-Warnung:** Nächste Zahlen am {earn}. Vorsicht bei neuen Trades!")
+                else:
+                    st.info(f"🗓️ Nächste Earnings: {earn}")
+            else:
+                st.write("🗓️ Keine Earnings-Daten verfügbar")
+
             
             # Ändere diese Zeile in Sektion 3:
             if res[0] is not None:
@@ -680,6 +691,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
