@@ -552,6 +552,29 @@ if symbol_input:
                         st.info(f"🗓️ Nächste Earnings: {earn}")
                 else:
                     st.write("🗓️ Keine Earnings-Daten verfügbar")
+
+                # --- 2. NEU: STRATEGIE-SIGNAL (Die Logik aus dem Depot-Manager) ---
+                # Wir extrahieren die S2-Werte aus pivots_res für die Berechnung
+                s2_d = pivots_res.get('S2') if pivots_res else None
+                s2_w = pivots_res.get('W_S2') if pivots_res else None
+        
+                put_action_scanner = "⏳ Warten (Kein Signal)"
+                signal_color = "white"
+
+                if s2_w and price <= s2_w * 1.01:
+                    put_action_scanner = "🔥 EXTREM (Weekly S2)"
+                    signal_color = "#ff4b4b" # Rot für Alarm/Chance
+                elif rsi < 35 or (s2_d and price <= s2_d * 1.02):
+                    put_action_scanner = "🟢 JETZT (S2/RSI)"
+                    signal_color = "#27ae60" # Grün für Einstieg
+
+                # Anzeige des Signals als hervorgehobene Metrik
+                st.markdown(f"""
+                    <div style="padding:10px; border-radius:10px; border: 2px solid {signal_color}; text-align:center;">
+                        <small>Aktuelles Short Put Signal:</small><br>
+                        <strong style="font-size:20px; color:{signal_color};">{put_action_scanner}</strong>
+                    </div>
+                """, unsafe_allow_html=True)
                 
                 # Sterne-Logik (Basis für Qualität)
                 stars = 0
@@ -690,6 +713,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
 
