@@ -443,7 +443,7 @@ if st.session_state.profi_scan_results:
                     </div>
                 """, unsafe_allow_html=True)
                     
-# --- SEKTION 2: DEPOT-MANAGER (STABIL & SCHNELL) ---
+# --- SEKTION 2: DEPOT-MANAGER (KOMPLETT-VERSION OHNE SCROLLEN) ---
 st.markdown("---")
 st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
@@ -453,14 +453,13 @@ if 'depot_data_cache' not in st.session_state:
 
 col_header, col_btn = st.columns([3, 1])
 with col_btn:
-    # Nur dieser Button erzwingt ein Neuladen der Daten
-    if st.button("🔄 Depot aktualisieren", use_container_width=True):
+    if st.button("🔄 Depot-Werte aktualisieren", use_container_width=True):
         st.session_state.depot_data_cache = None
         st.rerun()
 
-# 2. Daten nur laden, wenn der Speicher leer ist
+# 2. Daten verarbeiten (Nur wenn Cache leer ist)
 if st.session_state.depot_data_cache is None:
-    with st.spinner("📦 Depot-Daten werden einmalig geladen..."):
+    with st.spinner("📦 Depot-Daten werden geladen..."):
         my_assets = {
             "LRCX": [100, 210], "MU": [100, 390], "AFRM": [100, 76.00], "ELF": [100, 109.00], "ETSY": [100, 67.00],
             "GTLB": [100, 41.00], "GTM": [100, 17.00], "HIMS": [100, 36.00],
@@ -468,51 +467,71 @@ if st.session_state.depot_data_cache is None:
             "RBRK": [100, 70.00], "SE": [100, 170.00], "TTD": [100, 102.00]
         }
         
-        temp_list = []
+        depot_list = []
         for symbol, data in my_assets.items():
             try:
                 res = get_stock_data_full(symbol)
                 if res[0] is None: continue
                 
+                # Daten entpacken (8 Werte)
                 price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
                 qty, entry = data[0], data[1]
                 perf_pct = ((price - entry) / entry) * 100
+
+                # KI-Stimmung
                 ki_status, _, _ = get_openclaw_analysis(symbol)
                 ki_icon = "🟢" if ki_status == "Bullish" else "🔴" if ki_status == "Bearish" else "🟡"
 
-                # Pivot & Action Logik (dein Original)
+                # Sterne-Rating
+                try:
+                    info_temp = yf.Ticker(symbol).info
+                    analyst_txt_temp, _ = get_analyst_conviction(info_temp)
+                    stars_count = 3 if "HYPER" in analyst_txt_temp else 2 if "Stark" in analyst_txt_temp else 1
+                    star_display = "⭐" * stars_count
+                except:
+                    star_display = "⭐"
+
+                # Pivot-Werte extrahieren
                 s2_d = pivots.get('S2') if pivots else None
                 s2_w = pivots.get('W_S2') if pivots else None
                 r2_d = pivots.get('R2') if pivots else None
                 r2_w = pivots.get('W_R2') if pivots else None
-
+                
+                # Signal-Logik
                 put_action = "⏳ Warten"
-                if rsi < 35 or (s2_d and price <= s2_d * 1.02): put_action = "🟢 JETZT"
-                if s2_w and price <= s2_w * 1.01: put_action = "🔥 EXTREM"
+                if rsi < 35 or (s2_d and price <= s2_d * 1.02):
+                    put_action = "🟢 JETZT (S2/RSI)"
+                if s2_w and price <= s2_w * 1.01:
+                    put_action = "🔥 EXTREM (Weekly S2)"
                 
                 call_action = "⏳ Warten"
-                if rsi > 55 and r2_d and price >= r2_d * 0.98: call_action = "🟢 JETZT"
+                if rsi > 55 and r2_d and price >= r2_d * 0.98:
+                    call_action = "🟢 JETZT (R2/RSI)"
 
-                temp_list.append({
-                    "Ticker": symbol,
-                    "Earnings": earn if earn else "---",
+                depot_list.append({
+                    "Ticker": f"{symbol} {star_display}",
+                    "Earnings": earn if earn else "---", # <--- HIER SIND SIE WIEDER
                     "Einstand": f"{entry:.2f} $",
                     "Aktuell": f"{price:.2f} $",
                     "P/L %": f"{perf_pct:+.1f}%",
-                    "KI": f"{ki_icon} {ki_status}",
+                    "KI-Check": f"{ki_icon} {ki_status}",
                     "RSI": int(rsi),
-                    "Short Put": put_action,
+                    "Short Put (Repair)": put_action,
                     "Covered Call": call_action,
                     "S2 Daily": f"{s2_d:.2f} $" if s2_d else "---",
                     "S2 Weekly": f"{s2_w:.2f} $" if s2_w else "---",
-                    "R2 Daily": f"{r2_d:.2f} $" if r2_d else "---"
+                    "R2 Daily": f"{r2_d:.2f} $" if r2_d else "---",
+                    "R2 Weekly": f"{r2_w:.2f} $" if r2_w else "---" 
                 })
             except: continue
-        st.session_state.depot_data_cache = temp_list
+        st.session_state.depot_data_cache = depot_list
 
-# 3. Anzeige der gespeicherten Daten (ohne Scrollen)
+# 3. Anzeige (Statische Tabelle = Kein Scrollen möglich)
 if st.session_state.depot_data_cache:
-    st.table(pd.DataFrame(st.session_state.depot_data_cache))
+    df_output = pd.DataFrame(st.session_state.depot_data_cache)
+    st.table(df_output)
+
+st.info("💡 **Strategie:** Wenn 'Short Put' auf 🔥 steht, ist die Aktie am wöchentlichen S2 – technisch das sicherste Level zum Verbilligen.")
                     
 # --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
@@ -705,6 +724,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
