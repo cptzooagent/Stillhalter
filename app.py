@@ -443,10 +443,11 @@ if st.session_state.profi_scan_results:
                     </div>
                 """, unsafe_allow_html=True)
                     
-# --- SEKTION 2: DEPOT-MANAGER (KOMPLETT-VERSION) ---
+# --- SEKTION 2: DEPOT-MANAGER (STABILISIERT MIT CACHE & PIVOTS) ---
 st.markdown("---")
 st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
+# 1. Assets definieren
 my_assets = {
     "LRCX": [100, 210], "MU": [100, 390], "AFRM": [100, 76.00], "ELF": [100, 109.00], "ETSY": [100, 67.00],
     "GTLB": [100, 41.00], "GTM": [100, 17.00], "HIMS": [100, 36.00],
@@ -454,74 +455,92 @@ my_assets = {
     "RBRK": [100, 70.00], "SE": [100, 170.00], "TTD": [100, 102.00]
 }
 
-# Session State initialisieren
-if 'depot_list_cache' not in st.session_state:
-    st.session_state.depot_list_cache = None
-if 'last_sync_time' not in st.session_state:
-    st.session_state.last_sync_time = "Noch nicht geladen"
+# 2. Session State Initialisierung (Verhindert Reruns beim Scanner-Klick)
+if 'depot_data_cache' not in st.session_state:
+    st.session_state.depot_data_cache = None
+if 'depot_last_sync' not in st.session_state:
+    st.session_state.depot_last_sync = "Noch nicht geladen"
 
 col_title, col_sync = st.columns([3, 1])
 with col_sync:
-    if st.button("🔄 Depot Live-Update erzwingen", use_container_width=True):
-        st.session_state.depot_list_cache = None
+    if st.button("🔄 Depot-Werte aktualisieren", use_container_width=True):
+        st.session_state.depot_data_cache = None
 
-if st.session_state.depot_list_cache is None:
-    with st.spinner("📦 Analysiere Depot inkl. KI, Analysten & Pivots..."):
-        temp_results = []
+# 3. Lade-Logik (läuft nur, wenn Cache leer ist)
+if st.session_state.depot_data_cache is None:
+    with st.spinner("📦 Analysiere Depot-Bestände & Pivot-Level..."):
+        temp_depot = []
         for symbol, data in my_assets.items():
             try:
-                # 1. Basis-Daten (get_stock_data_full liefert bereits pivots als 8. wert!)
+                # Nutzt deine bestehende Funktion get_stock_data_full
                 res = get_stock_data_full(symbol)
                 if not res or res[0] is None: continue
-                price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
                 
-                # 2. KI-Stimmung & Analysten-Sterne
-                ki_status, _, _ = get_openclaw_analysis(symbol)
+                price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+                qty, entry = data[0], data[1]
+                perf_pct = ((price - entry) / entry) * 100
+
+                # KI & Analysten-Sterne
+                ki_status, ki_text, _ = get_openclaw_analysis(symbol)
                 ki_icon = "🟢" if ki_status == "Bullish" else "🔴" if ki_status == "Bearish" else "🟡"
                 
-                tk = yf.Ticker(symbol)
-                analyst_txt, _ = get_analyst_conviction(tk.info)
-                star_display = "⭐" * (3 if "HYPER" in analyst_txt else 2 if "Stark" in analyst_txt else 1)
+                try:
+                    info_temp = yf.Ticker(symbol).info
+                    analyst_txt_temp, _ = get_analyst_conviction(info_temp)
+                    stars_count = 3 if "HYPER" in analyst_txt_temp else 2 if "Stark" in analyst_txt_temp else 1
+                    star_display = "⭐" * stars_count
+                except:
+                    star_display = "⭐"
 
-                # 3. Pivot-Werte extrahieren
+                # Pivot-Level extrahieren
                 s2_d = pivots.get('S2') if pivots else None
                 s2_w = pivots.get('W_S2') if pivots else None
                 r2_d = pivots.get('R2') if pivots else None
                 r2_w = pivots.get('W_R2') if pivots else None
 
-                # 4. Performance & Signale
-                qty, entry = data[0], data[1]
-                perf_pct = ((price - entry) / entry) * 100
+                # Signal-Logik
+                put_action = "⏳ Warten"
+                if rsi < 35 or (s2_d and price <= s2_d * 1.02):
+                    put_action = "🟢 JETZT (S2/RSI)"
+                if s2_w and price <= s2_w * 1.01:
+                    put_action = "🔥 EXTREM (Weekly S2)"
                 
-                put_action = "🔥 EXTREM (W_S2)" if s2_w and price <= s2_w * 1.01 else "🟢 JETZT" if rsi < 35 else "⏳ Warten"
-                call_action = "🟢 JETZT (R2)" if r2_d and price >= r2_d * 0.98 else "⏳ Warten"
-                
-                temp_results.append({
+                call_action = "⏳ Warten"
+                if rsi > 55:
+                    if r2_d and price >= r2_d * 0.98:
+                        call_action = "🟢 JETZT (R2/RSI)"
+                    else:
+                        call_action = "🟡 RSI HOCH"
+
+                temp_depot.append({
                     "Ticker": f"{symbol} {star_display}",
                     "KI": f"{ki_icon} {ki_status}",
+                    "Einstand": f"{entry:.2f} $",
                     "Aktuell": f"{price:.2f} $",
                     "P/L %": f"{perf_pct:+.1f}%",
                     "RSI": int(rsi),
-                    "Short Put": put_action,
+                    "Short Put (Repair)": put_action,
                     "Covered Call": call_action,
                     "S2 Daily": f"{s2_d:.2f}" if s2_d else "---",
                     "S2 Weekly": f"{s2_w:.2f}" if s2_w else "---",
                     "R2 Daily": f"{r2_d:.2f}" if r2_d else "---",
                     "R2 Weekly": f"{r2_w:.2f}" if r2_w else "---"
                 })
-            except Exception:
-                continue
+            except: continue
         
-        st.session_state.depot_list_cache = temp_results
-        st.session_state.last_sync_time = datetime.now().strftime("%H:%M:%S")
+        st.session_state.depot_data_cache = temp_depot
+        st.session_state.depot_last_sync = datetime.now().strftime("%H:%M:%S")
 
-# Anzeige
-if st.session_state.depot_list_cache:
-    st.caption(f"Letzte Aktualisierung: {st.session_state.last_sync_time}")
-    # Wir nutzen st.dataframe für bessere Scrollbarkeit bei vielen Spalten
-    st.dataframe(pd.DataFrame(st.session_state.depot_list_cache), use_container_width=True, hide_index=True)
-else:
-    st.info("Klicke auf 'Update erzwingen', um dein Depot zu laden.")
+# 4. Anzeige der Tabelle (Blitzschnell aus dem Speicher)
+if st.session_state.depot_data_cache:
+    st.caption(f"Letztes Live-Update: {st.session_state.depot_last_sync}")
+    # Verwendung von dataframe für horizontales Scrollen bei vielen Pivot-Spalten
+    st.dataframe(
+        pd.DataFrame(st.session_state.depot_data_cache), 
+        use_container_width=True, 
+        hide_index=True
+    )
+    st.info("💡 **Tipp:** Das Depot ist im Cache. Du kannst oben im Scanner arbeiten, ohne die API zu belasten.")
                     
 # --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
@@ -714,8 +733,3 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
-
-
-
-
-
