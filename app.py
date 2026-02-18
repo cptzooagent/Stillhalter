@@ -442,6 +442,66 @@ if st.session_state.profi_scan_results:
                         {res['analyst_txt']}
                     </div>
                 """, unsafe_allow_html=True)
+
+# --- SEKTION 1b: SPEZIAL-WATCHLIST (KI-GEWINNER 2026) ---
+st.markdown("---")
+st.markdown("### 🏆 Top-Gewinner 2026 Watchlist")
+
+# Deine Liste aus der Nachricht (bereinigt für Yahoo Finance)
+ki_watchlist_2026 = [
+    "NVDA", "AVGO", "ANET", "ORCL", "PLTR", "MSFT", "ENR.DE", "AMZN", 
+    "VRT", "META", "GOOGL", "RHM.DE", "MU", "EQIX", "ASML", "GEV", 
+    "NOW", "QCOM", "MRVL", "NOVO-B.CO"
+]
+
+if 'watchlist_2026_results' not in st.session_state:
+    st.session_state.watchlist_2026_results = []
+
+col_btn1, col_btn2 = st.columns([1, 4])
+with col_btn1:
+    start_watchlist_scan = st.button("📊 Liste 2026 scannen", key="scan_2026")
+with col_btn2:
+    if st.button("🗑️ Liste leeren", key="clear_2026"):
+        st.session_state.watchlist_2026_results = []
+        st.rerun()
+
+if start_watchlist_scan:
+    # Hier nutzen wir dieselben Einstellungen (Puffer, Yield) wie im Haupt-Scanner
+    puffer_limit = otm_puffer_slider / 100 
+    mkt_cap_limit = min_mkt_cap * 1_000_000_000
+    heute = datetime.now()
+    all_wl_results = []
+    
+    status_wl = st.empty()
+    progress_wl = st.progress(0)
+
+    # Wir nutzen die EXAKT gleiche Multithreading-Logik wie oben
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+        futures = {executor.submit(check_single_stock, s): s for s in ki_watchlist_2026}
+        
+        for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            res_data = future.result()
+            if res_data:
+                all_wl_results.append(res_data)
+            progress_wl.progress((i + 1) / len(ki_watchlist_2026))
+            status_wl.text(f"Scanne 2026er Liste: {i+1}/{len(ki_watchlist_2026)}")
+
+    st.session_state.watchlist_2026_results = sorted(all_wl_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
+    status_wl.empty()
+    progress_wl.empty()
+
+# Anzeige der Ergebnisse (bleiben durch Session State stehen)
+if st.session_state.watchlist_2026_results:
+    st.info(f"Gefundene Setups in der 2026er Liste: {len(st.session_state.watchlist_2026_results)}")
+    cols = st.columns(4)
+    for idx, res in enumerate(st.session_state.watchlist_2026_results):
+        with cols[idx % 4]:
+            # Hier nutzt du dein schönes Kachel-Design aus dem Profi-Scan
+            with st.container(border=True):
+                st.markdown(f"**{res['symbol']}** {res['stars_str']}", unsafe_allow_html=True)
+                st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
+                st.markdown(f"🎯 Strike: **{res['strike']:.1f}$**")
+                st.markdown(f"🛡️ Puffer: **{res['puffer']:.1f}%**")
                     
 # --- SEKTION 2: DEPOT-MANAGER (STABILISIERTE VERSION) ---
 st.markdown("---")
@@ -713,5 +773,6 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
 
