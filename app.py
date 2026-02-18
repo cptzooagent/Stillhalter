@@ -325,7 +325,7 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
         try:
             time.sleep(0.3)
             tk = yf.Ticker(symbol)
-            info = tk.info
+            info = tk.fast_info
             curr_price = info.get('currentPrice', 0)
             m_cap = info.get('marketCap', 0)
             
@@ -386,7 +386,7 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
         except: return None
         return None
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
         
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
@@ -713,3 +713,4 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
