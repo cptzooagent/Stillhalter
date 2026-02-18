@@ -299,7 +299,12 @@ def get_analyst_conviction(info):
 
 
 
-# --- SEKTION 1: PROFI-SCANNER (HIGH-SPEED MULTITHREADING EDITION) ---
+# --- SEKTION 1: PROFI-SCANNER (HIGH-SPEED MULTITHREADING EDITION MIT SPEICHERUNG) ---
+
+# 1. Speicher initialisieren
+if 'profi_scan_results' not in st.session_state:
+    st.session_state.profi_scan_results = []
+
 if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
     puffer_limit = otm_puffer_slider / 100 
     mkt_cap_limit = min_mkt_cap * 1_000_000_000
@@ -324,19 +329,15 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
             curr_price = info.get('currentPrice', 0)
             m_cap = info.get('marketCap', 0)
             
-            # Filter 1: Basis-Daten (Preis & Market Cap)
             if m_cap < mkt_cap_limit: return None
             if not (min_stock_price <= curr_price <= max_stock_price): return None
             
-            # Daten abrufen (8 Werte!)
             res = get_stock_data_full(symbol)
             if res[0] is None: return None
             price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
             
-            # Filter 2: Trend-Check
             if only_uptrend and not uptrend: return None
 
-            # Filter 3: Laufzeit & Earnings-Schutz
             max_days_allowed = 24
             if earn and "." in earn:
                 try:
@@ -346,11 +347,9 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
                     max_days_allowed = min(24, (er_datum - heute).days - 2)
                 except: pass
 
-            # Verfallstage filtern (11 bis max_days_allowed)
             valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= max_days_allowed]
             if not valid_dates: return None
             
-            # Options-Analyse (Target Strike unter Puffer)
             target_date = valid_dates[0]
             chain = tk.option_chain(target_date).puts
             target_strike = price * (1 - puffer_limit)
@@ -362,18 +361,16 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
                 days = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 y_pa = (bid_val / o['strike']) * (365 / max(1, days)) * 100
                 
-                # Filter 4: Rendite-Check
                 if y_pa >= min_yield_pa:
                     analyst_txt, analyst_col = get_analyst_conviction(info)
                     
-                    # Sterne-Logik (Qualitäts-Score)
                     stars = 0
                     if "HYPER" in analyst_txt: stars = 3
                     elif "Stark" in analyst_txt: stars = 2
                     elif "Neutral" in analyst_txt: stars = 1
                     
-                    if rsi < 30: stars -= 1 # Technisches Risiko
-                    if rsi > 75: stars -= 0.5 # Überhitzt
+                    if rsi < 30: stars -= 1 
+                    if rsi > 75: stars -= 0.5 
                     if uptrend and stars > 0: stars += 0.5 
                     stars = max(0, float(stars))
 
@@ -389,59 +386,62 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
         except: return None
         return None
 
-    # --- EXECUTION: 15 THREADS GLEICHZEITIG (KORRIGIERTE VERSION) ---
     with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
-        # Hier wird das Dictionary erstellt: 'future' ist der Schlüssel, 's' (der Ticker) der Wert
         futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
         
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
-            # KORREKTUR: Wir holen uns den Ticker-Namen direkt aus dem 'futures' Dictionary
             current_ticker = futures[future] 
-            
             res_data = future.result()
             if res_data:
                 all_results.append(res_data)
             
-            # UI Update
             progress_bar.progress((i + 1) / len(ticker_liste))
             if i % 5 == 0:
-                # Hier nutzen wir jetzt die korrekte Variable 'current_ticker'
                 status_text.text(f"Analysiere {i}/{len(ticker_liste)}: {current_ticker}...")
 
     status_text.empty()
     progress_bar.empty()
 
-    # --- RESULTATE ANZEIGEN ---
-    if not all_results:
-        st.warning("Keine Treffer gefunden, die den Kriterien entsprechen.")
+    # Sortierung und Speicherung im Session State
+    if all_results:
+        st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
     else:
-        # Sortierung: Qualität (Sterne) -> Rendite
-        all_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
+        st.session_state.profi_scan_results = []
+        st.warning("Keine Treffer gefunden.")
 
-        st.markdown(f"### 🎯 Top-Setups ({len(all_results)} Treffer)")
-        cols = st.columns(4)
-        for idx, res in enumerate(all_results):
-            with cols[idx % 4]:
-                s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-                border_color = res['analyst_col'] if res['stars_val'] >= 2 else "#e0e0e0"
-                rsi_col = "#e74c3c" if res['rsi'] > 70 or res['rsi'] < 30 else "#7f8c8d"
+# --- RESULTATE ANZEIGEN (Außerhalb des Buttons, damit sie stehen bleiben) ---
+if st.session_state.profi_scan_results:
+    all_results = st.session_state.profi_scan_results
+    st.markdown(f"### 🎯 Top-Setups ({len(all_results)} Treffer)")
+    
+    # Optional: Button zum Löschen der Ergebnisse
+    if st.button("Ergebnisse löschen"):
+        st.session_state.profi_scan_results = []
+        st.rerun()
+
+    cols = st.columns(4)
+    for idx, res in enumerate(all_results):
+        with cols[idx % 4]:
+            s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
+            border_color = res['analyst_col'] if res['stars_val'] >= 2 else "#e0e0e0"
+            rsi_col = "#e74c3c" if res['rsi'] > 70 or res['rsi'] < 30 else "#7f8c8d"
+            
+            with st.container(border=True):
+                st.markdown(f"**{res['symbol']}** {res['stars_str']} <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
+                st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
                 
-                with st.container(border=True):
-                    st.markdown(f"**{res['symbol']}** {res['stars_str']} <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
-                    st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
-                    
-                    st.markdown(f"""
-                        <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 2px solid {border_color}; margin-bottom: 8px; font-size: 0.85em;">
-                            🎯 Strike: <b>{res['strike']:.1f}$</b> | 💰 Bid: <b>{res['bid']:.2f}$</b><br>
-                            🛡️ Puffer: <b>{res['puffer']:.1f}%</b> | ⏳ Tage: <b>{res['tage']}</b>
-                        </div>
-                        <div style="font-size: 0.8em; color: #7f8c8d; margin-bottom: 5px;">
-                            📅 ER: <b>{res['earn']}</b> | RSI: <b style="color:{rsi_col};">{int(res['rsi'])}</b>
-                        </div>
-                        <div style="font-size: 0.85em; border-left: 4px solid {res['analyst_col']}; padding: 4px 8px; font-weight: bold; color: {res['analyst_col']}; background: {res['analyst_col']}10; border-radius: 0 4px 4px 0;">
-                            {res['analyst_txt']}
-                        </div>
-                    """, unsafe_allow_html=True)
+                st.markdown(f"""
+                    <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 2px solid {border_color}; margin-bottom: 8px; font-size: 0.85em;">
+                        🎯 Strike: <b>{res['strike']:.1f}$</b> | 💰 Bid: <b>{res['bid']:.2f}$</b><br>
+                        🛡️ Puffer: <b>{res['puffer']:.1f}%</b> | ⏳ Tage: <b>{res['tage']}</b>
+                    </div>
+                    <div style="font-size: 0.8em; color: #7f8c8d; margin-bottom: 5px;">
+                        📅 ER: <b>{res['earn']}</b> | RSI: <b style="color:{rsi_col};">{int(res['rsi'])}</b>
+                    </div>
+                    <div style="font-size: 0.85em; border-left: 4px solid {res['analyst_col']}; padding: 4px 8px; font-weight: bold; color: {res['analyst_col']}; background: {res['analyst_col']}10; border-radius: 0 4px 4px 0;">
+                        {res['analyst_txt']}
+                    </div>
+                """, unsafe_allow_html=True)
                     
 # --- SEKTION 2: DEPOT-MANAGER (STABILISIERTE VERSION) ---
 st.markdown("---")
@@ -713,3 +713,4 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
