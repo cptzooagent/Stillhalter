@@ -703,13 +703,18 @@ if symbol_input:
                         'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
                     })
                     
-                    st.dataframe(styled_df, use_container_width=True, height=450)
+                    st.dataframe(
+                        styled_df, 
+                        use_container_width=True, 
+                        height=400
+                    )
                     
-                    # Dynamische Legende
-                    if "Put" in option_mode:
-                        st.caption("🟢 >10% Puffer (Sicherer) | 🟡 5-10% | 🔴 <5% (Aggressiv)")
-                    else:
-                        st.caption("🟢 >10% Abstand (Konservativer Call) | 🟡 5-10% | 🔴 <5% (Hohes Ausbuchungs-Risiko)")
+                    st.caption("🟢 >10% Puffer | 🟡 5-10% Puffer | 🔴 <5% Puffer (Risiko)")
 
     except Exception as e:
-        st.error(f"Fehler bei {symbol_input}: {e}")
+        st.error(f"Fehler bei der Detail-Analyse: {e}")
+        st.info("Hinweis: Manche Ticker-Symbole liefern am Wochenende oder bei geringer Liquidität keine Optionsdaten.")
+
+# --- FOOTER ---
+st.markdown("---")
+st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
