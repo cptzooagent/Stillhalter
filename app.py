@@ -438,20 +438,34 @@ if st.session_state.profi_scan_results:
             rsi_col = "#e74c3c" if res['rsi'] > 70 or res['rsi'] < 30 else "#7f8c8d"
             
             with st.container(border=True):
-                # --- UPDATE: HEADER MIT WAHRSCHEINLICHKEIT ---
-                prob = res.get('prob_otm', 90) # Falls noch nicht berechnet, nimm 90 als Fallback
+                # --- DATEN HOLEN ---
+                prob = res.get('prob_otm', 90)
+                delta_val = res.get('delta', 0)
+                s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
                 p_color = "#27ae60" if prob > 85 else "#f1c40f"
                 
-                st.markdown(f"**{res['symbol']}** {res['stars_str']} <span style='float:right; color:{p_color}; font-weight:bold;'>{prob:.0f}% Safe</span>", unsafe_allow_html=True)
+                # --- HEADER: SYMBOL, STERNE UND STATUS (TREND/DIP) ---
+                st.markdown(f"""
+                    <div style="line-height: 1.2;">
+                        <b>{res['symbol']}</b> {res['stars_str']} 
+                        <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>
+                    </div>
+                """, unsafe_allow_html=True)
                 
-                # --- UPDATE: YIELD MIT DELTA-ANZEIGE ---
-                delta_val = res.get('delta', 0)
+                # --- WAHRSCHEINLICHKEIT ALS SUB-HEADER ---
+                st.markdown(f"<div style='text-align: right; font-size: 0.8em; color: {p_color}; font-weight: bold;'>{prob:.0f}% Safe (OTM)</div>", unsafe_allow_html=True)
+                
+                # --- METRIK: RENDITE & DELTA ---
                 st.metric("Yield p.a.", f"{res['y_pa']:.1f}%", delta=f"Δ {delta_val:.2f}", delta_color="inverse")
                 
+                # --- DETAILS ---
                 st.markdown(f"""
                     <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 2px solid {border_color}; margin-bottom: 8px; font-size: 0.85em;">
                         🎯 Strike: <b>{res['strike']:.1f}$</b> | 🛡️ Puffer: <b>{res['puffer']:.1f}%</b><br>
                         📉 Delta: <b>{delta_val:.2f}</b> | ⏳ Tage: <b>{res['tage']}</b>
+                    </div>
+                    <div style="font-size: 0.8em; color: #7f8c8d; margin-bottom: 5px;">
+                        📅 ER: <b>{res['earn']}</b> | RSI: <b>{int(res['rsi'])}</b>
                     </div>
                     <div style="font-size: 0.85em; border-left: 4px solid {res['analyst_col']}; padding: 4px 8px; font-weight: bold; color: {res['analyst_col']}; background: {res['analyst_col']}10; border-radius: 0 4px 4px 0;">
                         {res['analyst_txt']}
@@ -733,5 +747,6 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
