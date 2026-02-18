@@ -443,11 +443,10 @@ if st.session_state.profi_scan_results:
                     </div>
                 """, unsafe_allow_html=True)
                     
-# --- SEKTION 2: DEPOT-MANAGER (FIXIERT OHNE SCROLLEN) ---
+# --- SEKTION 2: DEPOT-MANAGER (DEIN ORIGINAL-STIL, FIXIERT) ---
 st.markdown("---")
 st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
-# Deine Bestandsdaten
 my_assets = {
     "LRCX": [100, 210], "MU": [100, 390], "AFRM": [100, 76.00], "ELF": [100, 109.00], "ETSY": [100, 67.00],
     "GTLB": [100, 41.00], "GTM": [100, 17.00], "HIMS": [100, 36.00],
@@ -455,62 +454,67 @@ my_assets = {
     "RBRK": [100, 70.00], "SE": [100, 170.00], "TTD": [100, 102.00]
 }
 
-# Wir verzichten hier auf den Expander, damit alles sofort sichtbar ist
+# Wir behalten deinen Ablauf exakt bei
 depot_list = []
-with st.spinner("📦 Depot-Daten werden geladen..."):
-    for symbol, data in my_assets.items():
+for symbol, data in my_assets.items():
+    try:
+        res = get_stock_data_full(symbol)
+        if res[0] is None: continue
+        
+        price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+        qty, entry = data[0], data[1]
+        perf_pct = ((price - entry) / entry) * 100
+
+        ki_status, ki_text, _ = get_openclaw_analysis(symbol)
+        ki_icon = "🟢" if ki_status == "Bullish" else "🔴" if ki_status == "Bearish" else "🟡"
+
         try:
-            res = get_stock_data_full(symbol)
-            if res[0] is None: continue
-            
-            price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
-            qty, entry = data[0], data[1]
-            perf_pct = ((price - entry) / entry) * 100
+            info_temp = yf.Ticker(symbol).info
+            analyst_txt_temp, _ = get_analyst_conviction(info_temp)
+            star_display = "⭐" * (3 if "HYPER" in analyst_txt_temp else 2 if "Stark" in analyst_txt_temp else 1)
+        except:
+            star_display = "⭐"
 
-            # KI-Stimmung & Sterne
-            ki_status, _, _ = get_openclaw_analysis(symbol)
-            ki_icon = "🟢" if ki_status == "Bullish" else "🔴" if ki_status == "Bearish" else "🟡"
-            
-            try:
-                info_temp = yf.Ticker(symbol).info
-                analyst_txt_temp, _ = get_analyst_conviction(info_temp)
-                star_display = "⭐" * (3 if "HYPER" in analyst_txt_temp else 2 if "Stark" in analyst_txt_temp else 1)
-            except:
-                star_display = "⭐"
+        r2_d = pivots.get('R2') if pivots else None
+        r2_w = pivots.get('W_R2') if pivots else None
+        s2_d = pivots.get('S2') if pivots else None
+        s2_w = pivots.get('W_S2') if pivots else None
+        
+        # Deine exakte Put/Call Logik
+        put_action = "⏳ Warten"
+        if rsi < 35 or (s2_d and price <= s2_d * 1.02):
+            put_action = "🟢 JETZT (S2/RSI)"
+        if s2_w and price <= s2_w * 1.01:
+            put_action = "🔥 EXTREM (Weekly S2)"
+        
+        call_action = "⏳ Warten"
+        if rsi > 55:
+            if r2_d and price >= r2_d * 0.98:
+                call_action = "🟢 JETZT (R2/RSI)"
+            else:
+                call_action = "🟡 RSI HOCH (Warte auf R2)"
 
-            # Pivot-Werte kompakt
-            s2_d = pivots.get('S2') if pivots else None
-            s2_w = pivots.get('W_S2') if pivots else None
-            r2_d = pivots.get('R2') if pivots else None
-            
-            # Signale
-            put_action = "⏳ Warten"
-            if rsi < 35 or (s2_d and price <= s2_d * 1.02): put_action = "🟢 JETZT"
-            if s2_w and price <= s2_w * 1.01: put_action = "🔥 EXTREM"
-            
-            call_action = "⏳ Warten"
-            if rsi > 55 and r2_d and price >= r2_d * 0.98: call_action = "🟢 JETZT"
-
-            depot_list.append({
-                "Ticker": f"{symbol} {star_display}",
-                "KI": ki_icon,
-                "P/L %": f"{perf_pct:+.1f}%",
-                "RSI": int(rsi),
-                "Short Put": put_action,
-                "Covered Call": call_action,
-                "S2 (D/W)": f"{s2_d:.1f} / {s2_w:.1f}" if s2_d and s2_w else "---",
-                "R2 Daily": f"{r2_d:.1f} $" if r2_d else "---"
-            })
-        except: continue
+        depot_list.append({
+            "Ticker": f"{symbol} {star_display}",
+            "Earnings": earn if earn else "---",
+            "Einstand": f"{entry:.2f} $",
+            "Aktuell": f"{price:.2f} $",
+            "P/L %": f"{perf_pct:+.1f}%",
+            "KI-Check": f"{ki_icon} {ki_status}",
+            "RSI": int(rsi),
+            "Short Put (Repair)": put_action,
+            "Covered Call": call_action,
+            "S2 Daily": f"{s2_d:.2f} $" if s2_d else "---",
+            "S2 Weekly": f"{s2_w:.2f} $" if s2_w else "---",
+            "R2 Daily": f"{r2_d:.2f} $" if r2_d else "---",
+            "R2 Weekly": f"{r2_w:.2f} $" if r2_w else "---" 
+        })
+    except: continue
 
 if depot_list:
-    # Umwandlung in DataFrame & Sortierung nach Performance (Sorgenkinder oben)
-    df_final = pd.DataFrame(depot_list).sort_values("P/L %", ascending=True)
-    
-    # Der entscheidende Befehl: st.table erzwingt die volle Anzeige ohne Scrollbalken
-    st.table(df_final)
-
-st.info("💡 **Strategie:** Die Liste ist nach Performance sortiert. 'EXTREM' Markierungen zeigen den Boden am wöchentlichen S2 Pivot.")
+    # DER TRICK: st.table statt st.dataframe
+    # Das rendert die Liste in voller Länge auf der Seite ohne Scrollbalken.
+    st.table(pd.DataFrame(depot_list))
                     
 # --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
@@ -703,4 +707,5 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
