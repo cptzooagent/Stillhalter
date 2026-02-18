@@ -338,7 +338,6 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
             
             if only_uptrend and not uptrend: return None
 
-            heute = datetime.now()
             max_days_allowed = 24
             if earn and "." in earn:
                 try:
@@ -362,16 +361,6 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
                 days = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 y_pa = (bid_val / o['strike']) * (365 / max(1, days)) * 100
                 
-                # --- NEU: GRIECHEN & WAHRSCHEINLICHKEIT ---
-                S = price
-                K = o['strike']
-                T = days / 365.0
-                r = 0.04 
-                iv = o.get('impliedVolatility', 0.30)
-                
-                delta_val = calculate_bsm_delta(S, K, T, iv, r, option_type='put')
-                prob_otm = (1 - abs(delta_val)) * 100 
-
                 if y_pa >= min_yield_pa:
                     analyst_txt, analyst_col = get_analyst_conviction(info)
                     
@@ -383,16 +372,16 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
                     if rsi < 30: stars -= 1 
                     if rsi > 75: stars -= 0.5 
                     if uptrend and stars > 0: stars += 0.5 
+                    stars = max(0, float(stars))
 
                     return {
                         'symbol': symbol, 'price': price, 'y_pa': y_pa, 
                         'strike': o['strike'], 'puffer': ((price - o['strike']) / price) * 100,
                         'bid': bid_val, 'rsi': rsi, 'earn': earn if earn else "n.a.", 
                         'tage': days, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                        'stars_val': max(0, float(stars)), 
-                        'stars_str': "⭐" * int(max(0, stars)) if stars >= 1 else "⚠️",
+                        'stars_val': stars, 'stars_str': "⭐" * int(stars) if stars >= 1 else "⚠️",
                         'analyst_txt': analyst_txt, 'analyst_col': analyst_col,
-                        'delta': delta_val, 'prob_otm': prob_otm # NEUE WERTE
+                        'mkt_cap': m_cap / 1_000_000_000
                     }
         except: return None
         return None
@@ -438,42 +427,16 @@ if st.session_state.profi_scan_results:
             rsi_col = "#e74c3c" if res['rsi'] > 70 or res['rsi'] < 30 else "#7f8c8d"
             
             with st.container(border=True):
-                # --- DATEN HOLEN ---
-                prob = res.get('prob_otm', 90)
-                delta_val = res.get('delta', 0)
-                bid_val = res.get('bid', 0)  # Die Prämie
-                s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-                p_color = "#27ae60" if prob > 85 else "#f1c40f"
+                st.markdown(f"**{res['symbol']}** {res['stars_str']} <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
+                st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
                 
-                # --- HEADER: SYMBOL & STATUS ---
-                st.markdown(f"""
-                    <div style="line-height: 1.2;">
-                        <b>{res['symbol']}</b> {res['stars_str']} 
-                        <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>
-                    </div>
-                """, unsafe_allow_html=True)
-                
-                # --- SICHERHEITS-WERT ---
-                st.markdown(f"<div style='text-align: right; font-size: 0.8em; color: {p_color}; font-weight: bold;'>{prob:.0f}% Safe (OTM)</div>", unsafe_allow_html=True)
-                
-                # --- HAUPT-METRIKEN (RENDITE & PRÄMIE) ---
-                m1, m2 = st.columns(2)
-                with m1:
-                    st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
-                with m2:
-                    st.metric("Prämie", f"{bid_val:.2f} $", delta=f"Δ {delta_val:.2f}", delta_color="inverse")
-                
-                # --- DETAIL BOX (MIT GRÖSSEREM RSI) ---
                 st.markdown(f"""
                     <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 2px solid {border_color}; margin-bottom: 8px; font-size: 0.85em;">
-                        🎯 Strike: <b>{res['strike']:.1f}$</b> | 🛡️ Puffer: <b>{res['puffer']:.1f}%</b><br>
-                        📉 Delta: <b>{delta_val:.2f}</b> | ⏳ Tage: <b>{res['tage']}</b>
+                        🎯 Strike: <b>{res['strike']:.1f}$</b> | 💰 Bid: <b>{res['bid']:.2f}$</b><br>
+                        🛡️ Puffer: <b>{res['puffer']:.1f}%</b> | ⏳ Tage: <b>{res['tage']}</b>
                     </div>
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                        <span style="font-size: 0.8em; color: #7f8c8d;">📅 ER: <b>{res['earn']}</b></span>
-                        <span style="font-size: 1.1em; font-weight: bold; color: {'#e74c3c' if res['rsi'] > 70 or res['rsi'] < 30 else '#2c3e50'};">
-                            📊 RSI: {int(res['rsi'])}
-                        </span>
+                    <div style="font-size: 0.8em; color: #7f8c8d; margin-bottom: 5px;">
+                        📅 ER: <b>{res['earn']}</b> | RSI: <b style="color:{rsi_col};">{int(res['rsi'])}</b>
                     </div>
                     <div style="font-size: 0.85em; border-left: 4px solid {res['analyst_col']}; padding: 4px 8px; font-weight: bold; color: {res['analyst_col']}; background: {res['analyst_col']}10; border-radius: 0 4px 4px 0;">
                         {res['analyst_txt']}
