@@ -443,11 +443,10 @@ if st.session_state.profi_scan_results:
                     </div>
                 """, unsafe_allow_html=True)
                     
-# --- SEKTION 2: DEPOT-MANAGER (VOLLSTÄNDIGER STAND-ALONE BLOCK) ---
+# --- SEKTION 2: DEPOT-MANAGER (VOLLVERSION INKL. STERNE & KI) ---
 st.markdown("---")
 st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
-# 1. Deine Bestandsdaten (Statisch definiert)
 my_assets = {
     "LRCX": [100, 210], "MU": [100, 390], "AFRM": [100, 76.00], "ELF": [100, 109.00], "ETSY": [100, 67.00],
     "GTLB": [100, 41.00], "GTM": [100, 17.00], "HIMS": [100, 36.00],
@@ -455,65 +454,66 @@ my_assets = {
     "RBRK": [100, 70.00], "SE": [100, 170.00], "TTD": [100, 102.00]
 }
 
-# 2. Session State Vorbereitung (Verhindert unnötige Neuladevorgänge)
 if 'depot_list_cache' not in st.session_state:
     st.session_state.depot_list_cache = None
 if 'last_sync_time' not in st.session_state:
     st.session_state.last_sync_time = "Noch nicht geladen"
 
-# 3. UI-Elemente für das Update
 col_title, col_sync = st.columns([3, 1])
 with col_sync:
     if st.button("🔄 Depot Live-Update erzwingen", use_container_width=True):
-        st.session_state.depot_list_cache = None # Setzt den Cache zurück
+        st.session_state.depot_list_cache = None
 
-# 4. Daten-Logik (Lädt nur, wenn der Cache leer ist)
 if st.session_state.depot_list_cache is None:
-    with st.spinner("📦 Rufe Depot-Kurse ab... bitte warten."):
+    with st.spinner("📦 Analysiere Depot inkl. KI & Analysten-Check..."):
         temp_results = []
         for symbol, data in my_assets.items():
             try:
-                # Nutzt deine existierende Funktion get_stock_data_full
+                # 1. Basis-Daten & Technik
                 res = get_stock_data_full(symbol)
+                if not res or res[0] is None: continue
+                price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
                 
-                if res and res[0] is not None:
-                    price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
-                    qty, entry = data[0], data[1]
-                    perf_pct = ((price - entry) / entry) * 100
-                    
-                    # Extraktion der Pivot-Level für Signale
-                    s2_w = pivots.get('W_S2') if pivots else None
-                    r2_d = pivots.get('R2') if pivots else None
-                    
-                    # Signal-Logik (Deine Strategie)
-                    put_action = "🔥 EXTREM (W_S2)" if s2_w and price <= s2_w * 1.01 else "🟢 JETZT" if rsi < 35 else "⏳ Warten"
-                    call_action = "🟢 JETZT (R2)" if r2_d and price >= r2_d * 0.98 else "⏳ Warten"
-                    
-                    temp_results.append({
-                        "Ticker": symbol,
-                        "Einstand": f"{entry:.2f} $",
-                        "Aktuell": f"{price:.2f} $",
-                        "P/L %": f"{perf_pct:+.1f}%",
-                        "RSI": int(rsi),
-                        "Short Put (Repair)": put_action,
-                        "Covered Call": call_action
-                    })
-            except Exception:
-                continue
+                # 2. KI-Stimmung (OpenClaw)
+                ki_status, _, _ = get_openclaw_analysis(symbol)
+                ki_icon = "🟢" if ki_status == "Bullish" else "🔴" if ki_status == "Bearish" else "🟡"
+
+                # 3. Analysten-Sterne (Info-Call)
+                tk = yf.Ticker(symbol)
+                analyst_txt, _ = get_analyst_conviction(tk.info)
+                stars_count = 3 if "HYPER" in analyst_txt else 2 if "Stark" in analyst_txt else 1
+                star_display = "⭐" * stars_count
+
+                # 4. Signal-Logik
+                qty, entry = data[0], data[1]
+                perf_pct = ((price - entry) / entry) * 100
+                s2_w = pivots.get('W_S2') if pivots else None
+                r2_d = pivots.get('R2') if pivots else None
+                
+                put_action = "🔥 EXTREM (W_S2)" if s2_w and price <= s2_w * 1.01 else "🟢 JETZT" if rsi < 35 else "⏳ Warten"
+                call_action = "🟢 JETZT (R2)" if r2_d and price >= r2_d * 0.98 else "⏳ Warten"
+                
+                temp_results.append({
+                    "Ticker": f"{symbol} {star_display}",
+                    "KI-Check": f"{ki_icon} {ki_status}",
+                    "Einstand": f"{entry:.2f} $",
+                    "Aktuell": f"{price:.2f} $",
+                    "P/L %": f"{perf_pct:+.1f}%",
+                    "RSI": int(rsi),
+                    "Short Put (Repair)": put_action,
+                    "Covered Call": call_action
+                })
+            except: continue
         
-        # Speichern im State
         st.session_state.depot_list_cache = temp_results
         st.session_state.last_sync_time = datetime.now().strftime("%H:%M:%S")
 
-# 5. Finale Darstellung der Tabelle
 if st.session_state.depot_list_cache:
     st.caption(f"Letzte Aktualisierung: {st.session_state.last_sync_time}")
+    # Styling für die P/L Spalte (Farbe kommt erst in st.dataframe richtig gut, daher hier als Tabelle)
     st.table(pd.DataFrame(st.session_state.depot_list_cache))
 else:
-    st.error("Fehler beim Laden der Depot-Daten. Bitte prüfe die Internetverbindung oder API-Limits.")
-
-# Kurze Info-Box unter der Tabelle
-st.info("💡 **Tipp:** Das Depot bleibt nun 'gepinnt'. Du kannst oben im Scanner Aktien analysieren, ohne dass diese Liste hier jedes Mal neu flackert.")
+    st.info("Klicke auf 'Update erzwingen', um dein Depot zu laden.")
                     
 # --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
@@ -706,6 +706,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
