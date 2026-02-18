@@ -463,14 +463,17 @@ if st.session_state.profi_scan_results:
                 with m2:
                     st.metric("Prämie", f"{bid_val:.2f} $", delta=f"Δ {delta_val:.2f}", delta_color="inverse")
                 
-                # --- DETAIL BOX ---
+                # --- DETAIL BOX (MIT GRÖSSEREM RSI) ---
                 st.markdown(f"""
                     <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 2px solid {border_color}; margin-bottom: 8px; font-size: 0.85em;">
                         🎯 Strike: <b>{res['strike']:.1f}$</b> | 🛡️ Puffer: <b>{res['puffer']:.1f}%</b><br>
                         📉 Delta: <b>{delta_val:.2f}</b> | ⏳ Tage: <b>{res['tage']}</b>
                     </div>
-                    <div style="font-size: 0.8em; color: #7f8c8d; margin-bottom: 5px;">
-                        📅 ER: <b>{res['earn']}</b> | RSI: <b>{int(res['rsi'])}</b>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                        <span style="font-size: 0.8em; color: #7f8c8d;">📅 ER: <b>{res['earn']}</b></span>
+                        <span style="font-size: 1.1em; font-weight: bold; color: {'#e74c3c' if res['rsi'] > 70 or res['rsi'] < 30 else '#2c3e50'};">
+                            📊 RSI: {int(res['rsi'])}
+                        </span>
                     </div>
                     <div style="font-size: 0.85em; border-left: 4px solid {res['analyst_col']}; padding: 4px 8px; font-weight: bold; color: {res['analyst_col']}; background: {res['analyst_col']}10; border-radius: 0 4px 4px 0;">
                         {res['analyst_txt']}
@@ -752,7 +755,3 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
-
-
-
-
