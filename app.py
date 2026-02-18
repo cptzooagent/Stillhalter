@@ -323,7 +323,7 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
     # --- DIE UNTER-FUNKTION FÜR DEN PARALLELEN CHECK ---
     def check_single_stock(symbol):
         try:
-            time.sleep(0.3)
+            time.sleep(random.uniform(0.1, 0.4))
             tk = yf.Ticker(symbol)
             info = tk.fast_info
             curr_price = info.get('currentPrice', 0)
@@ -713,4 +713,5 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
