@@ -499,8 +499,6 @@ if st.session_state.depot_data_cache is None:
                     "Covered Call": call_action
                 })
             except: continue
-        
-        st.session_state.depot_data_cache = temp_list
 
 # 4. Anzeige (lädt bei jedem Rerun sofort aus dem Session State)
 if st.session_state.depot_data_cache:
@@ -702,4 +700,5 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
