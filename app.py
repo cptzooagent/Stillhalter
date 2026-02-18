@@ -161,13 +161,13 @@ with st.sidebar:
     st.header("🛡️ Strategie-Einstellungen")
     
     # Basis-Filter
-    otm_puffer_slider = st.slider("Gewünschter Puffer (%)", 3, 25, 10, key="puffer_sid")
-    min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 0, 100, 15, key="yield_sid")
+    otm_puffer_slider = st.slider("Gewünschter Puffer (%)", 3, 25, 15, key="puffer_sid")
+    min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 0, 100, 12, key="yield_sid")
     
     # Der Aktienpreis-Regler
     min_stock_price, max_stock_price = st.slider(
         "Aktienpreis-Spanne ($)", 
-        0, 1000, (20, 500), 
+        0, 1000, (60, 500), 
         key="price_sid"
     )
 
@@ -175,7 +175,7 @@ with st.sidebar:
     st.subheader("Qualitäts-Filter")
     
     # Marktkapitalisierung & Trend
-    min_mkt_cap = st.slider("Mindest-Marktkapitalisierung (Mrd. $)", 1, 1000, 50, key="mkt_cap_sid")
+    min_mkt_cap = st.slider("Mindest-Marktkapitalisierung (Mrd. $)", 1, 1000, 20, key="mkt_cap_sid")
     only_uptrend = st.checkbox("Nur Aufwärtstrend (SMA 200)", value=False, key="trend_sid")
     
     # WICHTIG: Die Checkbox für den Simulationsmodus
@@ -713,4 +713,5 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
 
