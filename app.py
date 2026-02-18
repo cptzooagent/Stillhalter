@@ -441,10 +441,11 @@ if st.session_state.profi_scan_results:
                 # --- DATEN HOLEN ---
                 prob = res.get('prob_otm', 90)
                 delta_val = res.get('delta', 0)
+                bid_val = res.get('bid', 0)  # Die Prämie
                 s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
                 p_color = "#27ae60" if prob > 85 else "#f1c40f"
                 
-                # --- HEADER: SYMBOL, STERNE UND STATUS (TREND/DIP) ---
+                # --- HEADER: SYMBOL & STATUS ---
                 st.markdown(f"""
                     <div style="line-height: 1.2;">
                         <b>{res['symbol']}</b> {res['stars_str']} 
@@ -452,13 +453,17 @@ if st.session_state.profi_scan_results:
                     </div>
                 """, unsafe_allow_html=True)
                 
-                # --- WAHRSCHEINLICHKEIT ALS SUB-HEADER ---
+                # --- SICHERHEITS-WERT ---
                 st.markdown(f"<div style='text-align: right; font-size: 0.8em; color: {p_color}; font-weight: bold;'>{prob:.0f}% Safe (OTM)</div>", unsafe_allow_html=True)
                 
-                # --- METRIK: RENDITE & DELTA ---
-                st.metric("Yield p.a.", f"{res['y_pa']:.1f}%", delta=f"Δ {delta_val:.2f}", delta_color="inverse")
+                # --- HAUPT-METRIKEN (RENDITE & PRÄMIE) ---
+                m1, m2 = st.columns(2)
+                with m1:
+                    st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
+                with m2:
+                    st.metric("Prämie", f"{bid_val:.2f} $", delta=f"Δ {delta_val:.2f}", delta_color="inverse")
                 
-                # --- DETAILS ---
+                # --- DETAIL BOX ---
                 st.markdown(f"""
                     <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 2px solid {border_color}; margin-bottom: 8px; font-size: 0.85em;">
                         🎯 Strike: <b>{res['strike']:.1f}$</b> | 🛡️ Puffer: <b>{res['puffer']:.1f}%</b><br>
@@ -747,6 +752,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
