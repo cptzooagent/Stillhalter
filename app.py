@@ -338,6 +338,7 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
             
             if only_uptrend and not uptrend: return None
 
+            heute = datetime.now()
             max_days_allowed = 24
             if earn and "." in earn:
                 try:
@@ -361,6 +362,16 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
                 days = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 y_pa = (bid_val / o['strike']) * (365 / max(1, days)) * 100
                 
+                # --- NEU: GRIECHEN & WAHRSCHEINLICHKEIT ---
+                S = price
+                K = o['strike']
+                T = days / 365.0
+                r = 0.04 
+                iv = o.get('impliedVolatility', 0.30)
+                
+                delta_val = calculate_bsm_delta(S, K, T, iv, r, option_type='put')
+                prob_otm = (1 - abs(delta_val)) * 100 
+
                 if y_pa >= min_yield_pa:
                     analyst_txt, analyst_col = get_analyst_conviction(info)
                     
@@ -372,16 +383,16 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
                     if rsi < 30: stars -= 1 
                     if rsi > 75: stars -= 0.5 
                     if uptrend and stars > 0: stars += 0.5 
-                    stars = max(0, float(stars))
 
                     return {
                         'symbol': symbol, 'price': price, 'y_pa': y_pa, 
                         'strike': o['strike'], 'puffer': ((price - o['strike']) / price) * 100,
                         'bid': bid_val, 'rsi': rsi, 'earn': earn if earn else "n.a.", 
                         'tage': days, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                        'stars_val': stars, 'stars_str': "⭐" * int(stars) if stars >= 1 else "⚠️",
+                        'stars_val': max(0, float(stars)), 
+                        'stars_str': "⭐" * int(max(0, stars)) if stars >= 1 else "⚠️",
                         'analyst_txt': analyst_txt, 'analyst_col': analyst_col,
-                        'mkt_cap': m_cap / 1_000_000_000
+                        'delta': delta_val, 'prob_otm': prob_otm # NEUE WERTE
                     }
         except: return None
         return None
@@ -718,3 +729,4 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
