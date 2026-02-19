@@ -444,14 +444,20 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     status_text.empty()
     progress_bar.empty()
 
-    # --- HIERARCHISCHE SORTIERUNG ---
     if all_results:
-        # Sortiert erst nach Sternen (hoch nach niedrig), dann nach Rendite (hoch nach niedrig)
-        all_results.sort(key=lambda x: (x.get('stars_val', 0), x.get('y_pa', 0)), reverse=True)
-        st.session_state.profi_scan_results = all_results
+        # Hierarchische Sortierung: 
+        # 1. Sterne (absteigend) 
+        # 2. Rendite (absteigend innerhalb der Sternegruppe)
+        st.session_state.profi_scan_results = sorted(
+            all_results, 
+            key=lambda x: (
+                float(x.get('stars_val', 0) or 0), 
+                float(x.get('y_pa', 0) or 0)
+            ), 
+            reverse=True
+        )
     else:
         st.session_state.profi_scan_results = []
-        st.warning("Keine Treffer gefunden.")
 
 # --- RESULTATE ANZEIGEN (KARTEN-LAYOUT) ---
 if st.session_state.profi_scan_results:
@@ -761,5 +767,6 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
