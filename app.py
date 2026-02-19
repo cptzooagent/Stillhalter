@@ -419,7 +419,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     status_text.empty()
     progress_bar.empty()
 
-    # --- HIERARCHISCHE SORTIERUNG: QUALITÄT VOR RENDITE ---
+        # --- HIERARCHISCHE SORTIERUNG: QUALITÄT VOR RENDITE ---
         if all_results:
             # Wir sortieren nach zwei Kriterien gleichzeitig:
             # 1. 'stars_val' (absteigend, also 3 -> 2 -> 1)
@@ -740,6 +740,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
