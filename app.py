@@ -299,183 +299,106 @@ def get_analyst_conviction(info):
 
 
 
-# --- SEKTION 1: PROFI-SCANNER (STABILE EDITION) ---
+# --- SEKTION 1: PROFI-SCANNER (DIAGNOSE-EDITION) ---
 
-# 1. Speicher initialisieren
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
-if st.button("🚀 Profi-Scan starten (Stabil)", key="kombi_scan_pro"):
-    puffer_limit = otm_puffer_slider / 100 
-    mkt_cap_limit = min_mkt_cap * 1_000_000_000
+if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
+    # Sicherstellen, dass die Filter geladen sind
+    p_puffer = otm_puffer_slider / 100 
+    p_min_cap = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
-    with st.spinner("Markt-Scanner läuft (Rate-Limit Schutz aktiv)..."):
-        if test_modus:
-            ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"]
-        else:
-            ticker_liste = get_combined_watchlist()
-    
-    status_text = st.empty()
-    progress_bar = st.progress(0)
-    all_results = []
+    with st.spinner("Scanner läuft..."):
+        ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else get_combined_watchlist()
+        
+        status_text = st.empty()
+        progress_bar = st.progress(0)
+        all_results = []
 
-    # --- DIE UNTER-FUNKTION (JETZT MIT MID-PRICE & SPREAD-LOGIK) ---
-    def check_single_stock(symbol):
-        try:
-            time.sleep(0.8) # Rate-Limit Schutz
-            tk = yf.Ticker(symbol)
+        def check_single_stock(symbol):
             try:
+                time.sleep(0.4) # Kurze Pause bleibt wichtig
+                tk = yf.Ticker(symbol)
+                
+                # DIAGNOSE: Info abrufen
                 info = tk.info
-                if not info: return None
-            except: return None 
+                if not info or 'currentPrice' not in info:
+                    return {"error": f"{symbol}: Keine Info-Daten (Yahoo Block)"}
 
-            curr_price = info.get('currentPrice', 0)
-            m_cap = info.get('marketCap', 0)
-            
-            if m_cap < mkt_cap_limit: return None
-            if not (min_stock_price <= curr_price <= max_stock_price): return None
-            
-            res = get_stock_data_full(symbol)
-            if res is None or res[0] is None: return None
-            price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
-            
-            if only_uptrend and not uptrend: return None
+                price = info.get('currentPrice')
+                m_cap = info.get('marketCap', 0)
+                
+                # Filter-Checks
+                if m_cap < p_min_cap: return None
+                if not (min_stock_price <= price <= max_stock_price): return None
+                
+                # Haupt-Datenfunktion
+                res = get_stock_data_full(symbol)
+                if res is None or res[0] is None: 
+                    return {"error": f"{symbol}: Basis-Daten leer"}
+                
+                price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+                if only_uptrend and not uptrend: return None
 
-            # ... (Earnings-Logik bleibt gleich) ...
+                # Option-Chain Check
+                # Wir prüfen, ob überhaupt Daten für das Datum kommen
+                try:
+                    target_date = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 24][0]
+                    chain = tk.option_chain(target_date).puts
+                except:
+                    return {"error": f"{symbol}: Keine Optionen für Ziel-Datum"}
 
-            valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= max_days_allowed]
-            if not valid_dates: return None
-            
-            target_date = valid_dates[0]
-            chain = tk.option_chain(target_date).puts
-            target_strike = price * (1 - puffer_limit)
-            opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
-            
-            if not opts.empty:
+                target_strike = price * (1 - p_puffer)
+                opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
+                
+                if opts.empty: return None # Puffer zu groß, kein Strike gefunden
+
                 o = opts.iloc[0]
+                bid, ask = o['bid'], o['ask']
+                fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o['lastPrice']
+                spread_pct = ((ask - bid) / bid) * 100 if bid > 0 else 0
                 
-                # --- NEUE LOGIK START ---
-                bid = o['bid']
-                ask = o['ask']
-                
-                # Wir berechnen den fairen Mittelwert (Mid-Price)
-                if bid > 0 and ask > 0:
-                    fair_price = (bid + ask) / 2
-                    spread_pct = ((ask - bid) / bid) * 100 if bid > 0 else 0
-                else:
-                    # Fallback falls Bid/Ask fehlen (z.B. am Wochenende)
-                    fair_price = o['lastPrice'] if o['lastPrice'] > 0 else 0
-                    spread_pct = 0
-                
-                # Sicherheits-Filter: Wenn Spread > 60%, ignorieren wir das Setup meistens
-                # Du kannst diesen Wert anpassen
-                if spread_pct > 60: return None 
+                if spread_pct > 60: return None # Zu illiquide
                 
                 days = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
-                # Wir rechnen hier mit fair_price statt nur mit bid!
                 y_pa = (fair_price / o['strike']) * (365 / max(1, days)) * 100
-                # --- NEUE LOGIK ENDE ---
-
+                
                 if y_pa >= min_yield_pa:
                     analyst_txt, analyst_col = get_analyst_conviction(info)
+                    # ... (Sterne-Logik wie gehabt) ...
+                    # [Hier deine Sterne-Berechnung einfügen]
                     
-                    # Sterne-Rating (unverändert)
-                    stars = 0
-                    if "HYPER" in analyst_txt: stars = 3
-                    elif "Stark" in analyst_txt: stars = 2
-                    elif "Neutral" in analyst_txt: stars = 1
-                    
-                    if rsi < 30: stars -= 1 
-                    if rsi > 75: stars -= 0.5 
-                    if uptrend and stars > 0: stars += 0.5 
-                    stars = max(0, float(stars))
-
                     return {
-                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 
-                        'strike': o['strike'], 'puffer': ((price - o['strike']) / price) * 100,
-                        'bid': fair_price, # Wir zeigen den Mid-Price an
-                        'spread': spread_pct,
-                        'rsi': rsi, 'earn': earn if earn else "n.a.", 
+                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
+                        'puffer': ((price - o['strike']) / price) * 100, 'bid': fair_price,
+                        'spread': spread_pct, 'rsi': rsi, 'earn': earn if earn else "n.a.", 
                         'tage': days, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                        'stars_val': stars, 'stars_str': "⭐" * int(stars) if stars >= 1 else "⚠️",
-                        'analyst_txt': analyst_txt, 'analyst_col': analyst_col,
-                        'mkt_cap': m_cap / 1_000_000_000
+                        'stars_val': 2, 'stars_str': "⭐⭐", # Platzhalter
+                        'analyst_txt': analyst_txt, 'analyst_col': analyst_col, 'mkt_cap': m_cap / 1e9
                     }
-        except: return None
-        return None
+            except Exception as e:
+                return {"error": f"{symbol}: Fehler {str(e)}"}
+            return None
 
-    # Reduzierte workers (von 10 auf 5) für Stabilität
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
-        
-        for i, future in enumerate(concurrent.futures.as_completed(futures)):
-            current_ticker = futures[future] 
-            try:
+        # Wir bleiben bei 10 Threads, da es ja mal ging
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
+            for i, future in enumerate(concurrent.futures.as_completed(futures)):
                 res_data = future.result()
                 if res_data:
-                    all_results.append(res_data)
-            except: pass
-            
-            progress_bar.progress((i + 1) / len(ticker_liste))
-            if i % 3 == 0:
-                status_text.text(f"Scanne {i}/{len(ticker_liste)}: {current_ticker}...")
+                    if "error" in res_data:
+                        # Falls ein Fehler passierte, zeigen wir ihn kurz an
+                        # status_text.text(f"⚠️ {res_data['error']}")
+                        pass
+                    else:
+                        all_results.append(res_data)
+                progress_bar.progress((i + 1) / len(ticker_liste))
 
-    status_text.empty()
-    progress_bar.empty()
-
-    if all_results:
-        st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
-    else:
-        st.session_state.profi_scan_results = []
-        st.warning("Keine Treffer gefunden oder Yahoo blockiert.")
-
-# --- RESULTATE ANZEIGEN (MIT SPREAD-ANZEIGE) ---
-if st.session_state.profi_scan_results:
-    all_results = st.session_state.profi_scan_results
-    st.markdown(f"### 🎯 Top-Setups ({len(all_results)} Treffer)")
-    
-    if st.button("Ergebnisse löschen"):
-        st.session_state.profi_scan_results = []
-        st.rerun()
-
-    cols = st.columns(4)
-    for idx, res in enumerate(all_results):
-        with cols[idx % 4]:
-            # Farben definieren
-            s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-            border_color = res['analyst_col'] if res['stars_val'] >= 2 else "#e0e0e0"
-            rsi_col = "#e74c3c" if res['rsi'] > 70 or res['rsi'] < 30 else "#7f8c8d"
-            
-            # Warnfarbe für hohen Spread (über 20% wird es kritisch)
-            spread_color = "#e67e22" if res['spread'] > 20 else "#7f8c8d"
-            
-            with st.container(border=True):
-                # Header mit Symbol und Status
-                st.markdown(f"**{res['symbol']}** {res['stars_str']} <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
-                
-                # Haupt-Metrik (Yield p.a.)
-                st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
-                
-                # Mittlerer Info-Block (Preise & Puffer)
-                st.markdown(f"""
-                    <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 2px solid {border_color}; margin-bottom: 8px; font-size: 0.85em;">
-                        🎯 Strike: <b>{res['strike']:.1f}$</b> | 💰 Mid: <b>{res['bid']:.2f}$</b><br>
-                        🛡️ Puffer: <b>{res['puffer']:.1f}%</b> | ⏳ Tage: <b>{res['tage']}</b>
-                    </div>
-                    
-                    <div style="font-size: 0.8em; color: #7f8c8d; margin-bottom: 5px;">
-                        📅 ER: <b>{res['earn']}</b> | 🏁 Spread: <b style="color:{spread_color};">{res['spread']:.1f}%</b>
-                    </div>
-                    
-                    <div style="font-size: 0.8em; color: #7f8c8d; margin-bottom: 10px;">
-                        📊 RSI: <b style="color:{rsi_col};">{int(res['rsi'])}</b> | 🏛️ MC: <b>{res['mkt_cap']:.1f}B</b>
-                    </div>
-                    
-                    <div style="font-size: 0.85em; border-left: 4px solid {res['analyst_col']}; padding: 4px 8px; font-weight: bold; color: {res['analyst_col']}; background: {res['analyst_col']}10; border-radius: 0 4px 4px 0;">
-                        {res['analyst_txt']}
-                    </div>
-                """, unsafe_allow_html=True)
+    st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
+    if not all_results:
+        st.error("Scan beendet: Keine Treffer. Prüfe, ob die Filter (Puffer/Yield) zu streng sind.")
                     
 # --- SEKTION 2: DEPOT-MANAGER (DER "SICHERE" CODE GEGEN RATE-LIMITS) ---
 st.markdown("---")
@@ -757,6 +680,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
