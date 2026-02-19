@@ -299,18 +299,18 @@ def get_analyst_conviction(info):
 
 
 
-# --- SEKTION 1: PROFI-SCANNER (HIGH-SPEED MULTITHREADING EDITION MIT SPEICHERUNG) ---
+# --- SEKTION 1: PROFI-SCANNER (STABILE EDITION) ---
 
 # 1. Speicher initialisieren
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
-if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
+if st.button("🚀 Profi-Scan starten (Stabil)", key="kombi_scan_pro"):
     puffer_limit = otm_puffer_slider / 100 
     mkt_cap_limit = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
-    with st.spinner("Markt-Scanner läuft auf Hochtouren..."):
+    with st.spinner("Markt-Scanner läuft (Rate-Limit Schutz aktiv)..."):
         if test_modus:
             ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"]
         else:
@@ -320,12 +320,19 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
     progress_bar = st.progress(0)
     all_results = []
 
-    # --- DIE UNTER-FUNKTION FÜR DEN PARALLELEN CHECK ---
+    # --- DIE UNTER-FUNKTION (MIT SCHUTZ) ---
     def check_single_stock(symbol):
         try:
-            time.sleep(0.3)
+            # 🛑 Schutzpause für Multithreading
+            time.sleep(0.8) 
+            
             tk = yf.Ticker(symbol)
-            info = tk.info
+            try:
+                info = tk.info
+                if not info: return None
+            except:
+                return None 
+
             curr_price = info.get('currentPrice', 0)
             m_cap = info.get('marketCap', 0)
             
@@ -333,11 +340,12 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
             if not (min_stock_price <= curr_price <= max_stock_price): return None
             
             res = get_stock_data_full(symbol)
-            if res[0] is None: return None
+            if res is None or res[0] is None: return None
             price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
             
             if only_uptrend and not uptrend: return None
 
+            # Earnings-Logik
             max_days_allowed = 24
             if earn and "." in earn:
                 try:
@@ -383,38 +391,41 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
                         'analyst_txt': analyst_txt, 'analyst_col': analyst_col,
                         'mkt_cap': m_cap / 1_000_000_000
                     }
-        except: return None
+        except Exception as e:
+            if "429" in str(e): time.sleep(2)
+            return None
         return None
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+    # Reduzierte workers (von 10 auf 5) für Stabilität
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
         
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
             current_ticker = futures[future] 
-            res_data = future.result()
-            if res_data:
-                all_results.append(res_data)
+            try:
+                res_data = future.result()
+                if res_data:
+                    all_results.append(res_data)
+            except: pass
             
             progress_bar.progress((i + 1) / len(ticker_liste))
-            if i % 5 == 0:
-                status_text.text(f"Analysiere {i}/{len(ticker_liste)}: {current_ticker}...")
+            if i % 3 == 0:
+                status_text.text(f"Scanne {i}/{len(ticker_liste)}: {current_ticker}...")
 
     status_text.empty()
     progress_bar.empty()
 
-    # Sortierung und Speicherung im Session State
     if all_results:
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
     else:
         st.session_state.profi_scan_results = []
-        st.warning("Keine Treffer gefunden.")
+        st.warning("Keine Treffer gefunden oder Yahoo blockiert.")
 
-# --- RESULTATE ANZEIGEN (Außerhalb des Buttons, damit sie stehen bleiben) ---
+# --- RESULTATE ANZEIGEN (STREICHT DIE ERGEBNISSE IN KARTEN) ---
 if st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
     st.markdown(f"### 🎯 Top-Setups ({len(all_results)} Treffer)")
     
-    # Optional: Button zum Löschen der Ergebnisse
     if st.button("Ergebnisse löschen"):
         st.session_state.profi_scan_results = []
         st.rerun()
@@ -723,6 +734,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
