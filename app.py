@@ -397,15 +397,15 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 if y_pa >= p_min_yield:
                     analyst_txt, analyst_col = get_analyst_conviction(info)
                     
-                    # Sterne-Rating Logik
-                    stars = 0
-                    if "HYPER" in analyst_txt: stars = 3
-                    elif "Stark" in analyst_txt: stars = 2
-                    elif "Neutral" in analyst_txt: stars = 1
+                    # --- STERNE-LOGIK FÜR DIE SORTIERUNG ---
+                    # Wir berechnen erst die nackte Zahl
+                    s_val = 0.0
+                    if "HYPER" in analyst_txt: s_val = 3.0
+                    elif "Stark" in analyst_txt: s_val = 2.0
+                    elif "Neutral" in analyst_txt: s_val = 1.0
                     
-                    if rsi < 35: stars += 0.5 # Bonus für "Oversold"
-                    if uptrend: stars += 0.5  # Bonus für Trend-Bestätigung
-                    stars = max(0, float(stars))
+                    if rsi < 35: s_val += 0.5   # Dip-Bonus
+                    if uptrend: s_val += 0.5    # Trend-Bonus
 
                     return {
                         'symbol': symbol, 
@@ -419,8 +419,8 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                         'earn': earn if earn else "n.a.", 
                         'tage': days, 
                         'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                        'stars_val': stars, 
-                        'stars_str': "⭐" * int(stars) if stars >= 1 else "⚠️",
+                        'stars_val': s_val,  # <--- DIE ZAHL FÜR DIE SORTIERUNG
+                        'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️",
                         'analyst_txt': analyst_txt, 
                         'analyst_col': analyst_col, 
                         'mkt_cap': m_cap / 1_000_000_000
@@ -444,22 +444,14 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     status_text.empty()
     progress_bar.empty()
 
-    # --- HIERARCHISCHE SORTIERUNG: QUALITÄT VOR RENDITE ---
+    # --- HIERARCHISCHE SORTIERUNG ---
     if all_results:
-        try:
-            # Wir stellen sicher, dass Sterne und Yield Zahlen sind (Fallback 0)
-            st.session_state.profi_scan_results = sorted(
-                all_results, 
-                key=lambda x: (float(x.get('stars_val', 0)), float(x.get('y_pa', 0))),
-                reverse=True
-            )
-        except Exception as e:
-            # Falls ein Datentyp-Fehler auftritt, sortieren wir nur nach Yield
-            st.session_state.profi_scan_results = sorted(
-                all_results, key=lambda x: x.get('y_pa', 0), reverse=True
-            )
+        # Sortiert erst nach Sternen (hoch nach niedrig), dann nach Rendite (hoch nach niedrig)
+        all_results.sort(key=lambda x: (x.get('stars_val', 0), x.get('y_pa', 0)), reverse=True)
+        st.session_state.profi_scan_results = all_results
     else:
         st.session_state.profi_scan_results = []
+        st.warning("Keine Treffer gefunden.")
 
 # --- RESULTATE ANZEIGEN (KARTEN-LAYOUT) ---
 if st.session_state.profi_scan_results:
@@ -769,4 +761,5 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
