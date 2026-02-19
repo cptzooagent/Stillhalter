@@ -430,7 +430,7 @@ if st.button("🚀 Profi-Scan starten (Stabil)", key="kombi_scan_pro"):
         st.session_state.profi_scan_results = []
         st.warning("Keine Treffer gefunden oder Yahoo blockiert.")
 
-# --- RESULTATE ANZEIGEN (STREICHT DIE ERGEBNISSE IN KARTEN) ---
+# --- RESULTATE ANZEIGEN (MIT SPREAD-ANZEIGE) ---
 if st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
     st.markdown(f"### 🎯 Top-Setups ({len(all_results)} Treffer)")
@@ -442,22 +442,36 @@ if st.session_state.profi_scan_results:
     cols = st.columns(4)
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
+            # Farben definieren
             s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
             border_color = res['analyst_col'] if res['stars_val'] >= 2 else "#e0e0e0"
             rsi_col = "#e74c3c" if res['rsi'] > 70 or res['rsi'] < 30 else "#7f8c8d"
             
+            # Warnfarbe für hohen Spread (über 20% wird es kritisch)
+            spread_color = "#e67e22" if res['spread'] > 20 else "#7f8c8d"
+            
             with st.container(border=True):
+                # Header mit Symbol und Status
                 st.markdown(f"**{res['symbol']}** {res['stars_str']} <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
+                
+                # Haupt-Metrik (Yield p.a.)
                 st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
                 
+                # Mittlerer Info-Block (Preise & Puffer)
                 st.markdown(f"""
                     <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 2px solid {border_color}; margin-bottom: 8px; font-size: 0.85em;">
-                        🎯 Strike: <b>{res['strike']:.1f}$</b> | 💰 Bid: <b>{res['bid']:.2f}$</b><br>
+                        🎯 Strike: <b>{res['strike']:.1f}$</b> | 💰 Mid: <b>{res['bid']:.2f}$</b><br>
                         🛡️ Puffer: <b>{res['puffer']:.1f}%</b> | ⏳ Tage: <b>{res['tage']}</b>
                     </div>
+                    
                     <div style="font-size: 0.8em; color: #7f8c8d; margin-bottom: 5px;">
-                        📅 ER: <b>{res['earn']}</b> | RSI: <b style="color:{rsi_col};">{int(res['rsi'])}</b>
+                        📅 ER: <b>{res['earn']}</b> | 🏁 Spread: <b style="color:{spread_color};">{res['spread']:.1f}%</b>
                     </div>
+                    
+                    <div style="font-size: 0.8em; color: #7f8c8d; margin-bottom: 10px;">
+                        📊 RSI: <b style="color:{rsi_col};">{int(res['rsi'])}</b> | 🏛️ MC: <b>{res['mkt_cap']:.1f}B</b>
+                    </div>
+                    
                     <div style="font-size: 0.85em; border-left: 4px solid {res['analyst_col']}; padding: 4px 8px; font-weight: bold; color: {res['analyst_col']}; background: {res['analyst_col']}10; border-radius: 0 4px 4px 0;">
                         {res['analyst_txt']}
                     </div>
@@ -743,6 +757,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
