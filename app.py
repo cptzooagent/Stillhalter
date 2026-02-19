@@ -421,14 +421,18 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
 
         # --- HIERARCHISCHE SORTIERUNG: QUALITÄT VOR RENDITE ---
         if all_results:
-            # Wir sortieren nach zwei Kriterien gleichzeitig:
-            # 1. 'stars_val' (absteigend, also 3 -> 2 -> 1)
-            # 2. 'y_pa' (absteigend innerhalb der Sternegruppen)
-            st.session_state.profi_scan_results = sorted(
-                all_results, 
-                key=lambda x: (x['stars_val'], x['y_pa']), 
-                reverse=True
-            )
+            try:
+                # Wir stellen sicher, dass Sterne und Yield Zahlen sind (Fallback 0)
+                st.session_state.profi_scan_results = sorted(
+                    all_results, 
+                    key=lambda x: (float(x.get('stars_val', 0)), float(x.get('y_pa', 0))),
+                    reverse=True
+                )
+            except Exception as e:
+                # Falls ein Datentyp-Fehler auftritt, sortieren wir nur nach Yield
+                st.session_state.profi_scan_results = sorted(
+                    all_results, key=lambda x: x.get('y_pa', 0), reverse=True
+                )
         else:
             st.session_state.profi_scan_results = []
             
@@ -740,6 +744,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
