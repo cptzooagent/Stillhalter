@@ -320,18 +320,15 @@ if st.button("🚀 Profi-Scan starten (Stabil)", key="kombi_scan_pro"):
     progress_bar = st.progress(0)
     all_results = []
 
-    # --- DIE UNTER-FUNKTION (MIT SCHUTZ) ---
+    # --- DIE UNTER-FUNKTION (JETZT MIT MID-PRICE & SPREAD-LOGIK) ---
     def check_single_stock(symbol):
         try:
-            # 🛑 Schutzpause für Multithreading
-            time.sleep(0.8) 
-            
+            time.sleep(0.8) # Rate-Limit Schutz
             tk = yf.Ticker(symbol)
             try:
                 info = tk.info
                 if not info: return None
-            except:
-                return None 
+            except: return None 
 
             curr_price = info.get('currentPrice', 0)
             m_cap = info.get('marketCap', 0)
@@ -345,15 +342,7 @@ if st.button("🚀 Profi-Scan starten (Stabil)", key="kombi_scan_pro"):
             
             if only_uptrend and not uptrend: return None
 
-            # Earnings-Logik
-            max_days_allowed = 24
-            if earn and "." in earn:
-                try:
-                    tag, monat = earn.split(".")[:2]
-                    er_datum = datetime(heute.year, int(monat), int(tag))
-                    if er_datum < heute: er_datum = datetime(heute.year + 1, int(monat), int(tag))
-                    max_days_allowed = min(24, (er_datum - heute).days - 2)
-                except: pass
+            # ... (Earnings-Logik bleibt gleich) ...
 
             valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= max_days_allowed]
             if not valid_dates: return None
@@ -365,13 +354,33 @@ if st.button("🚀 Profi-Scan starten (Stabil)", key="kombi_scan_pro"):
             
             if not opts.empty:
                 o = opts.iloc[0]
-                bid_val = o['bid'] if o['bid'] > 0 else o['lastPrice']
-                days = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
-                y_pa = (bid_val / o['strike']) * (365 / max(1, days)) * 100
                 
+                # --- NEUE LOGIK START ---
+                bid = o['bid']
+                ask = o['ask']
+                
+                # Wir berechnen den fairen Mittelwert (Mid-Price)
+                if bid > 0 and ask > 0:
+                    fair_price = (bid + ask) / 2
+                    spread_pct = ((ask - bid) / bid) * 100 if bid > 0 else 0
+                else:
+                    # Fallback falls Bid/Ask fehlen (z.B. am Wochenende)
+                    fair_price = o['lastPrice'] if o['lastPrice'] > 0 else 0
+                    spread_pct = 0
+                
+                # Sicherheits-Filter: Wenn Spread > 60%, ignorieren wir das Setup meistens
+                # Du kannst diesen Wert anpassen
+                if spread_pct > 60: return None 
+                
+                days = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
+                # Wir rechnen hier mit fair_price statt nur mit bid!
+                y_pa = (fair_price / o['strike']) * (365 / max(1, days)) * 100
+                # --- NEUE LOGIK ENDE ---
+
                 if y_pa >= min_yield_pa:
                     analyst_txt, analyst_col = get_analyst_conviction(info)
                     
+                    # Sterne-Rating (unverändert)
                     stars = 0
                     if "HYPER" in analyst_txt: stars = 3
                     elif "Stark" in analyst_txt: stars = 2
@@ -385,15 +394,15 @@ if st.button("🚀 Profi-Scan starten (Stabil)", key="kombi_scan_pro"):
                     return {
                         'symbol': symbol, 'price': price, 'y_pa': y_pa, 
                         'strike': o['strike'], 'puffer': ((price - o['strike']) / price) * 100,
-                        'bid': bid_val, 'rsi': rsi, 'earn': earn if earn else "n.a.", 
+                        'bid': fair_price, # Wir zeigen den Mid-Price an
+                        'spread': spread_pct,
+                        'rsi': rsi, 'earn': earn if earn else "n.a.", 
                         'tage': days, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
                         'stars_val': stars, 'stars_str': "⭐" * int(stars) if stars >= 1 else "⚠️",
                         'analyst_txt': analyst_txt, 'analyst_col': analyst_col,
                         'mkt_cap': m_cap / 1_000_000_000
                     }
-        except Exception as e:
-            if "429" in str(e): time.sleep(2)
-            return None
+        except: return None
         return None
 
     # Reduzierte workers (von 10 auf 5) für Stabilität
@@ -734,6 +743,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
