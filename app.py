@@ -443,23 +443,24 @@ if st.session_state.profi_scan_results:
                     </div>
                 """, unsafe_allow_html=True)
                     
-# --- SEKTION 2: DEPOT-MANAGER (KOMPLETT-VERSION OHNE SCROLLEN) ---
+# --- SEKTION 2: DEPOT-MANAGER (DER "SICHERE" CODE GEGEN RATE-LIMITS) ---
 st.markdown("---")
 st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
-# 1. Speicher-Logik initialisieren
+# 1. Speicher initialisieren, damit nicht bei jedem Klick neu geladen wird
 if 'depot_data_cache' not in st.session_state:
     st.session_state.depot_data_cache = None
 
 col_header, col_btn = st.columns([3, 1])
 with col_btn:
+    # Nur dieser Button löscht den Speicher und erzwingt neue Daten
     if st.button("🔄 Depot-Werte aktualisieren", use_container_width=True):
         st.session_state.depot_data_cache = None
         st.rerun()
 
-# 2. Daten verarbeiten (Nur wenn Cache leer ist)
+# 2. Daten verarbeiten (Nur wenn der Cache leer ist)
 if st.session_state.depot_data_cache is None:
-    with st.spinner("📦 Depot-Daten werden geladen..."):
+    with st.spinner("📦 Analysiere Depot (Rate-Limit Schutz aktiv)..."):
         my_assets = {
             "LRCX": [100, 210], "MU": [100, 390], "AFRM": [100, 76.00], "ELF": [100, 109.00], "ETSY": [100, 67.00],
             "GTLB": [100, 41.00], "GTM": [100, 17.00], "HIMS": [100, 36.00],
@@ -470,19 +471,21 @@ if st.session_state.depot_data_cache is None:
         depot_list = []
         for symbol, data in my_assets.items():
             try:
-                res = get_stock_data_full(symbol)
-                if res[0] is None: continue
+                # 🛑 WICHTIG: 0.6 Sekunden Pause zwischen jeder Aktie, damit Yahoo nicht blockt
+                time.sleep(0.6) 
                 
-                # Daten entpacken (8 Werte)
+                res = get_stock_data_full(symbol)
+                if res is None or res[0] is None: continue
+                
+                # Daten entpacken
                 price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
                 qty, entry = data[0], data[1]
                 perf_pct = ((price - entry) / entry) * 100
 
-                # KI-Stimmung
+                # KI & Sterne
                 ki_status, _, _ = get_openclaw_analysis(symbol)
                 ki_icon = "🟢" if ki_status == "Bullish" else "🔴" if ki_status == "Bearish" else "🟡"
-
-                # Sterne-Rating
+                
                 try:
                     info_temp = yf.Ticker(symbol).info
                     analyst_txt_temp, _ = get_analyst_conviction(info_temp)
@@ -491,26 +494,23 @@ if st.session_state.depot_data_cache is None:
                 except:
                     star_display = "⭐"
 
-                # Pivot-Werte extrahieren
+                # Pivots
                 s2_d = pivots.get('S2') if pivots else None
                 s2_w = pivots.get('W_S2') if pivots else None
                 r2_d = pivots.get('R2') if pivots else None
                 r2_w = pivots.get('W_R2') if pivots else None
                 
-                # Signal-Logik
+                # Signale
                 put_action = "⏳ Warten"
-                if rsi < 35 or (s2_d and price <= s2_d * 1.02):
-                    put_action = "🟢 JETZT (S2/RSI)"
-                if s2_w and price <= s2_w * 1.01:
-                    put_action = "🔥 EXTREM (Weekly S2)"
+                if rsi < 35 or (s2_d and price <= s2_d * 1.02): put_action = "🟢 JETZT (S2/RSI)"
+                if s2_w and price <= s2_w * 1.01: put_action = "🔥 EXTREM (Weekly S2)"
                 
                 call_action = "⏳ Warten"
-                if rsi > 55 and r2_d and price >= r2_d * 0.98:
-                    call_action = "🟢 JETZT (R2/RSI)"
+                if rsi > 55 and r2_d and price >= r2_d * 0.98: call_action = "🟢 JETZT (R2/RSI)"
 
                 depot_list.append({
                     "Ticker": f"{symbol} {star_display}",
-                    "Earnings": earn if earn else "---", # <--- HIER SIND SIE WIEDER
+                    "Earnings": earn if earn else "---",
                     "Einstand": f"{entry:.2f} $",
                     "Aktuell": f"{price:.2f} $",
                     "P/L %": f"{perf_pct:+.1f}%",
@@ -523,15 +523,14 @@ if st.session_state.depot_data_cache is None:
                     "R2 Daily": f"{r2_d:.2f} $" if r2_d else "---",
                     "R2 Weekly": f"{r2_w:.2f} $" if r2_w else "---" 
                 })
-            except: continue
+            except Exception:
+                continue
+        
         st.session_state.depot_data_cache = depot_list
 
-# 3. Anzeige (Statische Tabelle = Kein Scrollen möglich)
+# 3. Anzeige als Tabelle (Immer volle Länge, kein Scrollen)
 if st.session_state.depot_data_cache:
-    df_output = pd.DataFrame(st.session_state.depot_data_cache)
-    st.table(df_output)
-
-st.info("💡 **Strategie:** Wenn 'Short Put' auf 🔥 steht, ist die Aktie am wöchentlichen S2 – technisch das sicherste Level zum Verbilligen.")
+    st.table(pd.DataFrame(st.session_state.depot_data_cache))
                     
 # --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
@@ -724,6 +723,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
