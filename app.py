@@ -323,87 +323,112 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         progress_bar = st.progress(0)
         all_results = []
 
-        # --- S&P 500 MASSEN-SCAN UNTERFUNKTION ---
+        # --- DIE OPTIMIERTE UNTER-FUNKTION (BLITZ-FILTER EDITION) ---
         def check_single_stock(symbol):
             try:
-                # 1. Kleiner Schutz-Delay (bei 500 Tickers sehr wichtig!)
-                time.sleep(0.3) 
+                # Kleiner Delay zur Schonung der API
+                time.sleep(0.4) 
                 tk = yf.Ticker(symbol)
                 
-                # 2. SOFORTIGER CHECK (Market Cap & Preis)
-                # Wir holen NUR die info, um 80% der Aktien sofort auszusortieren
+                # SCHRITT 1: BLITZ-FILTER (Market Cap & Preis)
+                # Wir holen nur die Info, um zu sehen, ob sich die Analyse überhaupt lohnt
                 info = tk.info
-                if not info: return None
+                if not info or 'currentPrice' not in info:
+                    return None
                 
                 m_cap = info.get('marketCap', 0)
-                if m_cap < p_min_cap: 
-                    return None # Wenn < 50 Mrd., stoppen wir hier sofort!
+                price = info.get('currentPrice', 0)
 
-                curr_price = info.get('currentPrice', 0)
-                if not (min_stock_price <= curr_price <= max_stock_price):
+                # Abbruch, wenn Market Cap zu klein
+                if m_cap < p_min_cap:
+                    return None
+                
+                # Abbruch, wenn Preis außerhalb deiner Range
+                if not (min_stock_price <= price <= max_stock_price):
                     return None
 
-                # 3. BASIS-DATEN (RSI, TREND)
-                # Erst jetzt, wo wir wissen, dass die Firma groß genug ist, laden wir mehr
+                # SCHRITT 2: TECHNISCHE ANALYSE (RSI, Trends, Pivots)
+                # Erst jetzt rufen wir die schwere Funktion auf
                 res = get_stock_data_full(symbol)
-                if res is None or res[0] is None: return None
+                if res is None or res[0] is None:
+                    return None
                 
-                price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+                # Daten entpacken
+                # price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+                _, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
                 
-                if only_uptrend and not uptrend: return None
+                # Trend-Filter (falls aktiviert)
+                if only_uptrend and not uptrend:
+                    return None
 
-                # 4. OPTIONS-CHECK
-                # Suche passende Laufzeit (10-30 Tage)
+                # SCHRITT 3: OPTIONS-ANALYSE
+                # Wir suchen das passende Datum (10-30 Tage)
                 valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 30]
-                if not valid_dates: return None
+                if not valid_dates:
+                    return None
                 
                 target_date = valid_dates[0]
                 chain = tk.option_chain(target_date).puts
                 
-                # Strike-Berechnung
+                # Strike-Berechnung mit deinem Puffer
                 target_strike = price * (1 - p_puffer)
                 opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
                 
-                if opts.empty: return None
+                if opts.empty:
+                    return None
 
+                # Besten passenden Put auswählen
                 o = opts.iloc[0]
                 bid, ask = o['bid'], o['ask']
                 
-                # Fairen Preis ermitteln (Mid-Price)
+                # Mid-Price Berechnung für realistische Rendite
                 fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o['lastPrice']
                 spread_pct = ((ask - bid) / bid) * 100 if bid > 0 else 0
                 
-                if spread_pct > 60: return None 
+                # Sicherheits-Check: Spread zu groß?
+                if spread_pct > 60:
+                    return None 
                 
-                # Rendite berechnen
+                # Rendite-Rechnung (Yield p.a.)
                 days = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 y_pa = (fair_price / o['strike']) * (365 / max(1, days)) * 100
                 
-                # 5. FINALER FILTER & RATING
+                # SCHRITT 4: FINALE QUALIFIKATION
                 if y_pa >= p_min_yield:
                     analyst_txt, analyst_col = get_analyst_conviction(info)
                     
-                    # Sterne-Rating
+                    # Sterne-Rating Logik
                     stars = 0
                     if "HYPER" in analyst_txt: stars = 3
                     elif "Stark" in analyst_txt: stars = 2
                     elif "Neutral" in analyst_txt: stars = 1
                     
-                    if rsi < 35: stars += 0.5 
-                    if uptrend: stars += 0.5
-                    
+                    if rsi < 35: stars += 0.5 # Bonus für "Oversold"
+                    if uptrend: stars += 0.5  # Bonus für Trend-Bestätigung
+                    stars = max(0, float(stars))
+
                     return {
-                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
-                        'puffer': ((price - o['strike']) / price) * 100, 'bid': fair_price,
-                        'spread': spread_pct, 'rsi': rsi, 'earn': earn if earn else "n.a.", 
-                        'tage': days, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                        'stars_val': stars, 'stars_str': "⭐" * int(stars) if stars >= 1 else "⚠️",
-                        'analyst_txt': analyst_txt, 'analyst_col': analyst_col, 'mkt_cap': m_cap / 1e9
+                        'symbol': symbol, 
+                        'price': price, 
+                        'y_pa': y_pa, 
+                        'strike': o['strike'], 
+                        'puffer': ((price - o['strike']) / price) * 100, 
+                        'bid': fair_price,
+                        'spread': spread_pct, 
+                        'rsi': rsi, 
+                        'earn': earn if earn else "n.a.", 
+                        'tage': days, 
+                        'status': "🛡️ Trend" if uptrend else "💎 Dip",
+                        'stars_val': stars, 
+                        'stars_str': "⭐" * int(stars) if stars >= 1 else "⚠️",
+                        'analyst_txt': analyst_txt, 
+                        'analyst_col': analyst_col, 
+                        'mkt_cap': m_cap / 1_000_000_000
                     }
             except Exception:
-                return None
+                return None # Fehlerhafte Ticker lautlos überspringen
             return None
-            
+
         # Multithreading Start
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
@@ -419,23 +444,23 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     status_text.empty()
     progress_bar.empty()
 
-        # --- HIERARCHISCHE SORTIERUNG: QUALITÄT VOR RENDITE ---
-        if all_results:
-            try:
-                # Wir stellen sicher, dass Sterne und Yield Zahlen sind (Fallback 0)
-                st.session_state.profi_scan_results = sorted(
-                    all_results, 
-                    key=lambda x: (float(x.get('stars_val', 0)), float(x.get('y_pa', 0))),
-                    reverse=True
-                )
-            except Exception as e:
-                # Falls ein Datentyp-Fehler auftritt, sortieren wir nur nach Yield
-                st.session_state.profi_scan_results = sorted(
-                    all_results, key=lambda x: x.get('y_pa', 0), reverse=True
-                )
-        else:
-            st.session_state.profi_scan_results = []
-            
+    # --- HIERARCHISCHE SORTIERUNG: QUALITÄT VOR RENDITE ---
+    if all_results:
+        try:
+            # Wir stellen sicher, dass Sterne und Yield Zahlen sind (Fallback 0)
+            st.session_state.profi_scan_results = sorted(
+                all_results, 
+                key=lambda x: (float(x.get('stars_val', 0)), float(x.get('y_pa', 0))),
+                reverse=True
+            )
+        except Exception as e:
+            # Falls ein Datentyp-Fehler auftritt, sortieren wir nur nach Yield
+            st.session_state.profi_scan_results = sorted(
+                all_results, key=lambda x: x.get('y_pa', 0), reverse=True
+            )
+    else:
+        st.session_state.profi_scan_results = []
+
 # --- RESULTATE ANZEIGEN (KARTEN-LAYOUT) ---
 if st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
@@ -744,18 +769,4 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
