@@ -457,38 +457,26 @@ if st.session_state.profi_scan_results:
     
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
-            # --- EARNINGS RISK CHECK ---
+            # Earnings-Risk Logik
             is_earning_risk = False
             earn_str = res.get('earn', "---")
             if earn_str and earn_str != "---":
                 try:
-                    # Annahme Jahr 2026 für den Vergleich
                     earn_date = datetime.strptime(f"{earn_str}2026", "%d.%m.%Y")
                     if 0 <= (earn_date - heute_dt).days <= res['tage']:
                         is_earning_risk = True
                 except: pass
 
-            # --- DYNAMISCHE FARBEN & STYLES ---
             s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-            
-            # Delta-Farbe
             d_val = abs(res.get('delta', 0))
             delta_col = "#e74c3c" if d_val > 0.30 else "#f39c12" if d_val > 0.20 else "#27ae60"
-            
-            # RSI-Logik (Grün < 35, Rot > 70)
-            rsi_val_int = int(res['rsi'])
-            if rsi_val_int >= 70:
-                rsi_col = "#e74c3c"  # Gefährlich hoch (Rot)
-                rsi_weight = "800"
-            elif rsi_val_int <= 35:
-                rsi_col = "#27ae60"  # Attraktiv niedrig (Grün)
-                rsi_weight = "800"
-            else:
-                rsi_col = "#6c757d"  # Neutral (Grau)
-                rsi_weight = "normal"
 
-            # --- HTML RENDERING ---
-            # WICHTIG: Das st.markdown muss den gesamten Block umschließen!
+            # RSI Styling
+            rsi_val_int = int(res['rsi'])
+            rsi_col = "#e74c3c" if rsi_val_int >= 70 else "#27ae60" if rsi_val_int <= 35 else "#6c757d"
+            rsi_weight = "800" if (rsi_val_int >= 70 or rsi_val_int <= 35) else "normal"
+
+            # DAS IST DER WICHTIGE TEIL:
             st.markdown(f"""
             <div style="background-color: {'#fff5f5' if is_earning_risk else '#ffffff'}; 
                         border: {'2px solid #e74c3c' if is_earning_risk else '1px solid #e0e0e0'}; 
@@ -506,7 +494,7 @@ if st.session_state.profi_scan_results:
                 </div>
                 
                 <div style="text-align: center; padding: 10px 0; background: #f8f9fa; border-radius: 10px; margin-bottom: 15px;">
-                    <div style="font-size: 0.7em; color: #6c757d; text-transform: uppercase; letter-spacing: 1px;">Yield p.a.</div>
+                    <div style="font-size: 0.7em; color: #6c757d; text-transform: uppercase;">Yield p.a.</div>
                     <div style="font-size: 1.8em; font-weight: 900; color: #1a1a1a;">{res['y_pa']:.1f}%</div>
                 </div>
                 
@@ -519,17 +507,15 @@ if st.session_state.profi_scan_results:
                 
                 <div style="font-size: 0.8em; border-top: 1px solid #eee; padding-top: 10px; display: flex; justify-content: space-between; align-items: center; color: #6c757d;">
                     <span>⏳ <b>{res['tage']}d</b></span>
-                    
                     <span style="color: {rsi_col}; font-weight: {rsi_weight}; background: {rsi_col}10; padding: 2px 6px; border-radius: 4px;">
                         RSI: <span style="font-size: 1.2em;">{rsi_val_int}</span>
                     </span>
-
                     <span style="color: {'#e74c3c' if is_earning_risk else '#6c757d'}; font-weight: bold;">
-                        {'⚠️ ' if is_earning_risk else '📅 '} {earn_str}
+                        {'⚠️' if is_earning_risk else '📅'} {earn_str}
                     </span>
                 </div>
             </div>
-            """, unsafe_allow_html=True) # <-- DAS HIER IST DER ENTSCHEIDENDE TEIL
+            """, unsafe_allow_html=True)
 
 else:
     st.info("Bisher keine Ergebnisse. Bitte klicke auf '🚀 Profi-Scan starten'.")
@@ -812,6 +798,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
