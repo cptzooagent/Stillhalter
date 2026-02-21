@@ -459,7 +459,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     else:
         st.session_state.profi_scan_results = []
 
-# --- RESULTATE ANZEIGEN (MIT EARNINGS-WARNUNG) ---
+# --- RESULTATE ANZEIGEN (HIGH-LEVEL KARTEN-LAYOUT) ---
 if st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
     st.markdown(f"### 🎯 Top-Setups ({len(all_results)} Treffer)")
@@ -467,60 +467,62 @@ if st.session_state.profi_scan_results:
     cols = st.columns(4)
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
-            # 1. EARNINGS-CHECK LOGIK
-            # Wir prüfen: Sind Earnings bekannt und liegen sie in der Zukunft?
+            # 1. EARNINGS-LOGIK (Vergleich Laufzeit vs. ER-Datum)
             is_earning_risk = False
             earn_str = res.get('earn', "---")
             
-            # Einfache Heuristik: Wenn ein Datum da ist, markieren wir es als Risiko 
-            # (In einer Profi-Version vergleicht man das Datum mit heute + res['tage'])
-            if earn_str != "---" and earn_str is not None:
+            # Risiko-Markierung: Wenn ER-Datum existiert (wie in Bild 4.png & 3.png)
+            if earn_str and earn_str != "---":
                 is_earning_risk = True 
 
             # 2. FARB-DEFINITIONEN
             s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-            # Roter Rahmen bei Earnings-Risiko, sonst Standard
-            border_style = "2px solid #e74c3c" if is_earning_risk else "1px solid #f0f0f0"
-            bg_color = "#fff5f5" if is_earning_risk else "#ffffff"
+            rsi_col = "#e74c3c" if res['rsi'] > 70 or res['rsi'] < 30 else "#2ecc71"
             
-            # Delta-Farbe
+            # Rahmen-Styling basierend auf Risiko (Bild 4.png Effekt)
+            border_style = "2px solid #e74c3c" if is_earning_risk else "1px solid #e0e0e0"
+            bg_card = "#fff5f5" if is_earning_risk else "#ffffff"
+            
+            # Delta-Farbe (Sicherheits-Check)
             d_val = abs(res.get('delta', 0))
             delta_col = "#e74c3c" if d_val > 0.30 else "#f39c12" if d_val > 0.20 else "#27ae60"
 
-            with st.container(border=True):
-                # Custom CSS für den Earnings-Alarm Rahmen
+            with st.container(border=False):
+                # HTML Container für volle Kontrolle über das Design
                 st.markdown(f"""
-                    <div style="background-color: {bg_color}; border-radius: 5px; margin: -10px; padding: 10px; border: {border_style};">
-                        
-                        <div style="display: flex; justify-content: space-between; align-items: center;">
-                            <span style="font-size: 1.2em; font-weight: bold;">{res['symbol']}</span>
-                            <span style="color: #f1c40f; font-size: 0.9em;">{res['stars_str']}</span>
-                        </div>
-                        <div style="text-align: right; margin-bottom: 5px;">
-                            <span style="background-color: {s_color}22; color: {s_color}; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; font-weight: bold;">
-                                {res['status']}
-                            </span>
-                        </div>
-
-                        <div style="text-align: center; padding: 10px 0; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px;">
-                            <div style="font-size: 0.8em; color: #7f8c8d;">Yield p.a.</div>
-                            <div style="font-size: 1.8em; font-weight: 800;">{res['y_pa']:.1f}%</div>
-                        </div>
-
-                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.85em; margin-bottom: 10px;">
-                            <div style="border-left: 3px solid #8e44ad; padding-left: 5px;">🎯 Strike<br><b>{res['strike']:.1f}$</b></div>
-                            <div style="border-left: 3px solid #f39c12; padding-left: 5px;">💰 Mid<br><b>{res['bid']:.2f}$</b></div>
-                            <div style="border-left: 3px solid #3498db; padding-left: 5px;">🛡️ Puffer<br><b>{res['puffer']:.1f}%</b></div>
-                            <div style="border-left: 3px solid {delta_col}; padding-left: 5px;">📉 Delta<br><b style="color:{delta_col};">{d_val:.2f}</b></div>
-                        </div>
-
-                        <div style="font-size: 0.75em; border-top: 1px solid #eee; padding-top: 8px; display: flex; justify-content: space-between;">
-                            <span>⏳ <b>{res['tage']}d</b></span>
-                            <span style="color: {'#e74c3c' if is_earning_risk else '#95a5a6'}; font-weight: {'bold' if is_earning_risk else 'normal'};">
-                                {'⚠️ ER: ' if is_earning_risk else '📅 ER: '} {earn_str}
-                            </span>
-                        </div>
+                <div style="background-color: {bg_card}; border: {border_style}; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); position: relative;">
+                    
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                        <span style="font-size: 1.3em; font-weight: 800; color: #2c3e50;">{res['symbol']}</span>
+                        <span style="color: #f1c40f; font-size: 0.9em;">{res['stars_str']}</span>
                     </div>
+                    
+                    <div style="text-align: right; margin-bottom: 12px;">
+                        <span style="background-color: {s_color}15; color: {s_color}; padding: 3px 10px; border-radius: 20px; font-size: 0.7em; font-weight: 700; border: 1px solid {s_color}44; text-transform: uppercase;">
+                            {res['status']}
+                        </span>
+                    </div>
+
+                    <div style="text-align: center; padding: 12px 0; background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); border-radius: 10px; margin-bottom: 15px;">
+                        <div style="font-size: 0.75em; color: #6c757d; text-transform: uppercase; letter-spacing: 1.2px; font-weight: 600;">Yield p.a.</div>
+                        <div style="font-size: 2em; font-weight: 900; color: #1a1a1a;">{res['y_pa']:.1f}%</div>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.85em; margin-bottom: 15px;">
+                        <div style="border-left: 3px solid #8e44ad; padding-left: 8px;">🎯 Strike<br><b>{res['strike']:.1f}$</b></div>
+                        <div style="border-left: 3px solid #f39c12; padding-left: 8px;">💰 Mid<br><b>{res['bid']:.2f}$</b></div>
+                        <div style="border-left: 3px solid #3498db; padding-left: 8px;">🛡️ Puffer<br><b>{res['puffer']:.1f}%</b></div>
+                        <div style="border-left: 3px solid {delta_col}; padding-left: 8px;">📉 Delta<br><b style="color:{delta_col};">{d_val:.2f}</b></div>
+                    </div>
+
+                    <div style="font-size: 0.75em; border-top: 1px solid #eee; padding-top: 10px; display: flex; justify-content: space-between; align-items: center; color: #6c757d;">
+                        <span>⏳ <b>{res['tage']}d</b></span>
+                        <span style="color: {rsi_col}; font-weight: 600;">📊 RSI: {int(res['rsi'])}</span>
+                        <span style="color: {'#e74c3c' if is_earning_risk else '#6c757d'}; font-weight: {'bold' if is_earning_risk else 'normal'};">
+                            {'⚠️ ER: ' if is_earning_risk else '📅 ER: '} {earn_str}
+                        </span>
+                    </div>
+                </div>
                 """, unsafe_allow_html=True)
                     
 # --- SEKTION 2: DEPOT-MANAGER (MIT PIVOT-PUNKTEN) ---
@@ -801,6 +803,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
