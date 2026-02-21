@@ -331,44 +331,159 @@ def get_analyst_conviction(info):
 
 
 
-# --- PROFI-SCANNER MIT AKTIVEM BUTTON-HANDLER ---
+# --- SEKTION 1: PROFI-SCANNER (STABILE GESAMT-EDITION) ---
 
-# 1. Initialisierung (Falls noch nicht geschehen)
-if 'setups' not in st.session_state:
-    st.session_state.setups = []
+# 1. Speicher initialisieren
+if 'profi_scan_results' not in st.session_state:
+    st.session_state.profi_scan_results = []
 
-# 2. Der Button und die eigentliche Berechnung
-if st.button("🚀 Profi-Scan starten"):
-    with st.spinner("Markt wird analysiert..."):
-        # HIER DIE LOGIK: Wir rufen deine Scan-Funktion auf
-        # Ich nenne sie hier beispielhaft 'ausfuehren_profi_scan()'
-        # Ersetze diesen Namen durch deine tatsächliche Funktion!
-        try:
-            # Diese Zeile ist der Motor:
-            ergebnisse = ausfuehren_profi_scan() 
-            
-            # Speichern im Session State, damit die Karten unten erscheinen
-            st.session_state.setups = ergebnisse
-            
-            if not ergebnisse:
-                st.warning("Scan abgeschlossen, aber keine Treffer gefunden.")
-            else:
-                st.success(f"Scan erfolgreich! {len(ergebnisse)} Setups gefunden.")
-                st.rerun() # Seite neu laden, um Ergebnisse sofort anzuzeigen
+if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
+    # Filter-Werte aus den Slidern ziehen
+    p_puffer = otm_puffer_slider / 100 
+    p_min_yield = min_yield_pa
+    p_min_cap = min_mkt_cap * 1_000_000_000
+    heute = datetime.now()
+    
+    with st.spinner("Markt-Scanner analysiert Ticker..."):
+        # Ticker-Liste bestimmen
+        if test_modus:
+            ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"]
+        else:
+            ticker_liste = get_combined_watchlist()
+        
+        status_text = st.empty()
+        progress_bar = st.progress(0)
+        all_results = []
+
+        # --- DIE OPTIMIERTE UNTER-FUNKTION (BLITZ-FILTER EDITION) ---
+        def check_single_stock(symbol):
+            try:
+                time.sleep(0.4) 
+                tk = yf.Ticker(symbol)
+                info = tk.info
+                if not info or 'currentPrice' not in info: return None
+        
+                m_cap = info.get('marketCap', 0)
+                price = info.get('currentPrice', 0)
+        
+                # Filter aus der Sidebar nutzen
+                if m_cap < p_min_cap or not (min_stock_price <= price <= max_stock_price): 
+                    return None
+
+                res = get_stock_data_full(symbol)
+                if res is None or res[0] is None: return None
+                _, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+        
+                if only_uptrend and not uptrend: return None
+
+                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 30]
+                if not valid_dates: return None
+        
+                target_date = valid_dates[0]
+                chain = tk.option_chain(target_date).puts
+                target_strike = price * (1 - p_puffer)
+                opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
+        
+                if opts.empty: return None
+
+                o = opts.iloc[0]
+                bid, ask = o['bid'], o['ask']
+                fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o['lastPrice']
+        
+                # --- DELTA & SENTIMENT INTEGRATION ---
+                days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
+                iv = o.get('impliedVolatility', 0.4)
+                delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv, option_type='put')
+        
+                sent_icon, _ = get_finviz_sentiment(symbol)
+                y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
+        
+                if y_pa >= p_min_yield:
+                    analyst_txt, analyst_col = get_analyst_conviction(info)
+                    s_val = 0.0
+                    if "HYPER" in analyst_txt: s_val = 3.0
+                    elif "Stark" in analyst_txt: s_val = 2.0
+                    if rsi < 35: s_val += 0.5
+                    if uptrend: s_val += 0.5
+
+                    return {
+                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
+                        'puffer': ((price - o['strike']) / price) * 100, 'bid': fair_price,
+                        'rsi': rsi, 'earn': earn if earn else "---", 'tage': days_to_exp, 
+                        'status': "🛡️ Trend" if uptrend else "💎 Dip", 'delta': delta_val,
+                        'sent_icon': sent_icon, 'stars_val': s_val, 
+                        'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️"
+                    }
+            except: return None
+
+        # Multithreading Start
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
+            for i, future in enumerate(concurrent.futures.as_completed(futures)):
+                res_data = future.result()
+                if res_data:
+                    all_results.append(res_data)
                 
-        except Exception as e:
-            st.error(f"Ein technischer Fehler ist aufgetreten: {e}")
+                progress_bar.progress((i + 1) / len(ticker_liste))
+                if i % 5 == 0:
+                    status_text.text(f"Checke {i}/{len(ticker_liste)} Ticker...")
 
-# 3. DIE ANZEIGE (Wird nur ausgeführt, wenn Treffer in setups sind)
-setups = st.session_state.setups
+        # WICHTIG: Diese Zeilen müssen EINE Ebene weiter links stehen als das 'futures' oben,
+        # aber immer noch innerhalb des 'if st.button' Blocks!
+        status_text.empty()
+        progress_bar.empty()
 
-st.markdown(f"### 🎯 Top-Setups nach Qualität ({len(setups)} Treffer)")
+        if all_results:
+            st.session_state.profi_scan_results = sorted(
+                all_results, 
+                key=lambda x: (
+                    float(x.get('stars_val', 0) or 0), 
+                    float(x.get('y_pa', 0) or 0)
+                ), 
+                reverse=True
+            )
+            st.success(f"Scan abgeschlossen: {len(all_results)} Treffer gefunden!")
+        else:
+            st.session_state.profi_scan_results = []
+            st.warning("Keine Treffer gefunden. Versuche den Puffer zu senken.")
+            
+# --- RESULTATE ANZEIGEN ---
+if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
+    all_results = st.session_state.profi_scan_results
+    st.subheader(f"🎯 Top-Setups ({len(all_results)} Treffer)")
+    
+    cols = st.columns(4)
+    heute_dt = datetime.now()
 
-if not setups:
-    st.info("Klicke auf den Button oben, um die Analyse zu starten.")
+    for idx, res in enumerate(all_results):
+        with cols[idx % 4]:
+            # Earnings & Style Logik
+            is_earning_risk = False
+            earn_str = res.get('earn', "---")
+            if earn_str and earn_str != "---":
+                try:
+                    earn_date = datetime.strptime(f"{earn_str}2026", "%d.%m.%Y")
+                    if 0 <= (earn_date - heute_dt).days <= res['tage']:
+                        is_earning_risk = True
+                except: pass
+
+            s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
+            d_val = abs(res.get('delta', 0))
+            delta_col = "#e74c3c" if d_val > 0.30 else "#f39c12" if d_val > 0.20 else "#27ae60"
+            rsi_val_int = int(res.get('rsi', 50))
+            rsi_col = "#e74c3c" if rsi_val_int >= 70 else "#27ae60" if rsi_val_int <= 35 else "#6c757d"
+
+            # DIE SICHERE VARIANTE: HTML in einer Zeile ohne extra Einrückungs-Gefahr
+            html_template = f"""<div style="background-color: {'#fff5f5' if is_earning_risk else '#ffffff'}; border: {'2px solid #e74c3c' if is_earning_risk else '1px solid #e0e0e0'}; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif;">
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;"><span style="font-size: 1.3em; font-weight: 800; color: #2c3e50;">{res.get('sent_icon', '⚪')} {res['symbol']}</span><span style="color: #f1c40f; font-size: 1.0em;">{res.get('stars_str', '⭐')}</span></div>
+<div style="text-align: right; margin-bottom: 12px;"><span style="background-color: {s_color}15; color: {s_color}; padding: 3px 10px; border-radius: 20px; font-size: 0.75em; font-weight: 700;">{res['status']}</span></div>
+<div style="text-align: center; padding: 10px 0; background: #f8f9fa; border-radius: 10px; margin-bottom: 15px;"><div style="font-size: 0.7em; color: #6c757d; text-transform: uppercase;">Yield p.a.</div><div style="font-size: 1.8em; font-weight: 900; color: #1a1a1a;">{res['y_pa']:.1f}%</div></div>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.8em; margin-bottom: 15px;"><div style="border-left: 3px solid #8e44ad; padding-left: 8px;">Strike<br><b>{res['strike']:.1f}$</b></div><div style="border-left: 3px solid #f39c12; padding-left: 8px;">Mid<br><b>{res['bid']:.2f}$</b></div><div style="border-left: 3px solid #3498db; padding-left: 8px;">Puffer<br><b>{res['puffer']:.1f}%</b></div><div style="border-left: 3px solid {delta_col}; padding-left: 8px;">Delta<br><b style="color:{delta_col};">{d_val:.2f}</b></div></div>
+<div style="font-size: 0.8em; border-top: 1px solid #eee; padding-top: 10px; display: flex; justify-content: space-between; align-items: center; color: #6c757d;"><span>⏳ <b>{res['tage']}d</b></span><span style="color: {rsi_col}; font-weight: 800; background: {rsi_col}10; padding: 2px 6px; border-radius: 4px;">RSI: <span style="font-size: 1.2em;">{rsi_val_int}</span></span><span style="color: {'#e74c3c' if is_earning_risk else '#6c757d'}; font-weight: bold;">{'⚠️' if is_earning_risk else '📅'} {earn_str}</span></div>
+</div>"""
+            st.markdown(html_template, unsafe_allow_html=True)
 else:
-    # Hier folgt dein HTML-Karten-Design (der Teil ab 'cols = st.columns(3)')
-    # ... (Rest des Codes wie zuvor)
+    st.info("Scanner bereit. Bitte auf '🚀 Profi-Scan starten' klicken.")
                     
 # --- SEKTION 2: DEPOT-MANAGER (MIT PIVOT-PUNKTEN) ---
 st.markdown("---")
@@ -648,7 +763,3 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
-
-
-
-
