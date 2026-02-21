@@ -59,6 +59,31 @@ def calculate_pivots(symbol):
         }
     except:
         return None
+        
+# --- TECHNIK ERWEITERUNG ---
+def get_finviz_sentiment(symbol):
+    """Schnelles News-Sentiment von Finviz ohne KI-Verzögerung."""
+    try:
+        url = f'https://finviz.com/quote.ashx?t={symbol.upper()}'
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        news_table = soup.find(id='news-table')
+        if not news_table:
+            return "⚪", 0.0, "Keine News"
+            
+        headlines = [row.a.get_text() for row in news_table.findAll('tr')[:10]]
+        
+        sia = SentimentIntensityAnalyzer()
+        scores = [sia.polarity_scores(h)['compound'] for h in headlines]
+        avg_score = sum(scores) / len(scores)
+        
+        if avg_score > 0.15: return "🟢", avg_score, headlines[0]
+        if avg_score < -0.15: return "🔴", avg_score, headlines[0]
+        return "🟡", avg_score, headlines[0]
+    except:
+        return "⚪", 0.0, "Service nicht erreichbar"
 
 # --- HIER EINFÜGEN (ca. Zeile 55) ---
 def get_openclaw_analysis(symbol):
@@ -460,44 +485,47 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         st.session_state.profi_scan_results = []
 
 
-# --- RESULTATE ANZEIGEN (PRÄZISER EARNINGS-CHECK) ---
-if st.session_state.profi_scan_results:
-    all_results = st.session_state.profi_scan_results
-    st.markdown(f"### 🎯 Top-Setups ({len(all_results)} Treffer)")
+# --- 2. OPTIMIERTER KARTEN-BLOCK (ERSETZT DEINEN RESULTATE-TEIL) ---
+
+def render_result_cards(results):
+    if not results:
+        return
     
-    # Aktuelles Datum für den Vergleich
+    st.markdown(f"### 🎯 Top-Setups ({len(results)} Treffer)")
     heute = datetime.now()
-    
     cols = st.columns(4)
-    for idx, res in enumerate(all_results):
+    
+    for idx, res in enumerate(results):
         with cols[idx % 4]:
-            # 1. PRÄZISE EARNINGS-LOGIK
+            # --- EARNINGS LOGIK ---
             is_earning_risk = False
             earn_str = res.get('earn', "---")
-            
             if earn_str and earn_str != "---":
                 try:
-                    # Wir wandeln "18.03." in ein Datum im Jahr 2026 um
+                    # Umwandlung von "18.03." zu Datum
                     earn_date = datetime.strptime(f"{earn_str}2026", "%d.%m.%Y")
-                    tage_bis_er = (earn_date - heute).days
-                    
-                    # RISIKO: Wenn Earnings vor oder am Verfallstag (res['tage']) stattfinden
-                    if 0 <= tage_bis_er <= res['tage']:
+                    # Risiko wenn Earnings innerhalb der Optionslaufzeit liegen
+                    if 0 <= (earn_date - heute).days <= res['tage']:
                         is_earning_risk = True
-                except:
-                    # Falls das Format nicht passt (z.B. "N/A"), kein roter Rahmen
-                    is_earning_risk = False
+                except: pass
 
-            # 2. STYLING (Nur rot, wenn is_earning_risk wirklich True ist)
+            # --- SENTIMENT (FINVIZ) ---
+            s_icon, s_val, s_text = get_finviz_sentiment(res['symbol'])
+
+            # --- STYLING ---
             s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
+            rsi_col = "#e74c3c" if res['rsi'] > 70 or res['rsi'] < 30 else "#2ecc71"
             border_style = "2px solid #e74c3c" if is_earning_risk else "1px solid #e0e0e0"
             bg_card = "#fff5f5" if is_earning_risk else "#ffffff"
             
-            # 3. RENDERING (F-String mit korrektem HTML)
+            # Delta Farbe
+            d_val = abs(res.get('delta', 0))
+            delta_col = "#e74c3c" if d_val > 0.30 else "#f39c12" if d_val > 0.20 else "#27ae60"
+
             st.markdown(f"""
             <div style="background-color: {bg_card}; border: {border_style}; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                    <span style="font-size: 1.2em; font-weight: 800; color: #2c3e50;">{res['symbol']}</span>
+                    <span style="font-size: 1.2em; font-weight: 800;">{s_icon} {res['symbol']}</span>
                     <span style="color: #f1c40f; font-size: 0.9em;">{res.get('stars_str', '⭐')}</span>
                 </div>
                 <div style="text-align: right; margin-bottom: 12px;">
@@ -507,17 +535,17 @@ if st.session_state.profi_scan_results:
                 </div>
                 <div style="text-align: center; padding: 12px 0; background: #f8f9fa; border-radius: 10px; margin-bottom: 15px;">
                     <div style="font-size: 0.75em; color: #6c757d; text-transform: uppercase;">Yield p.a.</div>
-                    <div style="font-size: 1.8em; font-weight: 900; color: #1a1a1a;">{res['y_pa']:.1f}%</div>
+                    <div style="font-size: 2em; font-weight: 900; color: #1a1a1a;">{res['y_pa']:.1f}%</div>
                 </div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.85em; margin-bottom: 15px;">
                     <div style="border-left: 3px solid #8e44ad; padding-left: 8px;">🎯 Strike<br><b>{res['strike']:.1f}$</b></div>
                     <div style="border-left: 3px solid #f39c12; padding-left: 8px;">💰 Mid<br><b>{res['bid']:.2f}$</b></div>
                     <div style="border-left: 3px solid #3498db; padding-left: 8px;">🛡️ Puffer<br><b>{res['puffer']:.1f}%</b></div>
-                    <div style="border-left: 3px solid #27ae60; padding-left: 8px;">📉 Delta<br><b>{res.get('delta', 0):.2f}</b></div>
+                    <div style="border-left: 3px solid {delta_col}; padding-left: 8px;">📉 Delta<br><b style="color:{delta_col};">{d_val:.2f}</b></div>
                 </div>
                 <div style="font-size: 0.75em; border-top: 1px solid #eee; padding-top: 10px; display: flex; justify-content: space-between; align-items: center; color: #6c757d;">
                     <span>⏳ <b>{res['tage']}d</b></span>
-                    <span style="color: #2ecc71; font-weight: 600;">📊 RSI: {int(res['rsi'])}</span>
+                    <span style="color: {rsi_col}; font-weight: 600;">📊 RSI: {int(res['rsi'])}</span>
                     <span style="color: {'#e74c3c' if is_earning_risk else '#6c757d'}; font-weight: bold;">
                         {'⚠️ ER: ' if is_earning_risk else '📅 ER: '} {earn_str}
                     </span>
@@ -803,6 +831,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
