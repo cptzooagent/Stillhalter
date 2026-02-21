@@ -119,6 +119,40 @@ def get_combined_watchlist():
 
 # --- 2. DATEN-FUNKTIONEN (REPARATUR BILD 5) ---
 @st.cache_data(ttl=3600)
+def get_finviz_sentiment(symbol):
+    """Holt das aktuelle Sentiment von Finviz (🟢/🟡/🔴)."""
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+        from nltk.sentiment.vader import SentimentIntensityAnalyzer
+        import nltk
+        
+        # Sicherstellen, dass der Lexicon-Download da ist
+        try:
+            nltk.data.find('vader_lexicon')
+        except LookupError:
+            nltk.download('vader_lexicon')
+
+        url = f'https://finviz.com/quote.ashx?t={symbol.upper()}'
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=5)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        news_table = soup.find(id='news-table')
+        if not news_table:
+            return "⚪", 0.0
+            
+        headlines = [row.a.get_text() for row in news_table.findAll('tr')[:10]]
+        
+        sia = SentimentIntensityAnalyzer()
+        scores = [sia.polarity_scores(h)['compound'] for h in headlines]
+        avg_score = sum(scores) / len(scores)
+        
+        if avg_score > 0.15: return "🟢", avg_score
+        if avg_score < -0.15: return "🔴", avg_score
+        return "🟡", avg_score
+    except:
+        return "⚪", 0.0
 def get_stock_data_full(symbol):
     try:
         tk = yf.Ticker(symbol)
@@ -384,36 +418,24 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     }
             except: return None
 
-        # Multithreading Start
+        # ... Ende des Multithreading Start ...
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
-            for i, future in enumerate(concurrent.futures.as_completed(futures)):
-                res_data = future.result()
-                if res_data:
-                    all_results.append(res_data)
-                
-                progress_bar.progress((i + 1) / len(ticker_liste))
-                if i % 5 == 0:
-                    status_text.text(f"Checke {i}/{len(ticker_liste)} Ticker...")
+            # ... (dein bestehender Code) ...
 
-    status_text.empty()
-    progress_bar.empty()
+        # DIESE ZEILEN MÜSSEN NOCH ZUM BUTTON GEHÖREN (EINGERÜCKT SEIN)
+        status_text.empty()
+        progress_bar.empty()
 
-    if all_results:
-        # Hierarchische Sortierung: 
-        # 1. Sterne (absteigend) 
-        # 2. Rendite (absteigend innerhalb der Sternegruppe)
-        st.session_state.profi_scan_results = sorted(
-            all_results, 
-            key=lambda x: (
-                float(x.get('stars_val', 0) or 0), 
-                float(x.get('y_pa', 0) or 0)
-            ), 
-            reverse=True
-        )
-    else:
-        st.session_state.profi_scan_results = []
-
+        if all_results:
+            st.session_state.profi_scan_results = sorted(
+                all_results, 
+                key=lambda x: (float(x.get('stars_val', 0) or 0), float(x.get('y_pa', 0) or 0)), 
+                reverse=True
+            )
+            st.success(f"Erfolg! {len(all_results)} Setups gefunden.")
+        else:
+            st.warning("Scan beendet, aber keine Treffer. Erhöhe die Rendite oder senke den Puffer.")
+            
 # --- RESULTATE ANZEIGEN ---
 if st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
@@ -749,4 +771,5 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
