@@ -460,13 +460,9 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
-            # Daten-Extraktion mit Fallbacks
+            # Daten-Vorbereitung
             is_earning_risk = False
             earn_str = res.get('earn', "---")
-            sent_icon = res.get('sent_icon', "🔵")
-            status_label = res.get('status', "Trend")
-            
-            # Earning-Logik
             if earn_str and earn_str != "---":
                 try:
                     earn_date = datetime.strptime(f"{earn_str}2026", "%d.%m.%Y")
@@ -474,44 +470,45 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
                         is_earning_risk = True
                 except: pass
 
-            # Farben definieren
-            s_color = "#27ae60" if "Trend" in status_label else "#2980b9"
-            bg_color = "#fff5f5" if is_earning_risk else "#ffffff"
-            border_color = "#e74c3c" if is_earning_risk else "#e0e0e0"
-            
-            # Analysten-Daten
+            # Farblogik & Icons
+            s_color = "#27ae60" if "Trend" in res.get('status', "") else "#2980b9"
+            sent_icon = res.get('sent_icon', "🟢")
             a_label = res.get('analyst_label', "Keine Analyse")
-            a_color = res.get('analyst_color', "#9b59b6") # Lila für Hyper, Grün für Stark
+            a_color = res.get('analyst_color', "#9b59b6")
+            
+            # HTML Template - EXAKT WIE IN BILD 11
+            # Hinweis: Wir nutzen '$$' oder HTML-Entities für das Dollar-Zeichen, um Fehler zu vermeiden
+            html_card = f"""
+            <div style="background-color: {'#fff5f5' if is_earning_risk else '#ffffff'}; 
+                        border: 2px solid {'#e74c3c' if is_earning_risk else '#e0e0e0'}; 
+                        border-radius: 12px; padding: 15px; margin-bottom: 20px; 
+                        box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif;">
+                
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                    <span style="font-size: 1.2em; font-weight: 800; color: #2c3e50;">{res['symbol']} <span style="color: #f1c40f;">{res.get('stars_str', '⭐')}</span></span>
+                    <span style="font-size: 0.8em; font-weight: bold; color: {s_color};">{sent_icon} {res.get('status', 'Trend')}</span>
+                </div>
 
-            # Das HTML Template (Sauber formatiert für Streamlit)
-            html_content = f"""
-            <div style="background-color: {bg_color}; border: 1px solid {border_color}; border-radius: 10px; padding: 12px; margin-bottom: 15px; font-family: sans-serif; min-height: 380px; box-shadow: 2px 2px 5px rgba(0,0,0,0.05);">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="font-weight: bold; font-size: 1.1em; color: #333;">{res['symbol']} <span style="color: #f1c40f;">{res.get('stars_str', '⭐')}</span></span>
-                    <span style="color: {s_color}; font-size: 0.8em; font-weight: bold;">{sent_icon} {status_label}</span>
-                </div>
-                
-                <div style="margin: 10px 0; font-size: 0.85em; color: #666;">Yield p.a.</div>
-                <div style="font-size: 1.8em; font-weight: bold; color: #222; margin-bottom: 15px;">{res['y_pa']:.1f}%</div>
-                
-                <div style="border: 1px solid #dcdde1; border-radius: 8px; padding: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 5px; font-size: 0.75em; background-color: #f9f9f9;">
-                    <div>🎯 Strike: <b>{res['strike']:.1f}$</b></div>
-                    <div>💰 Bid: <b>{res['bid']:.2f}$</b></div>
+                <div style="margin-top: 10px; font-size: 0.8em; color: #6c757d;">Yield p.a.</div>
+                <div style="font-size: 1.8em; font-weight: 900; color: #1a1a1a; margin-bottom: 15px;">{res['y_pa']:.1f}%</div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.75em; border: 1px solid #dcdde1; border-radius: 8px; padding: 10px; background: #fcfcfc; margin-bottom: 10px;">
+                    <div>🎯 Strike: <b>{res['strike']:.1f}&#36;</b></div>
+                    <div>💰 Bid: <b>{res['bid']:.2f}&#36;</b></div>
                     <div>🛡️ Puffer: <b>{res['puffer']:.1f}%</b></div>
-                    <div>⌛ Tage: <b>{res['tage']}</b></div>
+                    <div>⏳ Tage: <b>{res['tage']}</b></div>
                 </div>
-                
-                <div style="margin-top: 10px; font-size: 0.7em; color: #999;">
+
+                <div style="font-size: 0.7em; color: #95a5a6; margin-bottom: 10px;">
                     🗓️ ER: {earn_str} | Cap: {res.get('mkt_cap', 0):.1f}B
                 </div>
-                
-                <div style="margin-top: 10px; background-color: {a_color}15; color: {a_color}; padding: 6px; border-radius: 4px; border-left: 4px solid {a_color}; font-size: 0.75em; font-weight: bold;">
+
+                <div style="background-color: {a_color}15; color: {a_color}; padding: 8px; border-radius: 6px; border-left: 5px solid {a_color}; font-size: 0.75em; font-weight: bold;">
                     🚀 {a_label}
                 </div>
             </div>
             """
-            # WICHTIG: unsafe_allow_html=True muss hier stehen
-            st.markdown(html_content, unsafe_allow_html=True)
+            st.markdown(html_card, unsafe_allow_html=True)
 
 else:
     st.info("Scanner bereit. Bitte auf '🚀 Profi-Scan starten' klicken.")
@@ -794,6 +791,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
