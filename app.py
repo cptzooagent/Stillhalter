@@ -459,58 +459,71 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     else:
         st.session_state.profi_scan_results = []
 
-# --- RESULTATE ANZEIGEN (FIXED RENDERING) ---
+
+# --- RESULTATE ANZEIGEN (PRÄZISER EARNINGS-CHECK) ---
 if st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
     st.markdown(f"### 🎯 Top-Setups ({len(all_results)} Treffer)")
     
+    # Aktuelles Datum für den Vergleich
+    heute = datetime.now()
+    
     cols = st.columns(4)
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
-            # 1. LOGIK (Earnings & Farben)
+            # 1. PRÄZISE EARNINGS-LOGIK
+            is_earning_risk = False
             earn_str = res.get('earn', "---")
-            is_earning_risk = True if earn_str and earn_str != "---" else False
             
+            if earn_str and earn_str != "---":
+                try:
+                    # Wir wandeln "18.03." in ein Datum im Jahr 2026 um
+                    earn_date = datetime.strptime(f"{earn_str}2026", "%d.%m.%Y")
+                    tage_bis_er = (earn_date - heute).days
+                    
+                    # RISIKO: Wenn Earnings vor oder am Verfallstag (res['tage']) stattfinden
+                    if 0 <= tage_bis_er <= res['tage']:
+                        is_earning_risk = True
+                except:
+                    # Falls das Format nicht passt (z.B. "N/A"), kein roter Rahmen
+                    is_earning_risk = False
+
+            # 2. STYLING (Nur rot, wenn is_earning_risk wirklich True ist)
             s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-            rsi_col = "#e74c3c" if res['rsi'] > 70 or res['rsi'] < 30 else "#2ecc71"
             border_style = "2px solid #e74c3c" if is_earning_risk else "1px solid #e0e0e0"
             bg_card = "#fff5f5" if is_earning_risk else "#ffffff"
             
-            d_val = abs(res.get('delta', 0))
-            delta_col = "#e74c3c" if d_val > 0.30 else "#f39c12" if d_val > 0.20 else "#27ae60"
-
-            # 2. RENDERING (Wichtig: Das 'f' vor den dreifachen Anführungszeichen!)
-            with st.container():
-                st.markdown(f"""
-                <div style="background-color: {bg_card}; border: {border_style}; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                        <span style="font-size: 1.2em; font-weight: 800; color: #2c3e50;">{res['symbol']}</span>
-                        <span style="color: #f1c40f; font-size: 0.9em;">{res.get('stars_str', '⭐')}</span>
-                    </div>
-                    <div style="text-align: right; margin-bottom: 12px;">
-                        <span style="background-color: {s_color}15; color: {s_color}; padding: 3px 10px; border-radius: 20px; font-size: 0.7em; font-weight: 700; border: 1px solid {s_color}44;">
-                            {res['status']}
-                        </span>
-                    </div>
-                    <div style="text-align: center; padding: 12px 0; background: #f8f9fa; border-radius: 10px; margin-bottom: 15px;">
-                        <div style="font-size: 0.75em; color: #6c757d; text-transform: uppercase;">Yield p.a.</div>
-                        <div style="font-size: 1.8em; font-weight: 900; color: #1a1a1a;">{res['y_pa']:.1f}%</div>
-                    </div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.85em; margin-bottom: 15px;">
-                        <div style="border-left: 3px solid #8e44ad; padding-left: 8px;">🎯 Strike<br><b>{res['strike']:.1f}$</b></div>
-                        <div style="border-left: 3px solid #f39c12; padding-left: 8px;">💰 Mid<br><b>{res['bid']:.2f}$</b></div>
-                        <div style="border-left: 3px solid #3498db; padding-left: 8px;">🛡️ Puffer<br><b>{res['puffer']:.1f}%</b></div>
-                        <div style="border-left: 3px solid {delta_col}; padding-left: 8px;">📉 Delta<br><b style="color:{delta_col};">{d_val:.2f}</b></div>
-                    </div>
-                    <div style="font-size: 0.75em; border-top: 1px solid #eee; padding-top: 10px; display: flex; justify-content: space-between; align-items: center; color: #6c757d;">
-                        <span>⏳ <b>{res['tage']}d</b></span>
-                        <span style="color: {rsi_col}; font-weight: 600;">📊 RSI: {int(res['rsi'])}</span>
-                        <span style="color: {'#e74c3c' if is_earning_risk else '#6c757d'}; font-weight: bold;">
-                            {'⚠️ ER: ' if is_earning_risk else '📅 ER: '} {earn_str}
-                        </span>
-                    </div>
+            # 3. RENDERING (F-String mit korrektem HTML)
+            st.markdown(f"""
+            <div style="background-color: {bg_card}; border: {border_style}; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                    <span style="font-size: 1.2em; font-weight: 800; color: #2c3e50;">{res['symbol']}</span>
+                    <span style="color: #f1c40f; font-size: 0.9em;">{res.get('stars_str', '⭐')}</span>
                 </div>
-                """, unsafe_allow_html=True)
+                <div style="text-align: right; margin-bottom: 12px;">
+                    <span style="background-color: {s_color}15; color: {s_color}; padding: 3px 10px; border-radius: 20px; font-size: 0.7em; font-weight: 700; border: 1px solid {s_color}44;">
+                        {res['status']}
+                    </span>
+                </div>
+                <div style="text-align: center; padding: 12px 0; background: #f8f9fa; border-radius: 10px; margin-bottom: 15px;">
+                    <div style="font-size: 0.75em; color: #6c757d; text-transform: uppercase;">Yield p.a.</div>
+                    <div style="font-size: 1.8em; font-weight: 900; color: #1a1a1a;">{res['y_pa']:.1f}%</div>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.85em; margin-bottom: 15px;">
+                    <div style="border-left: 3px solid #8e44ad; padding-left: 8px;">🎯 Strike<br><b>{res['strike']:.1f}$</b></div>
+                    <div style="border-left: 3px solid #f39c12; padding-left: 8px;">💰 Mid<br><b>{res['bid']:.2f}$</b></div>
+                    <div style="border-left: 3px solid #3498db; padding-left: 8px;">🛡️ Puffer<br><b>{res['puffer']:.1f}%</b></div>
+                    <div style="border-left: 3px solid #27ae60; padding-left: 8px;">📉 Delta<br><b>{res.get('delta', 0):.2f}</b></div>
+                </div>
+                <div style="font-size: 0.75em; border-top: 1px solid #eee; padding-top: 10px; display: flex; justify-content: space-between; align-items: center; color: #6c757d;">
+                    <span>⏳ <b>{res['tage']}d</b></span>
+                    <span style="color: #2ecc71; font-weight: 600;">📊 RSI: {int(res['rsi'])}</span>
+                    <span style="color: {'#e74c3c' if is_earning_risk else '#6c757d'}; font-weight: bold;">
+                        {'⚠️ ER: ' if is_earning_risk else '📅 ER: '} {earn_str}
+                    </span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
                     
 # --- SEKTION 2: DEPOT-MANAGER (MIT PIVOT-PUNKTEN) ---
 st.markdown("---")
@@ -790,6 +803,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
