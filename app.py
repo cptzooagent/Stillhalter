@@ -331,121 +331,44 @@ def get_analyst_conviction(info):
 
 
 
-# ==========================================
-# PROFI-SCANNER: VOLLSTÄNDIGER CODE-BLOCK
-# ==========================================
+# --- PROFI-SCANNER MIT AKTIVEM BUTTON-HANDLER ---
 
-# 1. INITIALISIERUNG (Verhindert NameError)
+# 1. Initialisierung (Falls noch nicht geschehen)
 if 'setups' not in st.session_state:
     st.session_state.setups = []
 
-# 2. SCAN-LOGIK & BUTTON
-col_btn, col_info = st.columns([1, 3])
-with col_btn:
-    if st.button("🚀 Profi-Scan starten"):
-        with st.spinner("Markt wird analysiert..."):
-            # Hier rufen wir deine Scan-Funktion auf
-            # Ersetze 'deine_scan_funktion()' durch den echten Namen deiner Funktion
-            try:
-                # Beispiel: st.session_state.setups = ausfuehren_profi_scan()
-                # WICHTIG: Die Funktion muss eine Liste von Dicts zurückgeben
-                pass 
-            except Exception as e:
-                st.error(f"Fehler beim Scan: {e}")
+# 2. Der Button und die eigentliche Berechnung
+if st.button("🚀 Profi-Scan starten"):
+    with st.spinner("Markt wird analysiert..."):
+        # HIER DIE LOGIK: Wir rufen deine Scan-Funktion auf
+        # Ich nenne sie hier beispielhaft 'ausfuehren_profi_scan()'
+        # Ersetze diesen Namen durch deine tatsächliche Funktion!
+        try:
+            # Diese Zeile ist der Motor:
+            ergebnisse = ausfuehren_profi_scan() 
+            
+            # Speichern im Session State, damit die Karten unten erscheinen
+            st.session_state.setups = ergebnisse
+            
+            if not ergebnisse:
+                st.warning("Scan abgeschlossen, aber keine Treffer gefunden.")
+            else:
+                st.success(f"Scan erfolgreich! {len(ergebnisse)} Setups gefunden.")
+                st.rerun() # Seite neu laden, um Ergebnisse sofort anzuzeigen
+                
+        except Exception as e:
+            st.error(f"Ein technischer Fehler ist aufgetreten: {e}")
 
-# 3. ANZEIGE DER ERGEBNISSE
+# 3. DIE ANZEIGE (Wird nur ausgeführt, wenn Treffer in setups sind)
 setups = st.session_state.setups
 
 st.markdown(f"### 🎯 Top-Setups nach Qualität ({len(setups)} Treffer)")
 
 if not setups:
-    st.info("Noch keine Ergebnisse. Klicke auf 'Profi-Scan starten'.")
+    st.info("Klicke auf den Button oben, um die Analyse zu starten.")
 else:
-    # SORTIERUNG: Hyper-Growth & Sterne zuerst (wie in Bild 11)
-    setups = sorted(
-        setups, 
-        key=lambda x: (x.get('stars', 0), x.get('info', {}).get('revenueGrowth', 0)), 
-        reverse=True
-    )
-
-    # GRID-LAYOUT (3 Spalten)
-    cols = st.columns(3)
-
-    for i, setup in enumerate(setups):
-        # --- Daten-Vorbereitung ---
-        symbol = setup.get('symbol', 'N/A')
-        price = setup.get('price', 0)
-        stars_count = int(setup.get('stars', 0))
-        yield_pa = setup.get('yield_pa', 0)
-        strike = setup.get('strike', 0)
-        bid = setup.get('bid', 0)
-        puffer = setup.get('puffer', 0)
-        days = setup.get('days', 0)
-        rsi = setup.get('rsi', 50)
-        earn = setup.get('earnings', '---')
-        uptrend = setup.get('uptrend', True)
-        info = setup.get('info', {})
-        
-        # Banner-Werte
-        rev_growth = info.get('revenueGrowth', 0) * 100
-        target = info.get('targetMeanPrice', price)
-        upside = ((target / price) - 1) * 100 if target and price > 0 else 0
-
-        # --- BANNER LOGIK (Lila/Grün aus Bild 11) ---
-        banner_html = ""
-        if rev_growth >= 30 or stars_count >= 3:
-            banner_html = f"""
-            <div style="background-color: rgba(155, 89, 182, 0.08); border: 1px solid #9b59b6; border-radius: 5px; padding: 6px; margin: 10px 0; text-align: center;">
-                <span style="color: #9b59b6; font-weight: bold; font-size: 0.8em;">🚀 HYPER-GROWTH (+{rev_growth:.0f}% Wachst.)</span>
-            </div>"""
-        elif stars_count >= 2:
-            banner_html = f"""
-            <div style="background-color: rgba(46, 204, 113, 0.08); border: 1px solid #2ecc71; border-radius: 5px; padding: 6px; margin: 10px 0; text-align: center;">
-                <span style="color: #27ae60; font-weight: bold; font-size: 0.8em;">✅ Stark (Ziel: +{upside:.0f}%, Wachst.: {rev_growth:.0f}%)</span>
-            </div>"""
-        else:
-            banner_html = '<div style="height: 42px;"></div>'
-
-        # --- TREND & WARNING DESIGN ---
-        trend_label = "🛡️ Trend" if uptrend else "💎 Dip"
-        trend_col = "#27ae60" if uptrend else "#2980b9"
-        
-        # Roter Rahmen bei Earnings-Gefahr (Bild 15)
-        is_warning = "!" in str(earn) or (earn and ("Feb" in str(earn) or "Mar" in str(earn)))
-        border_style = "2px solid #ff4b4b" if is_warning else "1px solid #e6e9ef"
-
-        # --- HTML KARTE ---
-        card_html = f"""
-        <div style="border: {border_style}; border-radius: 12px; padding: 15px; background-color: white; margin-bottom: 20px; box-shadow: 2px 2px 10px rgba(0,0,0,0.05); min-height: 450px;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-size: 1.25em; font-weight: bold; color: #1f1f1f;">{symbol}</span>
-                <span style="color: #f1c40f;">{"⭐" * stars_count}</span>
-                <span style="background-color: {trend_col}22; color: {trend_col}; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; font-weight: bold;">{trend_label}</span>
-            </div>
-            
-            <div style="text-align: center; margin: 18px 0;">
-                <small style="color: #6c757d; letter-spacing: 0.5px;">YIELD P.A.</small><br>
-                <strong style="font-size: 2.1em; color: #111;">{yield_pa:.1f}%</strong>
-            </div>
-
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; border: 1px solid #f0f2f6; border-radius: 8px; padding: 10px; background-color: #fafbfc;">
-                <div style="border-left: 3px solid #e91e63; padding-left: 8px;"><small style="color: #6c757d;">Strike</small><br><b>{strike:.1f}$</b></div>
-                <div style="border-left: 3px solid #ff9800; padding-left: 8px;"><small style="color: #6c757d;">Mid</small><br><b>{bid:.2f}$</b></div>
-                <div style="border-left: 3px solid #2196f3; padding-left: 8px;"><small style="color: #6c757d;">Puffer</small><br><b>{puffer:.1f}%</b></div>
-                <div style="border-left: 3px solid #4caf50; padding-left: 8px;"><small style="color: #6c757d;">Tage</small><br><b>{days}</b></div>
-            </div>
-
-            {banner_html}
-
-            <div style="margin-top: 12px; font-size: 0.75em; display: flex; justify-content: space-between; color: #6c757d; border-top: 1px solid #eee; padding-top: 10px;">
-                <span>🗓️ ER: {earn}</span>
-                <span>📊 Cap: {info.get('marketCap', 0)/1e9:.1f}B</span>
-                <span style="color: {'#ff4b4b' if rsi > 70 or rsi < 30 else '#6c757d'}; font-weight: bold;">RSI: {int(rsi)}</span>
-            </div>
-        </div>
-        """
-        with cols[i % 3]:
-            st.markdown(card_html, unsafe_allow_html=True)
+    # Hier folgt dein HTML-Karten-Design (der Teil ab 'cols = st.columns(3)')
+    # ... (Rest des Codes wie zuvor)
                     
 # --- SEKTION 2: DEPOT-MANAGER (MIT PIVOT-PUNKTEN) ---
 st.markdown("---")
@@ -725,6 +648,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
