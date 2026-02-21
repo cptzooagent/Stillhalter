@@ -418,23 +418,36 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     }
             except: return None
 
-        # ... Ende des Multithreading Start ...
+        # Multithreading Start
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            # ... (dein bestehender Code) ...
+            futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
+            for i, future in enumerate(concurrent.futures.as_completed(futures)):
+                res_data = future.result()
+                if res_data:
+                    all_results.append(res_data)
+                
+                progress_bar.progress((i + 1) / len(ticker_liste))
+                if i % 5 == 0:
+                    status_text.text(f"Checke {i}/{len(ticker_liste)} Ticker...")
 
-        # DIESE ZEILEN MÜSSEN NOCH ZUM BUTTON GEHÖREN (EINGERÜCKT SEIN)
+        # WICHTIG: Diese Zeilen müssen EINE Ebene weiter links stehen als das 'futures' oben,
+        # aber immer noch innerhalb des 'if st.button' Blocks!
         status_text.empty()
         progress_bar.empty()
 
         if all_results:
             st.session_state.profi_scan_results = sorted(
                 all_results, 
-                key=lambda x: (float(x.get('stars_val', 0) or 0), float(x.get('y_pa', 0) or 0)), 
+                key=lambda x: (
+                    float(x.get('stars_val', 0) or 0), 
+                    float(x.get('y_pa', 0) or 0)
+                ), 
                 reverse=True
             )
-            st.success(f"Erfolg! {len(all_results)} Setups gefunden.")
+            st.success(f"Scan abgeschlossen: {len(all_results)} Treffer gefunden!")
         else:
-            st.warning("Scan beendet, aber keine Treffer. Erhöhe die Rendite oder senke den Puffer.")
+            st.session_state.profi_scan_results = []
+            st.warning("Keine Treffer gefunden. Versuche den Puffer zu senken.")
             
 # --- RESULTATE ANZEIGEN ---
 if st.session_state.profi_scan_results:
@@ -771,5 +784,6 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
