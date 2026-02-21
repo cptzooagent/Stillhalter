@@ -326,108 +326,63 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         # --- DIE OPTIMIERTE UNTER-FUNKTION (BLITZ-FILTER EDITION) ---
         def check_single_stock(symbol):
             try:
-                # Kleiner Delay zur Schonung der API
                 time.sleep(0.4) 
                 tk = yf.Ticker(symbol)
-                
-                # SCHRITT 1: BLITZ-FILTER (Market Cap & Preis)
-                # Wir holen nur die Info, um zu sehen, ob sich die Analyse überhaupt lohnt
                 info = tk.info
-                if not info or 'currentPrice' not in info:
-                    return None
-                
+                if not info or 'currentPrice' not in info: return None
+        
                 m_cap = info.get('marketCap', 0)
                 price = info.get('currentPrice', 0)
-
-                # Abbruch, wenn Market Cap zu klein
-                if m_cap < p_min_cap:
-                    return None
-                
-                # Abbruch, wenn Preis außerhalb deiner Range
-                if not (min_stock_price <= price <= max_stock_price):
+        
+                # Filter aus der Sidebar nutzen
+                if m_cap < p_min_cap or not (min_stock_price <= price <= max_stock_price): 
                     return None
 
-                # SCHRITT 2: TECHNISCHE ANALYSE (RSI, Trends, Pivots)
-                # Erst jetzt rufen wir die schwere Funktion auf
                 res = get_stock_data_full(symbol)
-                if res is None or res[0] is None:
-                    return None
-                
-                # Daten entpacken
-                # price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+                if res is None or res[0] is None: return None
                 _, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
-                
-                # Trend-Filter (falls aktiviert)
-                if only_uptrend and not uptrend:
-                    return None
+        
+                if only_uptrend and not uptrend: return None
 
-                # SCHRITT 3: OPTIONS-ANALYSE
-                # Wir suchen das passende Datum (10-30 Tage)
                 valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 30]
-                if not valid_dates:
-                    return None
-                
+                if not valid_dates: return None
+        
                 target_date = valid_dates[0]
                 chain = tk.option_chain(target_date).puts
-                
-                # Strike-Berechnung mit deinem Puffer
                 target_strike = price * (1 - p_puffer)
                 opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
-                
-                if opts.empty:
-                    return None
+        
+                if opts.empty: return None
 
-                # Besten passenden Put auswählen
                 o = opts.iloc[0]
                 bid, ask = o['bid'], o['ask']
-                
-                # Mid-Price Berechnung für realistische Rendite
                 fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o['lastPrice']
-                spread_pct = ((ask - bid) / bid) * 100 if bid > 0 else 0
-                
-                # Sicherheits-Check: Spread zu groß?
-                if spread_pct > 60:
-                    return None 
-                
-                # Rendite-Rechnung (Yield p.a.)
-                days = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
-                y_pa = (fair_price / o['strike']) * (365 / max(1, days)) * 100
-                
-                # SCHRITT 4: FINALE QUALIFIKATION
+        
+                # --- DELTA & SENTIMENT INTEGRATION ---
+                days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
+                iv = o.get('impliedVolatility', 0.4)
+                delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv, option_type='put')
+        
+                sent_icon, _ = get_finviz_sentiment(symbol)
+                y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
+        
                 if y_pa >= p_min_yield:
                     analyst_txt, analyst_col = get_analyst_conviction(info)
-                    
-                    # --- STERNE-LOGIK FÜR DIE SORTIERUNG ---
-                    # Wir berechnen erst die nackte Zahl
                     s_val = 0.0
                     if "HYPER" in analyst_txt: s_val = 3.0
                     elif "Stark" in analyst_txt: s_val = 2.0
-                    elif "Neutral" in analyst_txt: s_val = 1.0
-                    
-                    if rsi < 35: s_val += 0.5   # Dip-Bonus
-                    if uptrend: s_val += 0.5    # Trend-Bonus
+                    if rsi < 35: s_val += 0.5
+                    if uptrend: s_val += 0.5
 
                     return {
-                        'symbol': symbol, 
-                        'price': price, 
-                        'y_pa': y_pa, 
-                        'strike': o['strike'], 
-                        'puffer': ((price - o['strike']) / price) * 100, 
-                        'bid': fair_price,
-                        'spread': spread_pct, 
-                        'rsi': rsi, 
-                        'earn': earn if earn else "n.a.", 
-                        'tage': days, 
-                        'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                        'stars_val': s_val,  # <--- DIE ZAHL FÜR DIE SORTIERUNG
-                        'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️",
-                        'analyst_txt': analyst_txt, 
-                        'analyst_col': analyst_col, 
-                        'mkt_cap': m_cap / 1_000_000_000
+                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
+                        'puffer': ((price - o['strike']) / price) * 100, 'bid': fair_price,
+                        'rsi': rsi, 'earn': earn if earn else "---", 'tage': days_to_exp, 
+                        'status': "🛡️ Trend" if uptrend else "💎 Dip", 'delta': delta_val,
+                        'sent_icon': sent_icon, 'stars_val': s_val, 
+                        'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️"
                     }
-            except Exception:
-                return None # Fehlerhafte Ticker lautlos überspringen
-            return None
+            except: return None
 
         # Multithreading Start
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
@@ -459,65 +414,56 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     else:
         st.session_state.profi_scan_results = []
 
-
-# --- RESULTATE ANZEIGEN (PRÄZISER EARNINGS-CHECK) ---
+# --- RESULTATE ANZEIGEN ---
 if st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
     st.markdown(f"### 🎯 Top-Setups ({len(all_results)} Treffer)")
     
-    # Aktuelles Datum für den Vergleich
-    heute = datetime.now()
-    
+    heute_dt = datetime.now()
     cols = st.columns(4)
+    
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
-            # 1. PRÄZISE EARNINGS-LOGIK
+            # Earnings-Risk Logik
             is_earning_risk = False
             earn_str = res.get('earn', "---")
-            
             if earn_str and earn_str != "---":
                 try:
-                    # Wir wandeln "18.03." in ein Datum im Jahr 2026 um
+                    # Annahme: Jahr 2026 für den Vergleich
                     earn_date = datetime.strptime(f"{earn_str}2026", "%d.%m.%Y")
-                    tage_bis_er = (earn_date - heute).days
-                    
-                    # RISIKO: Wenn Earnings vor oder am Verfallstag (res['tage']) stattfinden
-                    if 0 <= tage_bis_er <= res['tage']:
+                    if 0 <= (earn_date - heute_dt).days <= res['tage']:
                         is_earning_risk = True
-                except:
-                    # Falls das Format nicht passt (z.B. "N/A"), kein roter Rahmen
-                    is_earning_risk = False
+                except: pass
 
-            # 2. STYLING (Nur rot, wenn is_earning_risk wirklich True ist)
             s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-            border_style = "2px solid #e74c3c" if is_earning_risk else "1px solid #e0e0e0"
-            bg_card = "#fff5f5" if is_earning_risk else "#ffffff"
-            
-            # 3. RENDERING (F-String mit korrektem HTML)
+            d_val = abs(res.get('delta', 0))
+            delta_col = "#e74c3c" if d_val > 0.30 else "#f39c12" if d_val > 0.20 else "#27ae60"
+
             st.markdown(f"""
-            <div style="background-color: {bg_card}; border: {border_style}; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+            <div style="background-color: {'#fff5f5' if is_earning_risk else '#ffffff'}; 
+                        border: {'2px solid #e74c3c' if is_earning_risk else '1px solid #e0e0e0'}; 
+                        border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                    <span style="font-size: 1.2em; font-weight: 800; color: #2c3e50;">{res['symbol']}</span>
+                    <span style="font-size: 1.1em; font-weight: 800; color: #2c3e50;">{res.get('sent_icon', '⚪')} {res['symbol']}</span>
                     <span style="color: #f1c40f; font-size: 0.9em;">{res.get('stars_str', '⭐')}</span>
                 </div>
                 <div style="text-align: right; margin-bottom: 12px;">
-                    <span style="background-color: {s_color}15; color: {s_color}; padding: 3px 10px; border-radius: 20px; font-size: 0.7em; font-weight: 700; border: 1px solid {s_color}44;">
+                    <span style="background-color: {s_color}15; color: {s_color}; padding: 3px 10px; border-radius: 20px; font-size: 0.7em; font-weight: 700;">
                         {res['status']}
                     </span>
                 </div>
-                <div style="text-align: center; padding: 12px 0; background: #f8f9fa; border-radius: 10px; margin-bottom: 15px;">
-                    <div style="font-size: 0.75em; color: #6c757d; text-transform: uppercase;">Yield p.a.</div>
-                    <div style="font-size: 1.8em; font-weight: 900; color: #1a1a1a;">{res['y_pa']:.1f}%</div>
+                <div style="text-align: center; padding: 10px 0; background: #f8f9fa; border-radius: 10px; margin-bottom: 15px;">
+                    <div style="font-size: 0.7em; color: #6c757d; text-transform: uppercase;">Yield p.a.</div>
+                    <div style="font-size: 1.7em; font-weight: 900; color: #1a1a1a;">{res['y_pa']:.1f}%</div>
                 </div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.85em; margin-bottom: 15px;">
-                    <div style="border-left: 3px solid #8e44ad; padding-left: 8px;">🎯 Strike<br><b>{res['strike']:.1f}$</b></div>
-                    <div style="border-left: 3px solid #f39c12; padding-left: 8px;">💰 Mid<br><b>{res['bid']:.2f}$</b></div>
-                    <div style="border-left: 3px solid #3498db; padding-left: 8px;">🛡️ Puffer<br><b>{res['puffer']:.1f}%</b></div>
-                    <div style="border-left: 3px solid #27ae60; padding-left: 8px;">📉 Delta<br><b>{res.get('delta', 0):.2f}</b></div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.8em; margin-bottom: 15px;">
+                    <div style="border-left: 3px solid #8e44ad; padding-left: 5px;">Strike<br><b>{res['strike']:.1f}$</b></div>
+                    <div style="border-left: 3px solid #f39c12; padding-left: 5px;">Mid<br><b>{res['bid']:.2f}$</b></div>
+                    <div style="border-left: 3px solid #3498db; padding-left: 5px;">Puffer<br><b>{res['puffer']:.1f}%</b></div>
+                    <div style="border-left: 3px solid {delta_col}; padding-left: 5px;">Delta<br><b style="color:{delta_col};">{d_val:.2f}</b></div>
                 </div>
-                <div style="font-size: 0.75em; border-top: 1px solid #eee; padding-top: 10px; display: flex; justify-content: space-between; align-items: center; color: #6c757d;">
-                    <span>⏳ <b>{res['tage']}d</b></span>
-                    <span style="color: #2ecc71; font-weight: 600;">📊 RSI: {int(res['rsi'])}</span>
+                <div style="font-size: 0.7em; border-top: 1px solid #eee; padding-top: 10px; display: flex; justify-content: space-between; color: #6c757d;">
+                    <span>⏳ <b>{res['tage']}d</b> | RSI: {int(res['rsi'])}</span>
                     <span style="color: {'#e74c3c' if is_earning_risk else '#6c757d'}; font-weight: bold;">
                         {'⚠️ ER: ' if is_earning_risk else '📅 ER: '} {earn_str}
                     </span>
@@ -803,3 +749,4 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
