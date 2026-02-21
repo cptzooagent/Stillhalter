@@ -488,6 +488,7 @@ if st.session_state.profi_scan_results:
                 rsi_weight = "normal"
 
             # --- HTML RENDERING ---
+            # WICHTIG: Das st.markdown muss den gesamten Block umschließen!
             st.markdown(f"""
             <div style="background-color: {'#fff5f5' if is_earning_risk else '#ffffff'}; 
                         border: {'2px solid #e74c3c' if is_earning_risk else '1px solid #e0e0e0'}; 
@@ -528,7 +529,7 @@ if st.session_state.profi_scan_results:
                     </span>
                 </div>
             </div>
-            """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True) # <-- DAS HIER IST DER ENTSCHEIDENDE TEIL
 
 else:
     st.info("Bisher keine Ergebnisse. Bitte klicke auf '🚀 Profi-Scan starten'.")
@@ -811,6 +812,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
