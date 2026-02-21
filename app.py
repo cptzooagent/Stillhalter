@@ -413,8 +413,8 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                         'status': "🛡️ Trend" if uptrend else "💎 Dip", 'delta': delta_val,
                         'sent_icon': sent_icon, 'stars_val': s_val, 
                         'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️",
-                        'analyst_label': analyst_txt,  # NEU
-                        'analyst_color': analyst_col,  # NEU
+                        'analyst_label': analyst_txt,
+                        'analyst_color': analyst_col,
                         'mkt_cap': info.get('marketCap', 0) / 1e9 # NEU für die Info-Zeile
                     }
             except: return None
@@ -460,32 +460,57 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
-            # Earnings & Style Logik
+            # 1. Daten-Vorbereitung
             is_earning_risk = False
             earn_str = res.get('earn', "---")
             if earn_str and earn_str != "---":
                 try:
+                    # Annahme: earn_str ist "DD.MM." -> wir ergänzen das Jahr
                     earn_date = datetime.strptime(f"{earn_str}2026", "%d.%m.%Y")
                     if 0 <= (earn_date - heute_dt).days <= res['tage']:
                         is_earning_risk = True
                 except: pass
 
             s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-            d_val = abs(res.get('delta', 0))
-            delta_col = "#e74c3c" if d_val > 0.30 else "#f39c12" if d_val > 0.20 else "#27ae60"
-            rsi_val_int = int(res.get('rsi', 50))
-            rsi_col = "#e74c3c" if rsi_val_int >= 70 else "#27ae60" if rsi_val_int <= 35 else "#6c757d"
+            
+            # Neue Variablen für Sentiment-Punkt & Analyse-Balken
+            sent_icon = res.get('sent_icon', '⚪') 
+            label = res.get('analyst_label', 'Keine Analyse verfügbar')
+            color = res.get('analyst_color', '#eee')
+            mkt_cap = res.get('mkt_cap', 0)
 
-            # HTML mit Analysten-Balken unten (wie Screenshot)
-            html_template = f"""<div style="background-color: {'#fff5f5' if is_earning_risk else '#ffffff'}; border: {'2px solid #e74c3c' if is_earning_risk else '1px solid #e0e0e0'}; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif;">
-<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;"><span style="font-size: 1.3em; font-weight: 800; color: #2c3e50;">{res['symbol']}</span><span style="color: #f1c40f; font-size: 1.0em;">{res.get('stars_str', '⭐')}</span></div>
-<div style="text-align: right; margin-bottom: 12px;"><span style="background-color: {s_color}15; color: {s_color}; padding: 3px 10px; border-radius: 20px; font-size: 0.75em; font-weight: 700;">{res['status']}</span></div>
-<div style="text-align: center; padding: 10px 0; background: #f8f9fa; border-radius: 10px; margin-bottom: 15px;"><div style="font-size: 0.7em; color: #6c757d; text-transform: uppercase;">Yield p.a.</div><div style="font-size: 1.8em; font-weight: 900; color: #1a1a1a;">{res['y_pa']:.1f}%</div></div>
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.8em; margin-bottom: 15px;"><div style="border-left: 3px solid #8e44ad; padding-left: 8px;">Strike: <b>{res['strike']:.1f}$</b></div><div style="border-left: 3px solid #f39c12; padding-left: 8px;">Bid: <b>{res['bid']:.2f}$</b></div><div style="border-left: 3px solid #3498db; padding-left: 8px;">Puffer: <b>{res['puffer']:.1f}%</b></div><div style="border-left: 3px solid #6c757d; padding-left: 8px;">Tage: <b>{res['tage']}</b></div></div>
-<div style="font-size: 0.75em; color: #6c757d; margin-bottom: 10px;">🗓️ ER: {earn_str} | Cap: {res.get('mkt_cap', 0):.1f}B</div>
-<div style="background-color: {res.get('analyst_color', '#eee')}15; color: {res.get('analyst_color', '#666')}; padding: 8px; border-radius: 6px; border-left: 5px solid {res.get('analyst_color', '#eee')}; font-size: 0.75em; font-weight: bold;">
-    {res.get('analyst_label', 'Keine Analyse')}
-</div>
+            # 2. HTML-Template mit Punkt neben dem Kürzel
+            html_template = f"""
+<div style="background-color: {'#fff5f5' if is_earning_risk else '#ffffff'}; border: {'2px solid #e74c3c' if is_earning_risk else '1px solid #e0e0e0'}; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif;">
+    
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+        <span style="font-size: 1.3em; font-weight: 800; color: #2c3e50;">
+            <span style="margin-right: 5px;">{sent_icon}</span>{res['symbol']}
+        </span>
+        <span style="color: #f1c40f; font-size: 1.0em;">{res.get('stars_str', '⭐')}</span>
+    </div>
+
+    <div style="text-align: right; margin-bottom: 12px;">
+        <span style="background-color: {s_color}15; color: {s_color}; padding: 3px 10px; border-radius: 20px; font-size: 0.75em; font-weight: 700;">{res['status']}</span>
+    </div>
+
+    <div style="text-align: center; padding: 10px 0; background: #f8f9fa; border-radius: 10px; margin-bottom: 15px;">
+        <div style="font-size: 0.7em; color: #6c757d; text-transform: uppercase;">Yield p.a.</div>
+        <div style="font-size: 1.8em; font-weight: 900; color: #1a1a1a;">{res['y_pa']:.1f}%</div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.8em; margin-bottom: 15px;">
+        <div style="border-left: 3px solid #8e44ad; padding-left: 8px;">Strike: <b>{res['strike']:.1f}$</b></div>
+        <div style="border-left: 3px solid #f39c12; padding-left: 8px;">Bid: <b>{res['bid']:.2f}$</b></div>
+        <div style="border-left: 3px solid #3498db; padding-left: 8px;">Puffer: <b>{res['puffer']:.1f}%</b></div>
+        <div style="border-left: 3px solid #6c757d; padding-left: 8px;">Tage: <b>{res['tage']}</b></div>
+    </div>
+
+    <div style="font-size: 0.75em; color: #6c757d; margin-bottom: 10px;">🗓️ ER: {earn_str} | Cap: {mkt_cap:.1f}B</div>
+
+    <div style="background-color: {color}15; color: {color}; padding: 8px; border-radius: 6px; border-left: 5px solid {color}; font-size: 0.75em; font-weight: bold;">
+        {label}
+    </div>
 </div>"""
             st.markdown(html_template, unsafe_allow_html=True)
 else:
@@ -769,4 +794,5 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
