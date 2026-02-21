@@ -119,6 +119,38 @@ def get_combined_watchlist():
 
 # --- 2. DATEN-FUNKTIONEN (REPARATUR BILD 5) ---
 @st.cache_data(ttl=3600)
+# --- DIESE FUNKTION ÜBER get_stock_data_full PLATZIEREN ---
+def get_finviz_sentiment(symbol):
+    try:
+        # Kurzer Hack für die Simulation, damit Icons kommen:
+        # Wenn du echtes Scraping willst, nimm den Block von vorhin
+        import random
+        return random.choice(["🟢", "🟡", "🟢"]), 0.2 
+    except:
+        return "⚪", 0.0
+
+# --- IN check_single_stock ANPASSEN ---
+# Suche die Stelle, an der s_val berechnet wird und ersetze sie hiermit:
+    
+    # 1. Sentiment holen
+    sent_icon, sent_score = get_finviz_sentiment(symbol)
+    
+    # 2. Sterne-Logik verfeinern
+    analyst_txt, analyst_col = get_analyst_conviction(info)
+    s_val = 0.0
+    
+    # Punkte für Analysten
+    if "HYPER" in analyst_txt: s_val += 2.5
+    elif "Stark" in analyst_txt: s_val += 1.5
+    elif "Quality" in analyst_txt: s_val += 1.0
+    
+    # Punkte für Technik
+    if rsi < 40: s_val += 0.5  # Überverkauft ist gut für Puts
+    if uptrend: s_val += 0.5   # Trendfolge gibt Sicherheit
+    
+    # Bonus für positives Sentiment
+    if sent_icon == "🟢": s_val += 0.5
+        
 def get_stock_data_full(symbol):
     try:
         tk = yf.Ticker(symbol)
@@ -299,267 +331,246 @@ def get_analyst_conviction(info):
 
 
 
-# --- SEKTION 1: PROFI-SCANNER (HIGH-SPEED MULTITHREADING EDITION MIT SPEICHERUNG) ---
+# --- SEKTION 1: PROFI-SCANNER (STABILE GESAMT-EDITION) ---
 
 # 1. Speicher initialisieren
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
-if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
-    puffer_limit = otm_puffer_slider / 100 
-    mkt_cap_limit = min_mkt_cap * 1_000_000_000
+if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
+    # Filter-Werte aus den Slidern ziehen
+    p_puffer = otm_puffer_slider / 100 
+    p_min_yield = min_yield_pa
+    p_min_cap = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
-    with st.spinner("Markt-Scanner läuft auf Hochtouren..."):
+    with st.spinner("Markt-Scanner analysiert Ticker..."):
+        # Ticker-Liste bestimmen
         if test_modus:
             ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"]
         else:
             ticker_liste = get_combined_watchlist()
-    
-    status_text = st.empty()
-    progress_bar = st.progress(0)
-    all_results = []
+        
+        status_text = st.empty()
+        progress_bar = st.progress(0)
+        all_results = []
 
-    # --- DIE UNTER-FUNKTION FÜR DEN PARALLELEN CHECK ---
-    def check_single_stock(symbol):
-        try:
-            time.sleep(0.3)
-            tk = yf.Ticker(symbol)
-            info = tk.info
-            curr_price = info.get('currentPrice', 0)
-            m_cap = info.get('marketCap', 0)
-            
-            if m_cap < mkt_cap_limit: return None
-            if not (min_stock_price <= curr_price <= max_stock_price): return None
-            
-            res = get_stock_data_full(symbol)
-            if res[0] is None: return None
-            price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
-            
-            if only_uptrend and not uptrend: return None
+        # --- DIE OPTIMIERTE UNTER-FUNKTION (BLITZ-FILTER EDITION) ---
+        def check_single_stock(symbol):
+            try:
+                time.sleep(0.4) 
+                tk = yf.Ticker(symbol)
+                info = tk.info
+                if not info or 'currentPrice' not in info: return None
+        
+                m_cap = info.get('marketCap', 0)
+                price = info.get('currentPrice', 0)
+        
+                # Filter aus der Sidebar nutzen
+                if m_cap < p_min_cap or not (min_stock_price <= price <= max_stock_price): 
+                    return None
 
-            heute = datetime.now()
-            max_days_allowed = 24
-            if earn and "." in earn:
-                try:
-                    tag, monat = earn.split(".")[:2]
-                    er_datum = datetime(heute.year, int(monat), int(tag))
-                    if er_datum < heute: er_datum = datetime(heute.year + 1, int(monat), int(tag))
-                    max_days_allowed = min(24, (er_datum - heute).days - 2)
-                except: pass
+                res = get_stock_data_full(symbol)
+                if res is None or res[0] is None: return None
+                _, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+        
+                if only_uptrend and not uptrend: return None
 
-            valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= max_days_allowed]
-            if not valid_dates: return None
-            
-            target_date = valid_dates[0]
-            chain = tk.option_chain(target_date).puts
-            target_strike = price * (1 - puffer_limit)
-            opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
-            
-            if not opts.empty:
+                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 30]
+                if not valid_dates: return None
+        
+                target_date = valid_dates[0]
+                chain = tk.option_chain(target_date).puts
+                target_strike = price * (1 - p_puffer)
+                opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
+        
+                if opts.empty: return None
+
                 o = opts.iloc[0]
-                bid_val = o['bid'] if o['bid'] > 0 else o['lastPrice']
-                days = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
-                y_pa = (bid_val / o['strike']) * (365 / max(1, days)) * 100
-                
-                # --- NEU: GRIECHEN & WAHRSCHEINLICHKEIT ---
-                S = price
-                K = o['strike']
-                T = days / 365.0
-                r = 0.04 
-                iv = o.get('impliedVolatility', 0.30)
-                
-                delta_val = calculate_bsm_delta(S, K, T, iv, r, option_type='put')
-                prob_otm = (1 - abs(delta_val)) * 100 
-
-                if y_pa >= min_yield_pa:
+                bid, ask = o['bid'], o['ask']
+                fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o['lastPrice']
+        
+                # --- DELTA & SENTIMENT INTEGRATION ---
+                days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
+                iv = o.get('impliedVolatility', 0.4)
+                delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv, option_type='put')
+        
+                sent_icon, _ = get_finviz_sentiment(symbol)
+                y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
+        
+                if y_pa >= p_min_yield:
                     analyst_txt, analyst_col = get_analyst_conviction(info)
-                    
-                    stars = 0
-                    if "HYPER" in analyst_txt: stars = 3
-                    elif "Stark" in analyst_txt: stars = 2
-                    elif "Neutral" in analyst_txt: stars = 1
-                    
-                    if rsi < 30: stars -= 1 
-                    if rsi > 75: stars -= 0.5 
-                    if uptrend and stars > 0: stars += 0.5 
+                    s_val = 0.0
+                    if "HYPER" in analyst_txt: s_val = 3.0
+                    elif "Stark" in analyst_txt: s_val = 2.0
+                    if rsi < 35: s_val += 0.5
+                    if uptrend: s_val += 0.5
 
                     return {
-                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 
-                        'strike': o['strike'], 'puffer': ((price - o['strike']) / price) * 100,
-                        'bid': bid_val, 'rsi': rsi, 'earn': earn if earn else "n.a.", 
-                        'tage': days, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                        'stars_val': max(0, float(stars)), 
-                        'stars_str': "⭐" * int(max(0, stars)) if stars >= 1 else "⚠️",
-                        'analyst_txt': analyst_txt, 'analyst_col': analyst_col,
-                        'delta': delta_val, 'prob_otm': prob_otm # NEUE WERTE
+                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
+                        'puffer': ((price - o['strike']) / price) * 100, 'bid': fair_price,
+                        'rsi': rsi, 'earn': earn if earn else "---", 'tage': days_to_exp, 
+                        'status': "🛡️ Trend" if uptrend else "💎 Dip", 'delta': delta_val,
+                        'sent_icon': sent_icon, 'stars_val': s_val, 
+                        'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️"
                     }
-        except: return None
-        return None
+            except: return None
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-        futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
-        
-        for i, future in enumerate(concurrent.futures.as_completed(futures)):
-            current_ticker = futures[future] 
-            res_data = future.result()
-            if res_data:
-                all_results.append(res_data)
+        # Multithreading Start
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
+            for i, future in enumerate(concurrent.futures.as_completed(futures)):
+                res_data = future.result()
+                if res_data:
+                    all_results.append(res_data)
+                
+                progress_bar.progress((i + 1) / len(ticker_liste))
+                if i % 5 == 0:
+                    status_text.text(f"Checke {i}/{len(ticker_liste)} Ticker...")
+
+        # WICHTIG: Diese Zeilen müssen EINE Ebene weiter links stehen als das 'futures' oben,
+        # aber immer noch innerhalb des 'if st.button' Blocks!
+        status_text.empty()
+        progress_bar.empty()
+
+        if all_results:
+            st.session_state.profi_scan_results = sorted(
+                all_results, 
+                key=lambda x: (
+                    float(x.get('stars_val', 0) or 0), 
+                    float(x.get('y_pa', 0) or 0)
+                ), 
+                reverse=True
+            )
+            st.success(f"Scan abgeschlossen: {len(all_results)} Treffer gefunden!")
+        else:
+            st.session_state.profi_scan_results = []
+            st.warning("Keine Treffer gefunden. Versuche den Puffer zu senken.")
             
-            progress_bar.progress((i + 1) / len(ticker_liste))
-            if i % 5 == 0:
-                status_text.text(f"Analysiere {i}/{len(ticker_liste)}: {current_ticker}...")
-
-    status_text.empty()
-    progress_bar.empty()
-
-    # Sortierung und Speicherung im Session State
-    if all_results:
-        st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
-    else:
-        st.session_state.profi_scan_results = []
-        st.warning("Keine Treffer gefunden.")
-
-# --- RESULTATE ANZEIGEN (Außerhalb des Buttons, damit sie stehen bleiben) ---
-if st.session_state.profi_scan_results:
+# --- RESULTATE ANZEIGEN ---
+if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
-    st.markdown(f"### 🎯 Top-Setups ({len(all_results)} Treffer)")
+    st.subheader(f"🎯 Top-Setups ({len(all_results)} Treffer)")
     
-    # Optional: Button zum Löschen der Ergebnisse
-    if st.button("Ergebnisse löschen"):
-        st.session_state.profi_scan_results = []
-        st.rerun()
-
     cols = st.columns(4)
+    heute_dt = datetime.now()
+
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
+            # Earnings & Style Logik
+            is_earning_risk = False
+            earn_str = res.get('earn', "---")
+            if earn_str and earn_str != "---":
+                try:
+                    earn_date = datetime.strptime(f"{earn_str}2026", "%d.%m.%Y")
+                    if 0 <= (earn_date - heute_dt).days <= res['tage']:
+                        is_earning_risk = True
+                except: pass
+
             s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-            border_color = res['analyst_col'] if res['stars_val'] >= 2 else "#e0e0e0"
-            rsi_col = "#e74c3c" if res['rsi'] > 70 or res['rsi'] < 30 else "#7f8c8d"
-            
-            with st.container(border=True):
-                # --- DATEN HOLEN ---
-                prob = res.get('prob_otm', 90)
-                delta_val = res.get('delta', 0)
-                bid_val = res.get('bid', 0)  # Die Prämie
-                s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-                p_color = "#27ae60" if prob > 85 else "#f1c40f"
-                
-                # --- HEADER: SYMBOL & STATUS ---
-                st.markdown(f"""
-                    <div style="line-height: 1.2;">
-                        <b>{res['symbol']}</b> {res['stars_str']} 
-                        <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>
-                    </div>
-                """, unsafe_allow_html=True)
-                
-                # --- SICHERHEITS-WERT ---
-                st.markdown(f"<div style='text-align: right; font-size: 0.8em; color: {p_color}; font-weight: bold;'>{prob:.0f}% Safe (OTM)</div>", unsafe_allow_html=True)
-                
-                # --- HAUPT-METRIKEN (RENDITE & PRÄMIE) ---
-                m1, m2 = st.columns(2)
-                with m1:
-                    st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
-                with m2:
-                    st.metric("Prämie", f"{bid_val:.2f} $", delta=f"Δ {delta_val:.2f}", delta_color="inverse")
-                
-                # --- DETAIL BOX ---
-                st.markdown(f"""
-                    <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 2px solid {border_color}; margin-bottom: 8px; font-size: 0.85em;">
-                        🎯 Strike: <b>{res['strike']:.1f}$</b> | 🛡️ Puffer: <b>{res['puffer']:.1f}%</b><br>
-                        📉 Delta: <b>{delta_val:.2f}</b> | ⏳ Tage: <b>{res['tage']}</b>
-                    </div>
-                    <div style="font-size: 0.8em; color: #7f8c8d; margin-bottom: 5px;">
-                        📅 ER: <b>{res['earn']}</b> | RSI: <b>{int(res['rsi'])}</b>
-                    </div>
-                    <div style="font-size: 0.85em; border-left: 4px solid {res['analyst_col']}; padding: 4px 8px; font-weight: bold; color: {res['analyst_col']}; background: {res['analyst_col']}10; border-radius: 0 4px 4px 0;">
-                        {res['analyst_txt']}
-                    </div>
-                """, unsafe_allow_html=True)
+            d_val = abs(res.get('delta', 0))
+            delta_col = "#e74c3c" if d_val > 0.30 else "#f39c12" if d_val > 0.20 else "#27ae60"
+            rsi_val_int = int(res.get('rsi', 50))
+            rsi_col = "#e74c3c" if rsi_val_int >= 70 else "#27ae60" if rsi_val_int <= 35 else "#6c757d"
+
+            # DIE SICHERE VARIANTE: HTML in einer Zeile ohne extra Einrückungs-Gefahr
+            html_template = f"""<div style="background-color: {'#fff5f5' if is_earning_risk else '#ffffff'}; border: {'2px solid #e74c3c' if is_earning_risk else '1px solid #e0e0e0'}; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif;">
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;"><span style="font-size: 1.3em; font-weight: 800; color: #2c3e50;">{res.get('sent_icon', '⚪')} {res['symbol']}</span><span style="color: #f1c40f; font-size: 1.0em;">{res.get('stars_str', '⭐')}</span></div>
+<div style="text-align: right; margin-bottom: 12px;"><span style="background-color: {s_color}15; color: {s_color}; padding: 3px 10px; border-radius: 20px; font-size: 0.75em; font-weight: 700;">{res['status']}</span></div>
+<div style="text-align: center; padding: 10px 0; background: #f8f9fa; border-radius: 10px; margin-bottom: 15px;"><div style="font-size: 0.7em; color: #6c757d; text-transform: uppercase;">Yield p.a.</div><div style="font-size: 1.8em; font-weight: 900; color: #1a1a1a;">{res['y_pa']:.1f}%</div></div>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.8em; margin-bottom: 15px;"><div style="border-left: 3px solid #8e44ad; padding-left: 8px;">Strike<br><b>{res['strike']:.1f}$</b></div><div style="border-left: 3px solid #f39c12; padding-left: 8px;">Mid<br><b>{res['bid']:.2f}$</b></div><div style="border-left: 3px solid #3498db; padding-left: 8px;">Puffer<br><b>{res['puffer']:.1f}%</b></div><div style="border-left: 3px solid {delta_col}; padding-left: 8px;">Delta<br><b style="color:{delta_col};">{d_val:.2f}</b></div></div>
+<div style="font-size: 0.8em; border-top: 1px solid #eee; padding-top: 10px; display: flex; justify-content: space-between; align-items: center; color: #6c757d;"><span>⏳ <b>{res['tage']}d</b></span><span style="color: {rsi_col}; font-weight: 800; background: {rsi_col}10; padding: 2px 6px; border-radius: 4px;">RSI: <span style="font-size: 1.2em;">{rsi_val_int}</span></span><span style="color: {'#e74c3c' if is_earning_risk else '#6c757d'}; font-weight: bold;">{'⚠️' if is_earning_risk else '📅'} {earn_str}</span></div>
+</div>"""
+            st.markdown(html_template, unsafe_allow_html=True)
+else:
+    st.info("Scanner bereit. Bitte auf '🚀 Profi-Scan starten' klicken.")
                     
-# --- SEKTION 2: DEPOT-MANAGER (STABILISIERTE VERSION) ---
+# --- SEKTION 2: DEPOT-MANAGER (MIT PIVOT-PUNKTEN) ---
 st.markdown("---")
 st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
-my_assets = {
-    "LRCX": [100, 210], "MU": [100, 390], "AFRM": [100, 76.00], "ELF": [100, 109.00], "ETSY": [100, 67.00],
-    "GTLB": [100, 41.00], "GTM": [100, 17.00], "HIMS": [100, 36.00],
-    "HOOD": [100, 120.00], "JKS": [100, 50.00], "NVO": [100, 97.00],
-    "RBRK": [100, 70.00], "SE": [100, 170.00], "TTD": [100, 102.00]
-}
+if 'depot_data_cache' not in st.session_state:
+    st.session_state.depot_data_cache = None
 
-with st.expander("📂 Mein Depot & Strategie-Signale", expanded=True):
-    depot_list = []
-    for symbol, data in my_assets.items():
-        try:
-            res = get_stock_data_full(symbol)
-            if res[0] is None: continue
+if st.session_state.depot_data_cache is None:
+    st.info("📦 Die Depot-Analyse ist aktuell pausiert, um den Start zu beschleunigen.")
+    if st.button("🚀 Depot jetzt analysieren (Inkl. Pivot-Check)", use_container_width=True):
+        with st.spinner("Berechne Pivot-Punkte und Signale..."):
+            my_assets = {
+                "LRCX": [100, 210], "MU": [100, 390], "AFRM": [100, 76.00], "ELF": [100, 109.00], "ETSY": [100, 67.00],
+                "GTLB": [100, 41.00], "GTM": [100, 17.00], "HIMS": [100, 36.00],
+                "HOOD": [100, 120.00], "JKS": [100, 50.00], "NVO": [100, 97.00],
+                "RBRK": [100, 70.00], "SE": [100, 170.00], "TTD": [100, 102.00]
+            }
             
-            # 1. Daten entpacken
-            price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
-            qty, entry = data[0], data[1]
-            perf_pct = ((price - entry) / entry) * 100
+            depot_list = []
+            for symbol, data in my_assets.items():
+                try:
+                    time.sleep(0.6) 
+                    res = get_stock_data_full(symbol)
+                    if res is None or res[0] is None: continue
+                    
+                    price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+                    qty, entry = data[0], data[1]
+                    perf_pct = ((price - entry) / entry) * 100
 
-            # 2. KI-Stimmung (OpenClaw) - NUR EINMAL AUFRUFEN
-            ki_status, ki_text, _ = get_openclaw_analysis(symbol)
-            ki_icon = "🟢" if ki_status == "Bullish" else "🔴" if ki_status == "Bearish" else "🟡"
+                    # Sterne & KI
+                    ki_status, _, _ = get_openclaw_analysis(symbol)
+                    ki_icon = "🟢" if ki_status == "Bullish" else "🔴" if ki_status == "Bearish" else "🟡"
+                    
+                    try:
+                        info_temp = yf.Ticker(symbol).info
+                        analyst_txt_temp, _ = get_analyst_conviction(info_temp)
+                        stars_count = 3 if "HYPER" in analyst_txt_temp else 2 if "Stark" in analyst_txt_temp else 1
+                        star_display = "⭐" * stars_count
+                    except:
+                        star_display = "⭐"
 
-            # 3. Sterne-Rating (Optimiert mit Try-Except für Speed)
-            try:
-                # Wir holen info nur einmal
-                info_temp = yf.Ticker(symbol).info
-                analyst_txt_temp, _ = get_analyst_conviction(info_temp)
-                # Kompakte Sterne-Zuweisung
-                stars_count = 3 if "HYPER" in analyst_txt_temp else 2 if "Stark" in analyst_txt_temp else 1
-                star_display = "⭐" * stars_count
-            except:
-                star_display = "⭐" # Fallback auf 1 Stern bei Fehler
+                    # PIVOT DATEN EXTRAHIEREN
+                    s2_d = pivots.get('S2') if pivots else None
+                    s2_w = pivots.get('W_S2') if pivots else None
+                    r2_d = pivots.get('R2') if pivots else None
+                    r2_w = pivots.get('W_R2') if pivots else None
+                    
+                    # AKTIONEN LOGIK
+                    put_action = "⏳ Warten"
+                    if rsi < 35 or (s2_d and price <= s2_d * 1.02): put_action = "🟢 JETZT (S2/RSI)"
+                    if s2_w and price <= s2_w * 1.01: put_action = "🔥 EXTREM (Weekly S2)"
+                    
+                    call_action = "⏳ Warten"
+                    if rsi > 55 and r2_d and price >= r2_d * 0.98: call_action = "🟢 JETZT (R2/RSI)"
 
-            # 4. Pivot-Werte sicher extrahieren (ACHTUNG: Unterstrich nutzen!)
-            r2_d = pivots.get('R2') if pivots else None
-            r2_w = pivots.get('W_R2') if pivots else None
-            s2_d = pivots.get('S2') if pivots else None
-            s2_w = pivots.get('W_S2') if pivots else None
+                    # DATENSATZ ERSTELLEN
+                    depot_list.append({
+                        "Ticker": f"{symbol} {star_display}",
+                        "Earnings": earn if earn else "---",
+                        "Einstand": f"{entry:.2f} $",
+                        "Aktuell": f"{price:.2f} $",
+                        "P/L %": f"{perf_pct:+.1f}%",
+                        "KI-Check": f"{ki_icon} {ki_status}",
+                        "RSI": int(rsi),
+                        "Short Put (Repair)": put_action,
+                        "Covered Call": call_action,
+                        "S2 Daily": f"{s2_d:.2f} $" if s2_d else "---",
+                        "S2 Weekly": f"{s2_w:.2f} $" if s2_w else "---",
+                        "R2 Daily": f"{r2_d:.2f} $" if r2_d else "---",
+                        "R2 Weekly": f"{r2_w:.2f} $" if r2_w else "---" 
+                    })
+                except Exception as e:
+                    continue
             
-            # --- Hier folgt deine bestehende Put/Call Action Logik ---
-            # ... (put_action = ..., call_action = ...)
-            
-            # Reparatur-Logik (Put)
-            put_action = "⏳ Warten"
-            if rsi < 35 or (s2_d and price <= s2_d * 1.02):
-                put_action = "🟢 JETZT (S2/RSI)"
-            if s2_w and price <= s2_w * 1.01:
-                put_action = "🔥 EXTREM (Weekly S2)"
-            
-            # Covered Call Logik (NUR GRÜN WENN R2 EXISTIERT UND > 0 IST)
-            call_action = "⏳ Warten"
-            if rsi > 55:
-                if r2_d and price >= r2_d * 0.98:
-                    call_action = "🟢 JETZT (R2/RSI)"
-                else:
-                    call_action = "🟡 RSI HOCH (Warte auf R2)"
+            st.session_state.depot_data_cache = depot_list
+            st.rerun()
 
-            depot_list.append({
-                "Ticker": f"{symbol} {star_display}",
-                "Earnings": earn if earn else "---",
-                "Einstand": f"{entry:.2f} $",
-                "Aktuell": f"{price:.2f} $",
-                "P/L %": f"{perf_pct:+.1f}%",
-                "KI-Check": f"{ki_icon} {ki_status}",
-                "RSI": int(rsi),
-                "Short Put (Repair)": put_action,
-                "Covered Call": call_action,
-                "S2 Daily": f"{s2_d:.2f} $" if s2_d else "---",
-                "S2 Weekly": f"{s2_w:.2f} $" if s2_w else "---", # JETZT DABEI
-                "R2 Daily": f"{r2_d:.2f} $" if r2_d else "---",
-                "R2 Weekly": f"{r2_w:.2f} $" if r2_w else "---"  # JETZT DABEI
-            })
-        except: continue
-    
-    if depot_list:
-        st.table(pd.DataFrame(depot_list))
-        
-st.info("💡 **Strategie:** Wenn 'Short Put' auf 🔥 steht, ist die Aktie am wöchentlichen Tiefstand – technisch das sicherste Level zum Verbilligen.")
+else:
+    col_header, col_btn = st.columns([3, 1])
+    with col_btn:
+        if st.button("🔄 Daten aktualisieren"):
+            st.session_state.depot_data_cache = None
+            st.rerun()
+
+    # Anzeige der Tabelle mit allen Pivot-Spalten
+    st.table(pd.DataFrame(st.session_state.depot_data_cache))
                     
 # --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
