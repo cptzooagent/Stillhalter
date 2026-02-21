@@ -460,22 +460,22 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
-            # 1. Daten-Vorbereitung (Fix für NameError & ValueError)
+            # 1. Variablen sicher definieren (Fix für Bild 50)
             earn_str = res.get('earn', "---")
             status_txt = res.get('status', "Trend")
-            # Sicherstellen, dass sent_icon existiert
-            sent_icon = res.get('sent_icon', "🟢") 
+            sent_icon = res.get('sent_icon', "🟢")
+            stars = res.get('stars_str', "⭐")
             
+            # Farben & Metriken
             s_color = "#10b981" if "Trend" in status_txt else "#3b82f6"
-            
             rsi_val = int(res.get('rsi', 50))
             delta_val = abs(res.get('delta', 0))
             delta_col = "#10b981" if delta_val < 0.20 else "#f59e0b" if delta_val < 0.30 else "#ef4444"
-            
+            mkt_cap = res.get('mkt_cap', 0)
             a_label = res.get('analyst_label', "Keine Analyse")
             a_color = res.get('analyst_color', "#8b5cf6")
-            mkt_cap = res.get('mkt_cap', 0)
-            
+
+            # Earning-Risk Check
             is_earning_risk = False
             if earn_str and earn_str != "---":
                 try:
@@ -484,57 +484,50 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
                         is_earning_risk = True
                 except: pass
 
-            # 2. Das moderne HTML-Layout (Anlehnung an Bild 8 & 11)
+            # 2. HTML-STRING OHNE EINRÜCKUNG (Verhindert Bild 60)
+            # Wir nutzen keine Tabs oder Leerzeichen am Zeilenanfang im f-string!
             html_code = f"""
-<div style="background: white; border: 1px solid {'#ef4444' if is_earning_risk else '#e5e7eb'}; 
-            border-radius: 16px; padding: 18px; margin-bottom: 20px; 
-            box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); font-family: sans-serif;">
-    
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-        <span style="font-size: 1.3em; font-weight: 800; color: #111827;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{res.get('stars_str', '⭐')}</span></span>
-        <span style="font-size: 0.75em; font-weight: 700; color: {s_color}; background: {s_color}15; padding: 2px 8px; border-radius: 6px;">{sent_icon} {status_txt}</span>
-    </div>
-
-    <div style="margin: 12px 0;">
-        <div style="font-size: 0.7em; color: #6b7280; font-weight: 600; text-transform: uppercase;">Yield p.a.</div>
-        <div style="font-size: 2em; font-weight: 900; color: #111827;">{res['y_pa']:.1f}%</div>
-    </div>
-
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px;">
-        <div style="border-left: 3px solid #8b5cf6; padding-left: 8px;">
-            <div style="font-size: 0.65em; color: #6b7280;">Strike</div>
-            <div style="font-size: 0.95em; font-weight: 700;">{res['strike']:.1f}&#36;</div>
-        </div>
-        <div style="border-left: 3px solid #f59e0b; padding-left: 8px;">
-            <div style="font-size: 0.65em; color: #6b7280;">Mid</div>
-            <div style="font-size: 0.95em; font-weight: 700;">{res['bid']:.2f}&#36;</div>
-        </div>
-        <div style="border-left: 3px solid #3b82f6; padding-left: 8px;">
-            <div style="font-size: 0.65em; color: #6b7280;">Puffer</div>
-            <div style="font-size: 0.95em; font-weight: 700;">{res['puffer']:.1f}%</div>
-        </div>
-        <div style="border-left: 3px solid {delta_col}; padding-left: 8px;">
-            <div style="font-size: 0.65em; color: #6b7280;">Delta</div>
-            <div style="font-size: 0.95em; font-weight: 700; color: {delta_col};">{delta_val:.2f}</div>
-        </div>
-    </div>
-
-    <hr style="border: 0; border-top: 1px solid #f3f4f6; margin: 12px 0;">
-
-    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75em; color: #4b5563;">
-        <span>⏳ <b>{res['tage']}d</b></span>
-        <div style="display: flex; gap: 4px;">
-            <span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-weight: 700;">RSI: {rsi_val}</span>
-            <span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-weight: 700;">{mkt_cap:.0f}B</span>
-        </div>
-        <span style="font-weight: 800; color: {'#ef4444' if is_earning_risk else '#6b7280'};">
-            {'⚠️' if is_earning_risk else '🗓️'} {earn_str}
-        </span>
-    </div>
-
-    <div style="margin-top: 12px; background: {a_color}10; color: {a_color}; padding: 8px; border-radius: 8px; border-left: 4px solid {a_color}; font-size: 0.72em; font-weight: bold; text-align: center;">
-        🚀 {a_label}
-    </div>
+<div style="background: white; border: 1px solid {'#ef4444' if is_earning_risk else '#e5e7eb'}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); font-family: sans-serif;">
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+<span style="font-size: 1.2em; font-weight: 800; color: #111827;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{stars}</span></span>
+<span style="font-size: 0.75em; font-weight: 700; color: {s_color}; background: {s_color}10; padding: 2px 8px; border-radius: 6px;">{sent_icon} {status_txt}</span>
+</div>
+<div style="margin: 10px 0;">
+<div style="font-size: 0.7em; color: #6b7280; font-weight: 600; text-transform: uppercase;">Yield p.a.</div>
+<div style="font-size: 1.9em; font-weight: 900; color: #111827;">{res['y_pa']:.1f}%</div>
+</div>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+<div style="border-left: 3px solid #8b5cf6; padding-left: 8px;">
+<div style="font-size: 0.6em; color: #6b7280;">Strike</div>
+<div style="font-size: 0.9em; font-weight: 700;">{res['strike']:.1f}&#36;</div>
+</div>
+<div style="border-left: 3px solid #f59e0b; padding-left: 8px;">
+<div style="font-size: 0.6em; color: #6b7280;">Mid</div>
+<div style="font-size: 0.9em; font-weight: 700;">{res['bid']:.2f}&#36;</div>
+</div>
+<div style="border-left: 3px solid #3b82f6; padding-left: 8px;">
+<div style="font-size: 0.6em; color: #6b7280;">Puffer</div>
+<div style="font-size: 0.9em; font-weight: 700;">{res['puffer']:.1f}%</div>
+</div>
+<div style="border-left: 3px solid {delta_col}; padding-left: 8px;">
+<div style="font-size: 0.6em; color: #6b7280;">Delta</div>
+<div style="font-size: 0.9em; font-weight: 700; color: {delta_col};">{delta_val:.2f}</div>
+</div>
+</div>
+<hr style="border: 0; border-top: 1px solid #f3f4f6; margin: 10px 0;">
+<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72em; color: #4b5563; margin-bottom: 10px;">
+<span>⏳ <b>{res['tage']}d</b></span>
+<div style="display: flex; gap: 4px;">
+<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-weight: 700;">RSI: {rsi_val}</span>
+<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-weight: 700;">Cap: {mkt_cap:.1f}B</span>
+</div>
+<span style="font-weight: 800; color: {'#ef4444' if is_earning_risk else '#6b7280'};">
+{'⚠️' if is_earning_risk else '🗓️'} {earn_str}
+</span>
+</div>
+<div style="background: {a_color}10; color: {a_color}; padding: 8px; border-radius: 8px; border-left: 4px solid {a_color}; font-size: 0.7em; font-weight: bold; text-align: center;">
+🚀 {a_label}
+</div>
 </div>
 """
             st.markdown(html_code, unsafe_allow_html=True)
@@ -819,6 +812,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
