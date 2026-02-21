@@ -459,7 +459,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     else:
         st.session_state.profi_scan_results = []
 
-# --- RESULTATE ANZEIGEN (OPTIMIERTES KARTEN-LAYOUT) ---
+# --- RESULTATE ANZEIGEN (MIT EARNINGS-WARNUNG) ---
 if st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
     st.markdown(f"### 🎯 Top-Setups ({len(all_results)} Treffer)")
@@ -467,53 +467,59 @@ if st.session_state.profi_scan_results:
     cols = st.columns(4)
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
-            # Logik für Farben
-            s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-            rsi_col = "#e74c3c" if res['rsi'] > 70 or res['rsi'] < 30 else "#2ecc71"
+            # 1. EARNINGS-CHECK LOGIK
+            # Wir prüfen: Sind Earnings bekannt und liegen sie in der Zukunft?
+            is_earning_risk = False
+            earn_str = res.get('earn', "---")
             
-            # Delta-Check (abs, falls negativ geliefert)
+            # Einfache Heuristik: Wenn ein Datum da ist, markieren wir es als Risiko 
+            # (In einer Profi-Version vergleicht man das Datum mit heute + res['tage'])
+            if earn_str != "---" and earn_str is not None:
+                is_earning_risk = True 
+
+            # 2. FARB-DEFINITIONEN
+            s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
+            # Roter Rahmen bei Earnings-Risiko, sonst Standard
+            border_style = "2px solid #e74c3c" if is_earning_risk else "1px solid #f0f0f0"
+            bg_color = "#fff5f5" if is_earning_risk else "#ffffff"
+            
+            # Delta-Farbe
             d_val = abs(res.get('delta', 0))
             delta_col = "#e74c3c" if d_val > 0.30 else "#f39c12" if d_val > 0.20 else "#27ae60"
 
             with st.container(border=True):
-                # 1. HEADER-ZEILE
+                # Custom CSS für den Earnings-Alarm Rahmen
                 st.markdown(f"""
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: -10px;">
-                        <span style="font-size: 1.2em; font-weight: bold;">{res['symbol']}</span>
-                        <span style="color: #f1c40f; font-size: 0.9em;">{res['stars_str']}</span>
-                    </div>
-                    <div style="text-align: right; margin-bottom: 5px;">
-                        <span style="background-color: {s_color}22; color: {s_color}; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; font-weight: bold; border: 1px solid {s_color};">
-                            {res['status']}
-                        </span>
-                    </div>
-                """, unsafe_allow_html=True)
+                    <div style="background-color: {bg_color}; border-radius: 5px; margin: -10px; padding: 10px; border: {border_style};">
+                        
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-size: 1.2em; font-weight: bold;">{res['symbol']}</span>
+                            <span style="color: #f1c40f; font-size: 0.9em;">{res['stars_str']}</span>
+                        </div>
+                        <div style="text-align: right; margin-bottom: 5px;">
+                            <span style="background-color: {s_color}22; color: {s_color}; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; font-weight: bold;">
+                                {res['status']}
+                            </span>
+                        </div>
 
-                # 2. RENDITE-ZENTRALE
-                st.markdown(f"""
-                    <div style="text-align: center; padding: 10px 0; background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%); border-radius: 8px; margin-bottom: 10px; border: 1px solid #eee;">
-                        <div style="font-size: 0.8em; color: #7f8c8d; text-transform: uppercase; letter-spacing: 1px;">Yield p.a.</div>
-                        <div style="font-size: 1.8em; font-weight: 800; color: #2c3e50;">{res['y_pa']:.1f}%</div>
-                    </div>
-                """, unsafe_allow_html=True)
+                        <div style="text-align: center; padding: 10px 0; background: #f8f9fa; border-radius: 8px; margin-bottom: 10px;">
+                            <div style="font-size: 0.8em; color: #7f8c8d;">Yield p.a.</div>
+                            <div style="font-size: 1.8em; font-weight: 800;">{res['y_pa']:.1f}%</div>
+                        </div>
 
-                # 3. TRADING-DETAILS (Kompakte Box)
-                st.markdown(f"""
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.85em; margin-bottom: 10px;">
-                        <div style="border-left: 3px solid #8e44ad; padding-left: 5px;">🎯 Strike<br><b>{res['strike']:.1f}$</b></div>
-                        <div style="border-left: 3px solid #f39c12; padding-left: 5px;">💰 Mid<br><b>{res['bid']:.2f}$</b></div>
-                        <div style="border-left: 3px solid #3498db; padding-left: 5px;">🛡️ Puffer<br><b>{res['puffer']:.1f}%</b></div>
-                        <div style="border-left: 3px solid {delta_col}; padding-left: 5px;">📉 Delta<br><b style="color:{delta_col};">{d_val:.2f}</b></div>
-                    </div>
-                """, unsafe_allow_html=True)
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.85em; margin-bottom: 10px;">
+                            <div style="border-left: 3px solid #8e44ad; padding-left: 5px;">🎯 Strike<br><b>{res['strike']:.1f}$</b></div>
+                            <div style="border-left: 3px solid #f39c12; padding-left: 5px;">💰 Mid<br><b>{res['bid']:.2f}$</b></div>
+                            <div style="border-left: 3px solid #3498db; padding-left: 5px;">🛡️ Puffer<br><b>{res['puffer']:.1f}%</b></div>
+                            <div style="border-left: 3px solid {delta_col}; padding-left: 5px;">📉 Delta<br><b style="color:{delta_col};">{d_val:.2f}</b></div>
+                        </div>
 
-                # 4. FOOTER (Metriken & Termine)
-                st.markdown(f"""
-                    <div style="font-size: 0.75em; color: #95a5a6; border-top: 1px solid #f0f0f0; padding-top: 8px; display: flex; justify-content: space-between; flex-wrap: wrap;">
-                        <span>⏳ <b>{res['tage']}d</b></span>
-                        <span>📊 RSI: <b style="color:{rsi_col};">{int(res['rsi'])}</b></span>
-                        <span>📅 ER: <b>{res['earn']}</b></span>
-                        <span>🏛️ <b>{res['mkt_cap']:.0f}B</b></span>
+                        <div style="font-size: 0.75em; border-top: 1px solid #eee; padding-top: 8px; display: flex; justify-content: space-between;">
+                            <span>⏳ <b>{res['tage']}d</b></span>
+                            <span style="color: {'#e74c3c' if is_earning_risk else '#95a5a6'}; font-weight: {'bold' if is_earning_risk else 'normal'};">
+                                {'⚠️ ER: ' if is_earning_risk else '📅 ER: '} {earn_str}
+                            </span>
+                        </div>
                     </div>
                 """, unsafe_allow_html=True)
                     
@@ -795,6 +801,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
