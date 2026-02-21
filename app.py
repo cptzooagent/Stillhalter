@@ -459,7 +459,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     else:
         st.session_state.profi_scan_results = []
 
-# --- RESULTATE ANZEIGEN (KARTEN-LAYOUT) ---
+# --- RESULTATE ANZEIGEN (KARTEN-LAYOUT INKL. DELTA) ---
 if st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
     st.markdown(f"### 🎯 Top-Setups ({len(all_results)} Treffer)")
@@ -467,20 +467,30 @@ if st.session_state.profi_scan_results:
     cols = st.columns(4)
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
+            # Farben für Status und RSI
             s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
             rsi_col = "#e74c3c" if res['rsi'] > 70 or res['rsi'] < 30 else "#7f8c8d"
             
+            # Delta-Farbe bestimmen (Warnung bei hohem Delta)
+            # Wir nutzen abs(), falls das Delta als negativer Wert (-0.15) kommt
+            d_val = abs(res.get('delta', 0))
+            delta_col = "#e74c3c" if d_val > 0.30 else "#f39c12" if d_val > 0.20 else "#27ae60"
+            
             with st.container(border=True):
+                # Header: Symbol, Sterne und Status (Trend/Dip)
                 st.markdown(f"**{res['symbol']}** {res['stars_str']} <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
+                
+                # Haupt-Metrik: Rendite
                 st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
                 
+                # Die Info-Box mit Strike, Mid, Puffer und dem NEUEN Delta
                 st.markdown(f"""
                     <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 2px solid {res['analyst_col'] if res['stars_val'] >= 2 else '#e0e0e0'}; margin-bottom: 8px; font-size: 0.85em;">
                         🎯 Strike: <b>{res['strike']:.1f}$</b> | 💰 Mid: <b>{res['bid']:.2f}$</b><br>
-                        🛡️ Puffer: <b>{res['puffer']:.1f}%</b> | ⏳ Tage: <b>{res['tage']}</b>
+                        🛡️ Puffer: <b>{res['puffer']:.1f}%</b> | 📉 Delta: <b style="color:{delta_col};">{d_val:.2f}</b>
                     </div>
                     <div style="font-size: 0.8em; color: #7f8c8d; margin-bottom: 5px;">
-                        🏁 Spread: <b>{res['spread']:.1f}%</b> | 📅 ER: <b>{res['earn']}</b>
+                        ⏳ Tage: <b>{res['tage']}</b> | 🏁 Spread: <b>{res['spread']:.1f}%</b> | 📅 ER: <b>{res['earn']}</b>
                     </div>
                     <div style="font-size: 0.8em; color: #7f8c8d; margin-bottom: 10px;">
                         📊 RSI: <b style="color:{rsi_col};">{int(res['rsi'])}</b> | 🏛️ MC: <b>{res['mkt_cap']:.1f}B</b>
@@ -765,6 +775,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
