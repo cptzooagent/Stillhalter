@@ -489,26 +489,26 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
             card_bg = "#fff5f5" if is_earning_risk else "#ffffff"
             card_border = "#e74c3c" if is_earning_risk else "#e0e0e0"
             
-            # 2. HTML-Layout (Optimiertes Grid)
+            # 2. HTML-Layout (Reparierter Fix für Delta-Fehler und Layout)
             html_code = f"""<div style="background-color: {card_bg}; border: 2px solid {card_border}; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif;">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
-<span style="font-size: 1.2em; font-weight: 800; color: #2c3e50;">{res['symbol']} <span style="color: #f1c40f;">{res.get('stars_str', '⭐')}</span></span>
+<span style="font-size: 1.1em; font-weight: 800; color: #2c3e50;">{res['symbol']} <span style="color: #f1c40f;">{res.get('stars_str', '⭐')}</span></span>
 <span style="font-size: 0.8em; font-weight: bold; color: {s_color};">{sent_icon} {res.get('status', 'Trend')}</span>
 </div>
 
 <div style="margin-top: 8px; font-size: 0.75em; color: #6c757d;">Yield p.a.</div>
-<div style="font-size: 1.9em; font-weight: 900; color: #1a1a1a; margin-bottom: 12px;">{res['y_pa']:.1f}%</div>
+<div style="font-size: 1.8em; font-weight: 900; color: #1a1a1a; margin-bottom: 12px;">{res['y_pa']:.1f}%</div>
 
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; font-size: 0.72em; border: 1px solid #eee; border-radius: 8px; padding: 8px; background: #fafafa; margin-bottom: 10px;">
-<div title="Strike Preis">🎯 Str: <b>{res['strike']:.1f}&#36;</b></div>
-<div title="Optionsprämie">💰 Bid: <b>{res['bid']:.2f}&#36;</b></div>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.75em; border: 1px solid #eee; border-radius: 8px; padding: 10px; background: #fafafa; margin-bottom: 10px;">
+<div title="Strike Preis">🎯 Str: <b>{res['strike']:.1f} &#36;</b></div>
+<div title="Optionsprämie">💰 Bid: <b>{res['bid']:.2f} &#36;</b></div>
 <div title="Abstand zum Strike">🛡️ Puf: <b>{res['puffer']:.1f}%</b></div>
 <div title="Relative Stärke Index" style="color: {rsi_col};">📉 RSI: <b>{rsi_val}</b></div>
-<div title="Risiko-Kennzahl" style="color: {delta_col};">⚡ Del: <b>{delta_val:.2d}</b></div>
+<div title="Risiko-Kennzahl (Delta)" style="color: {delta_col};">⚡ Del: <b>{delta_val:.2f}</b></div>
 <div title="Restlaufzeit">⏳ Tg: <b>{res['tage']}</b></div>
 </div>
 
-<div style="font-size: 0.68em; color: #95a5a6; margin-bottom: 8px; display: flex; justify-content: space-between;">
+<div style="font-size: 0.7em; color: #95a5a6; margin-bottom: 8px; display: flex; justify-content: space-between;">
 <span>🗓️ ER: {earn_str}</span>
 <span>🏢 Cap: {res.get('mkt_cap', 0):.1f}B</span>
 </div>
@@ -800,6 +800,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
