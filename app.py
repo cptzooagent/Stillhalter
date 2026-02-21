@@ -465,15 +465,12 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
             s_color = "#27ae60" if "Trend" in res.get('status', "") else "#2980b9"
             sent_icon = res.get('sent_icon', "🟢")
             
-            # RSI Logik (Rot ab 70)
+            # RSI & Delta Logik
             rsi_val = int(res.get('rsi', 50))
-            rsi_col = "#e74c3c" if rsi_val >= 70 else "#27ae60" if rsi_val <= 35 else "#7f8c8d"
-            
-            # Delta Logik (Rot ab 0.30)
             delta_val = abs(res.get('delta', 0))
-            delta_col = "#e74c3c" if delta_val > 0.30 else "#f39c12" if delta_val > 0.20 else "#27ae60"
+            delta_col = "#27ae60" if delta_val < 0.20 else "#f39c12" if delta_val < 0.30 else "#e74c3c"
             
-            # Analysten-Balken
+            # Analysten-Balken (Hyper Growth / Stark)
             a_label = res.get('analyst_label', "Keine Analyse")
             a_color = res.get('analyst_color', "#9b59b6")
             
@@ -486,35 +483,50 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
                         is_earning_risk = True
                 except: pass
 
-            card_bg = "#fff5f5" if is_earning_risk else "#ffffff"
+            card_bg = "#fffcfc" if is_earning_risk else "#ffffff"
             card_border = "#e74c3c" if is_earning_risk else "#e0e0e0"
             
-            # 2. HTML-Layout (Reparierter Fix für Delta-Fehler und Layout)
-            html_code = f"""<div style="background-color: {card_bg}; border: 2px solid {card_border}; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif;">
+            # 2. HTML-Layout EXAKT WIE BILD 8
+            html_code = f"""<div style="background-color: {card_bg}; border: 1px solid {card_border}; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.03); font-family: 'Segoe UI', sans-serif;">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
-<span style="font-size: 1.1em; font-weight: 800; color: #2c3e50;">{res['symbol']} <span style="color: #f1c40f;">{res.get('stars_str', '⭐')}</span></span>
-<span style="font-size: 0.8em; font-weight: bold; color: {s_color};">{sent_icon} {res.get('status', 'Trend')}</span>
+    <span style="font-size: 1.2em; font-weight: 800; color: #2c3e50;">{res['symbol']} <span style="color: #f1c40f;">{res.get('stars_str', '⭐')}</span></span>
+    <span style="font-size: 0.8em; font-weight: bold; color: {s_color};">{sent_icon} {res.get('status', 'Trend')}</span>
 </div>
 
-<div style="margin-top: 8px; font-size: 0.75em; color: #6c757d;">Yield p.a.</div>
+<div style="margin-top: 5px; font-size: 0.7em; color: #7f8c8d; text-transform: uppercase;">Yield p.a.</div>
 <div style="font-size: 1.8em; font-weight: 900; color: #1a1a1a; margin-bottom: 12px;">{res['y_pa']:.1f}%</div>
 
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.75em; border: 1px solid #eee; border-radius: 8px; padding: 10px; background: #fafafa; margin-bottom: 10px;">
-<div title="Strike Preis">🎯 Str: <b>{res['strike']:.1f} &#36;</b></div>
-<div title="Optionsprämie">💰 Bid: <b>{res['bid']:.2f} &#36;</b></div>
-<div title="Abstand zum Strike">🛡️ Puf: <b>{res['puffer']:.1f}%</b></div>
-<div title="Relative Stärke Index" style="color: {rsi_col};">📉 RSI: <b>{rsi_val}</b></div>
-<div title="Risiko-Kennzahl (Delta)" style="color: {delta_col};">⚡ Del: <b>{delta_val:.2f}</b></div>
-<div title="Restlaufzeit">⏳ Tg: <b>{res['tage']}</b></div>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px;">
+    <div style="border-left: 3px solid #8e44ad; padding-left: 8px;">
+        <div style="font-size: 0.65em; color: #7f8c8d;">Strike</div>
+        <div style="font-size: 0.9em; font-weight: bold;">{res['strike']:.1f}&#36;</div>
+    </div>
+    <div style="border-left: 3px solid #f39c12; padding-left: 8px;">
+        <div style="font-size: 0.65em; color: #7f8c8d;">Mid</div>
+        <div style="font-size: 0.9em; font-weight: bold;">{res['bid']:.2f}&#36;</div>
+    </div>
+    <div style="border-left: 3px solid #3498db; padding-left: 8px;">
+        <div style="font-size: 0.65em; color: #7f8c8d;">Puffer</div>
+        <div style="font-size: 0.9em; font-weight: bold;">{res['puffer']:.1f}%</div>
+    </div>
+    <div style="border-left: 3px solid {delta_col}; padding-left: 8px;">
+        <div style="font-size: 0.65em; color: #7f8c8d;">Delta</div>
+        <div style="font-size: 0.9em; font-weight: bold; color: {delta_col};">{delta_val:.2f}</div>
+    </div>
 </div>
 
-<div style="font-size: 0.7em; color: #95a5a6; margin-bottom: 8px; display: flex; justify-content: space-between;">
-<span>🗓️ ER: {earn_str}</span>
-<span>🏢 Cap: {res.get('mkt_cap', 0):.1f}B</span>
+<hr style="border: 0; border-top: 1px solid #eee; margin: 10px 0;">
+
+<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75em; margin-bottom: 10px;">
+    <span>⏳ <b>{res['tage']}d</b></span>
+    <span style="background: #f1f2f6; padding: 2px 8px; border-radius: 4px; font-weight: bold; color: #57606f;">RSI: {rsi_val}</span>
+    <span style="color: {'#e74c3c' if is_earning_risk else '#7f8c8d'}; font-weight: bold;">
+        {'⚠️' if is_earning_risk else '📅'} {earn_str}
+    </span>
 </div>
 
-<div style="background-color: {a_color}15; color: {a_color}; padding: 7px; border-radius: 6px; border-left: 5px solid {a_color}; font-size: 0.72em; font-weight: bold;">
-🚀 {a_label}
+<div style="background-color: {a_color}15; color: {a_color}; padding: 8px; border-radius: 6px; border-left: 5px solid {a_color}; font-size: 0.72em; font-weight: bold; text-align: center;">
+    🚀 {a_label}
 </div>
 </div>"""
             
@@ -800,6 +812,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
