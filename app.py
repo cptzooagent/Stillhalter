@@ -467,6 +467,10 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
             a_label = res.get('analyst_label', "Keine Analyse")
             a_color = res.get('analyst_color', "#9b59b6")
             
+            # RSI Logik: Rot ab 70, Grün unter 35, sonst Grau
+            rsi_val = int(res.get('rsi', 50))
+            rsi_col = "#e74c3c" if rsi_val >= 70 else "#27ae60" if rsi_val <= 35 else "#7f8c8d"
+            
             # Earning-Check
             is_earning_risk = False
             if earn_str and earn_str != "---":
@@ -476,11 +480,10 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
                         is_earning_risk = True
                 except: pass
 
-            # HTML-CARD (In eine einzige Variable ohne riskante Umbrüche)
             card_bg = "#fff5f5" if is_earning_risk else "#ffffff"
             card_border = "#e74c3c" if is_earning_risk else "#e0e0e0"
             
-            # WICHTIG: Dollar-Zeichen durch HTML-Code &#36; ersetzen!
+            # HTML-CARD mit RSI im Grid
             html_code = f"""<div style="background-color: {card_bg}; border: 2px solid {card_border}; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif;">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
 <span style="font-size: 1.2em; font-weight: 800; color: #2c3e50;">{res['symbol']} <span style="color: #f1c40f;">{res.get('stars_str', '⭐')}</span></span>
@@ -488,13 +491,17 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 </div>
 <div style="margin-top: 10px; font-size: 0.8em; color: #6c757d;">Yield p.a.</div>
 <div style="font-size: 1.8em; font-weight: 900; color: #1a1a1a; margin-bottom: 15px;">{res['y_pa']:.1f}%</div>
+
 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.75em; border: 1px solid #dcdde1; border-radius: 8px; padding: 10px; background: #fcfcfc; margin-bottom: 10px;">
-<div>🎯 Strike: <b>{res['strike']:.1f}&#36;</b></div>
+<div>🎯 Str: <b>{res['strike']:.1f}&#36;</b></div>
 <div>💰 Bid: <b>{res['bid']:.2f}&#36;</b></div>
-<div>🛡️ Puffer: <b>{res['puffer']:.1f}%</b></div>
-<div>⏳ Tage: <b>{res['tage']}</b></div>
+<div>🛡️ Puf: <b>{res['puffer']:.1f}%</b></div>
+<div style="color: {rsi_col};">📉 RSI: <b>{rsi_val}</b></div>
+<div>⏳ Tg: <b>{res['tage']}</b></div>
+<div>🏢 Cap: <b>{res.get('mkt_cap', 0):.1f}B</b></div>
 </div>
-<div style="font-size: 0.7em; color: #95a5a6; margin-bottom: 10px;">🗓️ ER: {earn_str} | Cap: {res.get('mkt_cap', 0):.1f}B</div>
+
+<div style="font-size: 0.7em; color: #95a5a6; margin-bottom: 10px;">🗓️ Nächste Earnings: {earn_str}</div>
 <div style="background-color: {a_color}15; color: {a_color}; padding: 8px; border-radius: 6px; border-left: 5px solid {a_color}; font-size: 0.75em; font-weight: bold;">
 🚀 {a_label}
 </div>
@@ -782,6 +789,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
