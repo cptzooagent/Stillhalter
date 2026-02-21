@@ -460,21 +460,19 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
-            # 1. Daten-Vorbereitung & Farblogik
+            # 1. Daten-Vorbereitung
             earn_str = res.get('earn', "---")
             s_color = "#27ae60" if "Trend" in res.get('status', "") else "#2980b9"
             sent_icon = res.get('sent_icon', "🟢")
             
-            # RSI & Delta Logik
             rsi_val = int(res.get('rsi', 50))
             delta_val = abs(res.get('delta', 0))
             delta_col = "#27ae60" if delta_val < 0.20 else "#f39c12" if delta_val < 0.30 else "#e74c3c"
             
-            # Analysten-Balken (Hyper Growth / Stark)
             a_label = res.get('analyst_label', "Keine Analyse")
             a_color = res.get('analyst_color', "#9b59b6")
+            mkt_cap = res.get('mkt_cap', 0)
             
-            # Earning-Check
             is_earning_risk = False
             if earn_str and earn_str != "---":
                 try:
@@ -486,7 +484,7 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
             card_bg = "#fffcfc" if is_earning_risk else "#ffffff"
             card_border = "#e74c3c" if is_earning_risk else "#e0e0e0"
             
-            # 2. HTML-Layout EXAKT WIE BILD 8
+            # 2. HTML-Layout mit Market Cap neben RSI
             html_code = f"""<div style="background-color: {card_bg}; border: 1px solid {card_border}; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 10px rgba(0,0,0,0.03); font-family: 'Segoe UI', sans-serif;">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
     <span style="font-size: 1.2em; font-weight: 800; color: #2c3e50;">{res['symbol']} <span style="color: #f1c40f;">{res.get('stars_str', '⭐')}</span></span>
@@ -517,9 +515,12 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 
 <hr style="border: 0; border-top: 1px solid #eee; margin: 10px 0;">
 
-<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75em; margin-bottom: 10px;">
+<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72em; margin-bottom: 10px;">
     <span>⏳ <b>{res['tage']}d</b></span>
-    <span style="background: #f1f2f6; padding: 2px 8px; border-radius: 4px; font-weight: bold; color: #57606f;">RSI: {rsi_val}</span>
+    <div style="display: flex; gap: 5px;">
+        <span style="background: #f1f2f6; padding: 2px 6px; border-radius: 4px; font-weight: bold; color: #57606f;">RSI: {rsi_val}</span>
+        <span style="background: #f1f2f6; padding: 2px 6px; border-radius: 4px; font-weight: bold; color: #57606f;">Cap: {mkt_cap:.1f}B</span>
+    </div>
     <span style="color: {'#e74c3c' if is_earning_risk else '#7f8c8d'}; font-weight: bold;">
         {'⚠️' if is_earning_risk else '📅'} {earn_str}
     </span>
@@ -812,6 +813,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
