@@ -462,25 +462,34 @@ if st.session_state.profi_scan_results:
             earn_str = res.get('earn', "---")
             if earn_str and earn_str != "---":
                 try:
+                    # Vergleich mit dem aktuellen Jahr 2026
                     earn_date = datetime.strptime(f"{earn_str}2026", "%d.%m.%Y")
                     if 0 <= (earn_date - heute_dt).days <= res['tage']:
                         is_earning_risk = True
                 except: pass
 
+            # Farben für Status und Delta
             s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
             d_val = abs(res.get('delta', 0))
             delta_col = "#e74c3c" if d_val > 0.30 else "#f39c12" if d_val > 0.20 else "#27ae60"
 
-            # RSI Styling
+            # RSI Styling Logik
             rsi_val_int = int(res['rsi'])
-            rsi_col = "#e74c3c" if rsi_val_int >= 70 else "#27ae60" if rsi_val_int <= 35 else "#6c757d"
-            rsi_weight = "800" if (rsi_val_int >= 70 or rsi_val_int <= 35) else "normal"
+            if rsi_val_int >= 70:
+                rsi_col = "#e74c3c"  # Rot (Überkauft)
+                rsi_bg = "rgba(231, 76, 60, 0.1)"
+            elif rsi_val_int <= 35:
+                rsi_col = "#27ae60"  # Grün (Günstig)
+                rsi_bg = "rgba(39, 174, 96, 0.1)"
+            else:
+                rsi_col = "#6c757d"  # Grau (Neutral)
+                rsi_bg = "rgba(108, 117, 125, 0.1)"
 
-            # DAS IST DER WICHTIGE TEIL:
-            st.markdown(f"""
+            # DER ENTSCHEIDENDE HTML-BLOCK
+            card_html = f"""
             <div style="background-color: {'#fff5f5' if is_earning_risk else '#ffffff'}; 
                         border: {'2px solid #e74c3c' if is_earning_risk else '1px solid #e0e0e0'}; 
-                        border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                        border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif;">
                 
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
                     <span style="font-size: 1.3em; font-weight: 800; color: #2c3e50;">{res.get('sent_icon', '⚪')} {res['symbol']}</span>
@@ -507,7 +516,7 @@ if st.session_state.profi_scan_results:
                 
                 <div style="font-size: 0.8em; border-top: 1px solid #eee; padding-top: 10px; display: flex; justify-content: space-between; align-items: center; color: #6c757d;">
                     <span>⏳ <b>{res['tage']}d</b></span>
-                    <span style="color: {rsi_col}; font-weight: {rsi_weight}; background: {rsi_col}10; padding: 2px 6px; border-radius: 4px;">
+                    <span style="color: {rsi_col}; font-weight: 800; background: {rsi_bg}; padding: 2px 6px; border-radius: 4px;">
                         RSI: <span style="font-size: 1.2em;">{rsi_val_int}</span>
                     </span>
                     <span style="color: {'#e74c3c' if is_earning_risk else '#6c757d'}; font-weight: bold;">
@@ -515,7 +524,9 @@ if st.session_state.profi_scan_results:
                     </span>
                 </div>
             </div>
-            """, unsafe_allow_html=True)
+            """
+            # Hier wird das HTML final an Streamlit übergeben
+            st.markdown(card_html, unsafe_allow_html=True)
 
 else:
     st.info("Bisher keine Ergebnisse. Bitte klicke auf '🚀 Profi-Scan starten'.")
@@ -798,6 +809,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
