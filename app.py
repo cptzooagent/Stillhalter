@@ -450,7 +450,9 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             st.session_state.profi_scan_results = []
             st.warning("Keine Treffer gefunden. Versuche den Puffer zu senken.")
             
-# --- RESULTATE ANZEIGEN ---
+# ==========================================
+# --- SEKTION 1: RESULTATE ANZEIGEN ---
+# ==========================================
 if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
     st.subheader(f"🎯 Top-Setups nach Qualität ({len(all_results)} Treffer)")
@@ -460,22 +462,32 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
-            # 1. Variablen sicher definieren (Fix für Bild 50)
+            # --- 1. DATEN-VORBEREITUNG & LOGIK ---
             earn_str = res.get('earn', "---")
             status_txt = res.get('status', "Trend")
             sent_icon = res.get('sent_icon', "🟢")
             stars = res.get('stars_str', "⭐")
             
-            # Farben & Metriken
+            # Farben für Status & Analysten
             s_color = "#10b981" if "Trend" in status_txt else "#3b82f6"
-            rsi_val = int(res.get('rsi', 50))
-            delta_val = abs(res.get('delta', 0))
-            delta_col = "#10b981" if delta_val < 0.20 else "#f59e0b" if delta_val < 0.30 else "#ef4444"
-            mkt_cap = res.get('mkt_cap', 0)
             a_label = res.get('analyst_label', "Keine Analyse")
             a_color = res.get('analyst_color', "#8b5cf6")
-
-            # Earning-Risk Check
+            mkt_cap = res.get('mkt_cap', 0)
+            
+            # RSI Logik: Rot & Fett ab 70
+            rsi_val = int(res.get('rsi', 50))
+            if rsi_val >= 70:
+                rsi_style = "color: #ef4444; font-weight: 900;"
+            elif rsi_val <= 35:
+                rsi_style = "color: #10b981; font-weight: 700;"
+            else:
+                rsi_style = "color: #4b5563; font-weight: 700;"
+            
+            # Delta Logik & Formatierung
+            delta_val = abs(res.get('delta', 0))
+            delta_col = "#10b981" if delta_val < 0.20 else "#f59e0b" if delta_val < 0.30 else "#ef4444"
+            
+            # Earning-Risk Check (Warnung innerhalb der Laufzeit)
             is_earning_risk = False
             if earn_str and earn_str != "---":
                 try:
@@ -484,8 +496,7 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
                         is_earning_risk = True
                 except: pass
 
-            # 2. HTML-STRING OHNE EINRÜCKUNG (Verhindert Bild 60)
-            # Wir nutzen keine Tabs oder Leerzeichen am Zeilenanfang im f-string!
+            # --- 2. HTML-LAYOUT (Bündig links wegen Rendering-Fix) ---
             html_code = f"""
 <div style="background: white; border: 1px solid {'#ef4444' if is_earning_risk else '#e5e7eb'}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); font-family: sans-serif;">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
@@ -502,24 +513,24 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 <div style="font-size: 0.9em; font-weight: 700;">{res['strike']:.1f}&#36;</div>
 </div>
 <div style="border-left: 3px solid #f59e0b; padding-left: 8px;">
-<div style="font-size: 0.6em; color: #6b7280;">Mid</div>
+<div style="font-size: 0.65em; color: #6b7280;">Mid</div>
 <div style="font-size: 0.9em; font-weight: 700;">{res['bid']:.2f}&#36;</div>
 </div>
 <div style="border-left: 3px solid #3b82f6; padding-left: 8px;">
-<div style="font-size: 0.6em; color: #6b7280;">Puffer</div>
+<div style="font-size: 0.65em; color: #6b7280;">Puffer</div>
 <div style="font-size: 0.9em; font-weight: 700;">{res['puffer']:.1f}%</div>
 </div>
 <div style="border-left: 3px solid {delta_col}; padding-left: 8px;">
-<div style="font-size: 0.6em; color: #6b7280;">Delta</div>
+<div style="font-size: 0.65em; color: #6b7280;">Delta</div>
 <div style="font-size: 0.9em; font-weight: 700; color: {delta_col};">{delta_val:.2f}</div>
 </div>
 </div>
-<hr style="border: 0; border-top: 1px solid #f3f4f6; margin: 10px 0;">
+<hr style="border: 0; border-top: 1px solid #f3f4f6; margin: 12px 0;">
 <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72em; color: #4b5563; margin-bottom: 10px;">
 <span>⏳ <b>{res['tage']}d</b></span>
 <div style="display: flex; gap: 4px;">
-<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-weight: 700;">RSI: {rsi_val}</span>
-<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-weight: 700;">Cap: {mkt_cap:.1f}B</span>
+<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; {rsi_style}">RSI: {rsi_val}</span>
+<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-weight: 700;">{mkt_cap:.0f}B</span>
 </div>
 <span style="font-weight: 800; color: {'#ef4444' if is_earning_risk else '#6b7280'};">
 {'⚠️' if is_earning_risk else '🗓️'} {earn_str}
@@ -812,6 +823,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
