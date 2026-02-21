@@ -763,12 +763,3 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
-
-
-
-
-
-
-
-
-
