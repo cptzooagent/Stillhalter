@@ -331,29 +331,31 @@ def get_analyst_conviction(info):
 
 
 
-# --- VOLLSTÄNDIGER PROFI-SCANNER (BERECHNUNG + DESIGN) ---
+# --- PROFI-SCANNER RESULTAT-BLOCK (FIX FÜR NAMEERROR) ---
+
+# 1. SICHERHEITS-CHECK: Existiert die Variable setups?
+if 'setups' not in locals() and 'setups' not in globals():
+    setups = []
 
 st.markdown(f"### 🎯 Top-Setups nach Qualität ({len(setups)} Treffer)")
 
 if not setups:
-    st.info("Klicke auf 'Profi-Scan starten' oder passe die Filter an, um Ergebnisse zu sehen.")
+    st.info("Klicke auf den Button oben, um den Profi-Scan zu starten.")
 else:
-    # 1. SORTIERUNG (Wichtig für Bild 11: Hyper-Growth & Sterne zuerst)
-    # Sortiert primär nach Sternen und sekundär nach Umsatzwachstum
+    # 2. SORTIERUNG (Hyper-Growth & Sterne zuerst wie in Bild 11)
     setups = sorted(
         setups, 
         key=lambda x: (x.get('stars', 0), x.get('info', {}).get('revenueGrowth', 0)), 
         reverse=True
     )
 
-    # 2. GRID-LAYOUT (3 Spalten wie im Original)
     cols = st.columns(3)
 
     for i, setup in enumerate(setups):
-        # --- DATEN-EXTRAKTION ---
+        # Daten-Vorbereitung
         symbol = setup.get('symbol', 'N/A')
         price = setup.get('price', 0)
-        stars = setup.get('stars', 0)
+        stars_count = int(setup.get('stars', 0))
         yield_pa = setup.get('yield_pa', 0)
         strike = setup.get('strike', 0)
         bid = setup.get('bid', 0)
@@ -364,80 +366,58 @@ else:
         uptrend = setup.get('uptrend', True)
         info = setup.get('info', {})
         
-        # Fundamentaldaten für Banner
         rev_growth = info.get('revenueGrowth', 0) * 100
-        stars_count = int(stars)
-        target_price = info.get('targetMeanPrice', price)
-        upside = ((target_price / price) - 1) * 100 if target_price and price > 0 else 0
+        target = info.get('targetMeanPrice', price)
+        upside = ((target / price) - 1) * 100 if target and price > 0 else 0
 
-        # --- 3. BANNER-LOGIK (FIXED: HYPER-GROWTH ANZEIGE) ---
+        # --- BANNER LOGIK (Lila/Grün aus Bild 11) ---
         banner_html = ""
-        # Hyper-Growth Bedingung (Lila)
         if rev_growth >= 30 or stars_count >= 3:
             banner_html = f"""
-            <div style="background-color: rgba(155, 89, 182, 0.1); border: 1px solid #9b59b6; border-radius: 5px; padding: 6px; margin: 10px 0; text-align: center;">
-                <span style="color: #9b59b6; font-weight: bold; font-size: 0.85em;">🚀 HYPER-GROWTH (+{rev_growth:.0f}% Wachst.)</span>
-            </div>
-            """
-        # Stark Bedingung (Grün)
+            <div style="background-color: rgba(155, 89, 182, 0.08); border: 1px solid #9b59b6; border-radius: 5px; padding: 6px; margin: 10px 0; text-align: center;">
+                <span style="color: #9b59b6; font-weight: bold; font-size: 0.8em;">🚀 HYPER-GROWTH (+{rev_growth:.0f}% Wachst.)</span>
+            </div>"""
         elif stars_count >= 2:
             banner_html = f"""
-            <div style="background-color: rgba(46, 204, 113, 0.1); border: 1px solid #2ecc71; border-radius: 5px; padding: 6px; margin: 10px 0; text-align: center;">
-                <span style="color: #27ae60; font-weight: bold; font-size: 0.85em;">✅ Stark (Ziel: +{upside:.0f}%, Wachst.: {rev_growth:.0f}%)</span>
-            </div>
-            """
+            <div style="background-color: rgba(46, 204, 113, 0.08); border: 1px solid #2ecc71; border-radius: 5px; padding: 6px; margin: 10px 0; text-align: center;">
+                <span style="color: #27ae60; font-weight: bold; font-size: 0.8em;">✅ Stark (Ziel: +{upside:.0f}%, Wachst.: {rev_growth:.0f}%)</span>
+            </div>"""
         else:
-            # Stabiler Platzhalter
-            banner_html = '<div style="margin: 10px 0; height: 35px;"></div>'
+            banner_html = '<div style="height: 42px;"></div>'
 
-        # --- 4. VISUELLE ELEMENTE (TREND/DIP & WARNING) ---
+        # --- DESIGN ELEMENTE (Trend & Warnung) ---
         trend_label = "🛡️ Trend" if uptrend else "💎 Dip"
         trend_col = "#27ae60" if uptrend else "#2980b9"
-        
-        # Earnings-Check für roten Rahmen (Bild 15)
         is_warning = "!" in str(earn) or (earn and ("Feb" in str(earn) or "Mar" in str(earn)))
-        border_col = "#ff4b4b" if is_warning else "#e6e9ef"
+        border_style = "2px solid #ff4b4b" if is_warning else "1px solid #e6e9ef"
 
-        # --- 5. HTML-KARTEN KONSTRUKTION ---
+        # --- HTML KARTE (Struktur aus Bild 11) ---
         card_html = f"""
-        <div style="border: 2px solid {border_col}; border-radius: 12px; padding: 15px; background-color: white; margin-bottom: 20px; box-shadow: 2px 2px 8px rgba(0,0,0,0.05); min-height: 440px; position: relative;">
+        <div style="border: {border_style}; border-radius: 12px; padding: 15px; background-color: white; margin-bottom: 20px; box-shadow: 2px 2px 10px rgba(0,0,0,0.05); min-height: 440px;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-size: 1.3em; font-weight: bold; color: #1f1f1f;">{symbol}</span>
-                <span style="color: #f1c40f; font-size: 1.1em;">{"⭐" * stars_count}</span>
+                <span style="font-size: 1.2em; font-weight: bold;">{symbol}</span>
+                <span style="color: #f1c40f;">{"⭐" * stars_count}</span>
+                <span style="background-color: {trend_col}22; color: {trend_col}; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; font-weight: bold;">{trend_label}</span>
             </div>
             
-            <div style="text-align: right; margin-top: -5px;">
-                <span style="background-color: {trend_col}22; color: {trend_col}; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; font-weight: bold;">
-                    {trend_label}
-                </span>
-            </div>
-
-            <div style="text-align: center; padding: 15px 0;">
-                <div style="font-size: 0.75em; color: #6c757d; letter-spacing: 1px;">YIELD P.A.</div>
-                <div style="font-size: 2.3em; font-weight: bold; color: #1f1f1f;">{yield_pa:.1f}%</div>
+            <div style="text-align: center; margin: 15px 0;">
+                <small style="color: #6c757d;">Yield p.a.</small><br>
+                <strong style="font-size: 2em;">{yield_pa:.1f}%</strong>
             </div>
 
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; border: 1px solid #f0f2f6; border-radius: 8px; padding: 10px; background-color: #fafbfc;">
-                <div style="border-left: 3px solid #9b59b6; padding-left: 8px;">
-                    <small style="color: #6c757d;">🎯 Strike</small><br><strong>{strike:.1f}$</strong>
-                </div>
-                <div style="border-left: 3px solid #f39c12; padding-left: 8px;">
-                    <small style="color: #6c757d;">💰 Bid</small><br><strong>{bid:.2f}$</strong>
-                </div>
-                <div style="border-left: 3px solid #3498db; padding-left: 8px;">
-                    <small style="color: #6c757d;">🛡️ Puffer</small><br><strong>{puffer:.1f}%</strong>
-                </div>
-                <div style="border-left: 3px solid #2ecc71; padding-left: 8px;">
-                    <small style="color: #6c757d;">⌛ Tage</small><br><strong>{days}</strong>
-                </div>
+                <div style="border-left: 3px solid #e91e63; padding-left: 8px;"><small>🎯 Strike: <b>{strike:.1f}$</b></small></div>
+                <div style="border-left: 3px solid #ff9800; padding-left: 8px;"><small>💰 Bid: <b>{bid:.2f}$</b></small></div>
+                <div style="border-left: 3px solid #2196f3; padding-left: 8px;"><small>🛡️ Puffer: <b>{puffer:.1f}%</b></small></div>
+                <div style="border-left: 3px solid #4caf50; padding-left: 8px;"><small>⌛ Tage: <b>{days}</b></small></div>
             </div>
 
             {banner_html}
 
-            <div style="margin-top: 15px; font-size: 0.8em; display: flex; justify-content: space-between; align-items: center; border-top: 1px solid #eee; padding-top: 10px;">
-                <span>📊 Cap: <b>{info.get('marketCap', 0)/1e9:.0f}B</b></span>
-                <span style="color: {'#e74c3c' if rsi > 70 or rsi < 30 else '#6c757d'};">RSI: <b>{int(rsi)}</b></span>
-                <span style="color: {'#ff4b4b' if is_warning else '#6c757d'};">🗓️ {earn}</span>
+            <div style="margin-top: 10px; font-size: 0.75em; display: flex; justify-content: space-between; color: #6c757d; border-top: 1px solid #eee; padding-top: 8px;">
+                <span>📅 ER: {earn}</span>
+                <span>📊 Cap: {info.get('marketCap', 0)/1e9:.0f}B</span>
+                <span style="color: {'#ff4b4b' if rsi > 70 or rsi < 30 else '#6c757d'}">RSI: {int(rsi)}</span>
             </div>
         </div>
         """
@@ -722,4 +702,5 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
