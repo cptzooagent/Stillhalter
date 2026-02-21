@@ -450,9 +450,9 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             st.session_state.profi_scan_results = []
             st.warning("Keine Treffer gefunden. Versuche den Puffer zu senken.")
             
-# ==========================================
-# --- SEKTION 1: RESULTATE ANZEIGEN ---
-# ==========================================
+# =========================================================
+# --- SEKTION: RESULTATE ANZEIGEN (OPTIMIERT & ROBUST) ---
+# =========================================================
 if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
     st.subheader(f"🎯 Top-Setups nach Qualität ({len(all_results)} Treffer)")
@@ -462,7 +462,7 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
-            # --- 1. DATEN-VORBEREITUNG & LOGIK ---
+            # --- 1. DATEN-VORBEREITUNG ---
             earn_str = res.get('earn', "---")
             status_txt = res.get('status', "Trend")
             sent_icon = res.get('sent_icon', "🟢")
@@ -487,18 +487,31 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
             delta_val = abs(res.get('delta', 0))
             delta_col = "#10b981" if delta_val < 0.20 else "#f59e0b" if delta_val < 0.30 else "#ef4444"
             
-            # Earning-Risk Check (Warnung innerhalb der Laufzeit)
+            # --- 2. EARNINGS-RISIKO-CHECK & STYLING ---
             is_earning_risk = False
             if earn_str and earn_str != "---":
                 try:
+                    # Wir gehen davon aus, dass das Jahr 2026 ist (laut Systemzeit)
                     earn_date = datetime.strptime(f"{earn_str}2026", "%d.%m.%Y")
+                    # Risiko, wenn Earnings innerhalb der Options-Laufzeit liegen
                     if 0 <= (earn_date - heute_dt).days <= res.get('tage', 14):
                         is_earning_risk = True
                 except: pass
 
-            # --- 2. HTML-LAYOUT (Bündig links wegen Rendering-Fix) ---
+            if is_earning_risk:
+                # Fett-roter Rahmen (4px) und dezenter Glow
+                card_border = "4px solid #ef4444" 
+                card_shadow = "0 8px 16px rgba(239, 68, 68, 0.25)"
+                card_bg = "#fffcfc"
+            else:
+                # Normaler, cleaner Look
+                card_border = "1px solid #e5e7eb"
+                card_shadow = "0 4px 6px -1px rgba(0,0,0,0.05)"
+                card_bg = "#ffffff"
+
+            # --- 3. HTML-LAYOUT (Bündig links wegen Streamlit Rendering-Fix) ---
             html_code = f"""
-<div style="background: white; border: 1px solid {'#ef4444' if is_earning_risk else '#e5e7eb'}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); font-family: sans-serif;">
+<div style="background: {card_bg}; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: {card_shadow}; font-family: sans-serif;">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
 <span style="font-size: 1.2em; font-weight: 800; color: #111827;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{stars}</span></span>
 <span style="font-size: 0.75em; font-weight: 700; color: {s_color}; background: {s_color}10; padding: 2px 8px; border-radius: 6px;">{sent_icon} {status_txt}</span>
@@ -525,7 +538,7 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 <div style="font-size: 0.9em; font-weight: 700; color: {delta_col};">{delta_val:.2f}</div>
 </div>
 </div>
-<hr style="border: 0; border-top: 1px solid #f3f4f6; margin: 12px 0;">
+<hr style="border: 0; border-top: 1px solid #f3f4f6; margin: 10px 0;">
 <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72em; color: #4b5563; margin-bottom: 10px;">
 <span>⏳ <b>{res['tage']}d</b></span>
 <div style="display: flex; gap: 4px;">
@@ -823,6 +836,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
