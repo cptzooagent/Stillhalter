@@ -448,88 +448,42 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             st.warning("Keine Treffer gefunden. Versuche den Puffer zu senken.")
             
 # --- RESULTATE ANZEIGEN ---
-if st.session_state.profi_scan_results:
+if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
-    st.markdown(f"### 🎯 Top-Setups ({len(all_results)} Treffer)")
+    st.subheader(f"🎯 Top-Setups ({len(all_results)} Treffer)")
     
-    heute_dt = datetime.now()
     cols = st.columns(4)
-    
+    heute_dt = datetime.now()
+
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
-            # Earnings-Risk Logik
+            # Earnings & Style Logik
             is_earning_risk = False
             earn_str = res.get('earn', "---")
             if earn_str and earn_str != "---":
                 try:
-                    # Vergleich mit dem aktuellen Jahr 2026
                     earn_date = datetime.strptime(f"{earn_str}2026", "%d.%m.%Y")
                     if 0 <= (earn_date - heute_dt).days <= res['tage']:
                         is_earning_risk = True
                 except: pass
 
-            # Farben für Status und Delta
             s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
             d_val = abs(res.get('delta', 0))
             delta_col = "#e74c3c" if d_val > 0.30 else "#f39c12" if d_val > 0.20 else "#27ae60"
+            rsi_val_int = int(res.get('rsi', 50))
+            rsi_col = "#e74c3c" if rsi_val_int >= 70 else "#27ae60" if rsi_val_int <= 35 else "#6c757d"
 
-            # RSI Styling Logik
-            rsi_val_int = int(res['rsi'])
-            if rsi_val_int >= 70:
-                rsi_col = "#e74c3c"  # Rot (Überkauft)
-                rsi_bg = "rgba(231, 76, 60, 0.1)"
-            elif rsi_val_int <= 35:
-                rsi_col = "#27ae60"  # Grün (Günstig)
-                rsi_bg = "rgba(39, 174, 96, 0.1)"
-            else:
-                rsi_col = "#6c757d"  # Grau (Neutral)
-                rsi_bg = "rgba(108, 117, 125, 0.1)"
-
-            # DER ENTSCHEIDENDE HTML-BLOCK
-            card_html = f"""
-            <div style="background-color: {'#fff5f5' if is_earning_risk else '#ffffff'}; 
-                        border: {'2px solid #e74c3c' if is_earning_risk else '1px solid #e0e0e0'}; 
-                        border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif;">
-                
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                    <span style="font-size: 1.3em; font-weight: 800; color: #2c3e50;">{res.get('sent_icon', '⚪')} {res['symbol']}</span>
-                    <span style="color: #f1c40f; font-size: 1.0em;">{res.get('stars_str', '⭐')}</span>
-                </div>
-                
-                <div style="text-align: right; margin-bottom: 12px;">
-                    <span style="background-color: {s_color}15; color: {s_color}; padding: 3px 10px; border-radius: 20px; font-size: 0.75em; font-weight: 700;">
-                        {res['status']}
-                    </span>
-                </div>
-                
-                <div style="text-align: center; padding: 10px 0; background: #f8f9fa; border-radius: 10px; margin-bottom: 15px;">
-                    <div style="font-size: 0.7em; color: #6c757d; text-transform: uppercase;">Yield p.a.</div>
-                    <div style="font-size: 1.8em; font-weight: 900; color: #1a1a1a;">{res['y_pa']:.1f}%</div>
-                </div>
-                
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.8em; margin-bottom: 15px;">
-                    <div style="border-left: 3px solid #8e44ad; padding-left: 8px;">Strike<br><b>{res['strike']:.1f}$</b></div>
-                    <div style="border-left: 3px solid #f39c12; padding-left: 8px;">Mid<br><b>{res['bid']:.2f}$</b></div>
-                    <div style="border-left: 3px solid #3498db; padding-left: 8px;">Puffer<br><b>{res['puffer']:.1f}%</b></div>
-                    <div style="border-left: 3px solid {delta_col}; padding-left: 8px;">Delta<br><b style="color:{delta_col};">{d_val:.2f}</b></div>
-                </div>
-                
-                <div style="font-size: 0.8em; border-top: 1px solid #eee; padding-top: 10px; display: flex; justify-content: space-between; align-items: center; color: #6c757d;">
-                    <span>⏳ <b>{res['tage']}d</b></span>
-                    <span style="color: {rsi_col}; font-weight: 800; background: {rsi_bg}; padding: 2px 6px; border-radius: 4px;">
-                        RSI: <span style="font-size: 1.2em;">{rsi_val_int}</span>
-                    </span>
-                    <span style="color: {'#e74c3c' if is_earning_risk else '#6c757d'}; font-weight: bold;">
-                        {'⚠️' if is_earning_risk else '📅'} {earn_str}
-                    </span>
-                </div>
-            </div>
-            """
-            # Hier wird das HTML final an Streamlit übergeben
-            st.markdown(card_html, unsafe_allow_html=True)
-
+            # DIE SICHERE VARIANTE: HTML in einer Zeile ohne extra Einrückungs-Gefahr
+            html_template = f"""<div style="background-color: {'#fff5f5' if is_earning_risk else '#ffffff'}; border: {'2px solid #e74c3c' if is_earning_risk else '1px solid #e0e0e0'}; border-radius: 12px; padding: 15px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif;">
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;"><span style="font-size: 1.3em; font-weight: 800; color: #2c3e50;">{res.get('sent_icon', '⚪')} {res['symbol']}</span><span style="color: #f1c40f; font-size: 1.0em;">{res.get('stars_str', '⭐')}</span></div>
+<div style="text-align: right; margin-bottom: 12px;"><span style="background-color: {s_color}15; color: {s_color}; padding: 3px 10px; border-radius: 20px; font-size: 0.75em; font-weight: 700;">{res['status']}</span></div>
+<div style="text-align: center; padding: 10px 0; background: #f8f9fa; border-radius: 10px; margin-bottom: 15px;"><div style="font-size: 0.7em; color: #6c757d; text-transform: uppercase;">Yield p.a.</div><div style="font-size: 1.8em; font-weight: 900; color: #1a1a1a;">{res['y_pa']:.1f}%</div></div>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 0.8em; margin-bottom: 15px;"><div style="border-left: 3px solid #8e44ad; padding-left: 8px;">Strike<br><b>{res['strike']:.1f}$</b></div><div style="border-left: 3px solid #f39c12; padding-left: 8px;">Mid<br><b>{res['bid']:.2f}$</b></div><div style="border-left: 3px solid #3498db; padding-left: 8px;">Puffer<br><b>{res['puffer']:.1f}%</b></div><div style="border-left: 3px solid {delta_col}; padding-left: 8px;">Delta<br><b style="color:{delta_col};">{d_val:.2f}</b></div></div>
+<div style="font-size: 0.8em; border-top: 1px solid #eee; padding-top: 10px; display: flex; justify-content: space-between; align-items: center; color: #6c757d;"><span>⏳ <b>{res['tage']}d</b></span><span style="color: {rsi_col}; font-weight: 800; background: {rsi_col}10; padding: 2px 6px; border-radius: 4px;">RSI: <span style="font-size: 1.2em;">{rsi_val_int}</span></span><span style="color: {'#e74c3c' if is_earning_risk else '#6c757d'}; font-weight: bold;">{'⚠️' if is_earning_risk else '📅'} {earn_str}</span></div>
+</div>"""
+            st.markdown(html_template, unsafe_allow_html=True)
 else:
-    st.info("Bisher keine Ergebnisse. Bitte klicke auf '🚀 Profi-Scan starten'.")
+    st.info("Scanner bereit. Bitte auf '🚀 Profi-Scan starten' klicken.")
                     
 # --- SEKTION 2: DEPOT-MANAGER (MIT PIVOT-PUNKTEN) ---
 st.markdown("---")
@@ -809,6 +763,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
