@@ -459,7 +459,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     else:
         st.session_state.profi_scan_results = []
 
-# --- RESULTATE ANZEIGEN (KARTEN-LAYOUT INKL. DELTA) ---
+# --- RESULTATE ANZEIGEN (OPTIMIERTES KARTEN-LAYOUT) ---
 if st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
     st.markdown(f"### 🎯 Top-Setups ({len(all_results)} Treffer)")
@@ -467,33 +467,53 @@ if st.session_state.profi_scan_results:
     cols = st.columns(4)
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
-            # Farben für Status und RSI
+            # Logik für Farben
             s_color = "#27ae60" if "🛡️" in res['status'] else "#2980b9"
-            rsi_col = "#e74c3c" if res['rsi'] > 70 or res['rsi'] < 30 else "#7f8c8d"
+            rsi_col = "#e74c3c" if res['rsi'] > 70 or res['rsi'] < 30 else "#2ecc71"
             
-            # Delta-Farbe bestimmen (Warnung bei hohem Delta)
-            # Wir nutzen abs(), falls das Delta als negativer Wert (-0.15) kommt
+            # Delta-Check (abs, falls negativ geliefert)
             d_val = abs(res.get('delta', 0))
             delta_col = "#e74c3c" if d_val > 0.30 else "#f39c12" if d_val > 0.20 else "#27ae60"
-            
+
             with st.container(border=True):
-                # Header: Symbol, Sterne und Status (Trend/Dip)
-                st.markdown(f"**{res['symbol']}** {res['stars_str']} <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
-                
-                # Haupt-Metrik: Rendite
-                st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
-                
-                # Die Info-Box mit Strike, Mid, Puffer und dem NEUEN Delta
+                # 1. HEADER-ZEILE
                 st.markdown(f"""
-                    <div style="background-color: #f8f9fa; padding: 8px; border-radius: 5px; border: 2px solid {res['analyst_col'] if res['stars_val'] >= 2 else '#e0e0e0'}; margin-bottom: 8px; font-size: 0.85em;">
-                        🎯 Strike: <b>{res['strike']:.1f}$</b> | 💰 Mid: <b>{res['bid']:.2f}$</b><br>
-                        🛡️ Puffer: <b>{res['puffer']:.1f}%</b> | 📉 Delta: <b style="color:{delta_col};">{d_val:.2f}</b>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: -10px;">
+                        <span style="font-size: 1.2em; font-weight: bold;">{res['symbol']}</span>
+                        <span style="color: #f1c40f; font-size: 0.9em;">{res['stars_str']}</span>
                     </div>
-                    <div style="font-size: 0.8em; color: #7f8c8d; margin-bottom: 5px;">
-                        ⏳ Tage: <b>{res['tage']}</b> | 🏁 Spread: <b>{res['spread']:.1f}%</b> | 📅 ER: <b>{res['earn']}</b>
+                    <div style="text-align: right; margin-bottom: 5px;">
+                        <span style="background-color: {s_color}22; color: {s_color}; padding: 2px 8px; border-radius: 10px; font-size: 0.7em; font-weight: bold; border: 1px solid {s_color};">
+                            {res['status']}
+                        </span>
                     </div>
-                    <div style="font-size: 0.8em; color: #7f8c8d; margin-bottom: 10px;">
-                        📊 RSI: <b style="color:{rsi_col};">{int(res['rsi'])}</b> | 🏛️ MC: <b>{res['mkt_cap']:.1f}B</b>
+                """, unsafe_allow_html=True)
+
+                # 2. RENDITE-ZENTRALE
+                st.markdown(f"""
+                    <div style="text-align: center; padding: 10px 0; background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%); border-radius: 8px; margin-bottom: 10px; border: 1px solid #eee;">
+                        <div style="font-size: 0.8em; color: #7f8c8d; text-transform: uppercase; letter-spacing: 1px;">Yield p.a.</div>
+                        <div style="font-size: 1.8em; font-weight: 800; color: #2c3e50;">{res['y_pa']:.1f}%</div>
+                    </div>
+                """, unsafe_allow_html=True)
+
+                # 3. TRADING-DETAILS (Kompakte Box)
+                st.markdown(f"""
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.85em; margin-bottom: 10px;">
+                        <div style="border-left: 3px solid #8e44ad; padding-left: 5px;">🎯 Strike<br><b>{res['strike']:.1f}$</b></div>
+                        <div style="border-left: 3px solid #f39c12; padding-left: 5px;">💰 Mid<br><b>{res['bid']:.2f}$</b></div>
+                        <div style="border-left: 3px solid #3498db; padding-left: 5px;">🛡️ Puffer<br><b>{res['puffer']:.1f}%</b></div>
+                        <div style="border-left: 3px solid {delta_col}; padding-left: 5px;">📉 Delta<br><b style="color:{delta_col};">{d_val:.2f}</b></div>
+                    </div>
+                """, unsafe_allow_html=True)
+
+                # 4. FOOTER (Metriken & Termine)
+                st.markdown(f"""
+                    <div style="font-size: 0.75em; color: #95a5a6; border-top: 1px solid #f0f0f0; padding-top: 8px; display: flex; justify-content: space-between; flex-wrap: wrap;">
+                        <span>⏳ <b>{res['tage']}d</b></span>
+                        <span>📊 RSI: <b style="color:{rsi_col};">{int(res['rsi'])}</b></span>
+                        <span>📅 ER: <b>{res['earn']}</b></span>
+                        <span>🏛️ <b>{res['mkt_cap']:.0f}B</b></span>
                     </div>
                 """, unsafe_allow_html=True)
                     
@@ -775,6 +795,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
