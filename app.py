@@ -331,7 +331,7 @@ def get_analyst_conviction(info):
 
 
 
-# --- SEKTION 1: PROFI-SCANNER (MIT EXPECTED MOVE & SESSION-FIX) ---
+# --- SEKTION 1: PROFI-SCANNER (STABILE GESAMT-EDITION) ---
 
 # 1. Speicher initialisieren
 if 'profi_scan_results' not in st.session_state:
@@ -355,19 +355,18 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         progress_bar = st.progress(0)
         all_results = []
 
-        # --- DIE OPTIMIERTE UNTER-FUNKTION (MIT EM-LOGIK) ---
+        # --- DIE OPTIMIERTE UNTER-FUNKTION (BLITZ-FILTER EDITION) ---
         def check_single_stock(symbol):
             try:
-                # API-Abfrage mit Session-Sicherung (Tarnkappe)
-                time.sleep(random.uniform(0.2, 0.4)) 
-                tk = yf.Ticker(symbol, session=custom_session)
+                time.sleep(0.4) 
+                tk = yf.Ticker(symbol)
                 info = tk.info
                 if not info or 'currentPrice' not in info: return None
         
                 m_cap = info.get('marketCap', 0)
                 price = info.get('currentPrice', 0)
         
-                # Filter-Logik
+                # Filter aus der Sidebar nutzen
                 if m_cap < p_min_cap or not (min_stock_price <= price <= max_stock_price): 
                     return None
 
@@ -377,7 +376,6 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         
                 if only_uptrend and not uptrend: return None
 
-                # Laufzeit-Filter (10 bis 30 Tage)
                 valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 30]
                 if not valid_dates: return None
         
@@ -389,22 +387,19 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 if opts.empty: return None
 
                 o = opts.iloc[0]
-                bid, ask = o.get('bid', 0), o.get('ask', 0)
-                fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o.get('lastPrice', 0)
+                bid, ask = o['bid'], o['ask']
+                fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o['lastPrice']
         
-                # --- MATHEMATIK: EM & DELTA ---
+                # --- DELTA & SENTIMENT INTEGRATION ---
                 days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 iv = o.get('impliedVolatility', 0.4)
-                
-                # Expected Move (EM) in %: IV * SQRT(Tage/365)
-                em_pct = (iv * np.sqrt(max(0.01, days_to_exp) / 365)) * 100
                 delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv, option_type='put')
         
                 sent_icon, _ = get_finviz_sentiment(symbol)
                 y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
         
                 if y_pa >= p_min_yield:
-                    analyst_txt, analyst_col = get_analyst_conviction(info)
+                    analyst_txt, analyst_col = get_analyst_conviction(info) # Wichtig!
                     s_val = 0.0
                     if "HYPER" in analyst_txt: s_val = 3.0
                     elif "Stark" in analyst_txt: s_val = 2.0
@@ -418,8 +413,9 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                         'status': "🛡️ Trend" if uptrend else "💎 Dip", 'delta': delta_val,
                         'sent_icon': sent_icon, 'stars_val': s_val, 
                         'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️",
-                        'analyst_label': analyst_txt, 'analyst_color': analyst_col,
-                        'mkt_cap': m_cap / 1e9, 'em_pct': em_pct
+                        'analyst_label': analyst_txt,
+                        'analyst_color': analyst_col,
+                        'mkt_cap': info.get('marketCap', 0) / 1e9 # NEU für die Info-Zeile
                     }
             except: return None
 
@@ -435,22 +431,27 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 if i % 5 == 0:
                     status_text.text(f"Checke {i}/{len(ticker_liste)} Ticker...")
 
+        # WICHTIG: Diese Zeilen müssen EINE Ebene weiter links stehen als das 'futures' oben,
+        # aber immer noch innerhalb des 'if st.button' Blocks!
         status_text.empty()
         progress_bar.empty()
 
         if all_results:
             st.session_state.profi_scan_results = sorted(
                 all_results, 
-                key=lambda x: (float(x.get('stars_val', 0) or 0), float(x.get('y_pa', 0) or 0)), 
+                key=lambda x: (
+                    float(x.get('stars_val', 0) or 0), 
+                    float(x.get('y_pa', 0) or 0)
+                ), 
                 reverse=True
             )
             st.success(f"Scan abgeschlossen: {len(all_results)} Treffer gefunden!")
         else:
             st.session_state.profi_scan_results = []
-            st.warning("Keine Treffer gefunden. API-Blockade oder Puffer zu hoch.")
-
+            st.warning("Keine Treffer gefunden. Versuche den Puffer zu senken.")
+            
 # =========================================================
-# --- SEKTION: RESULTATE ANZEIGEN (STRIKT LINKSBÜNDIG) ---
+# --- SEKTION: RESULTATE ANZEIGEN (OPTIMIERT & ROBUST) ---
 # =========================================================
 if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
@@ -461,41 +462,56 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
-            # --- DATEN-VORBEREITUNG ---
+            # --- 1. DATEN-VORBEREITUNG ---
             earn_str = res.get('earn', "---")
             status_txt = res.get('status', "Trend")
             sent_icon = res.get('sent_icon', "🟢")
             stars = res.get('stars_str', "⭐")
+            
+            # Farben für Status & Analysten
             s_color = "#10b981" if "Trend" in status_txt else "#3b82f6"
             a_label = res.get('analyst_label', "Keine Analyse")
             a_color = res.get('analyst_color', "#8b5cf6")
+            mkt_cap = res.get('mkt_cap', 0)
             
+            # RSI Logik: Rot & Fett ab 70
             rsi_val = int(res.get('rsi', 50))
-            rsi_style = "color: #ef4444;" if rsi_val >= 70 else "color: #10b981;" if rsi_val <= 35 else "color: #4b5563;"
+            if rsi_val >= 70:
+                rsi_style = "color: #ef4444; font-weight: 900;"
+            elif rsi_val <= 35:
+                rsi_style = "color: #10b981; font-weight: 700;"
+            else:
+                rsi_style = "color: #4b5563; font-weight: 700;"
+            
+            # Delta Logik & Formatierung
             delta_val = abs(res.get('delta', 0))
             delta_col = "#10b981" if delta_val < 0.20 else "#f59e0b" if delta_val < 0.30 else "#ef4444"
             
-            # Expected Move Logik
-            em_val = res.get('em_pct', 0)
-            puffer_val = res.get('puffer', 0)
-            em_color = "#10b981" if puffer_val > em_val else "#f59e0b" if puffer_val > (em_val * 0.8) else "#ef4444"
-            progress = min(100, (em_val / puffer_val * 100)) if puffer_val > 0 else 100
-
-            # Earnings Risiko Check
+            # --- 2. EARNINGS-RISIKO-CHECK & STYLING ---
             is_earning_risk = False
             if earn_str and earn_str != "---":
                 try:
-                    # Annahme Jahr 2026 laut Systemzeit
+                    # Wir gehen davon aus, dass das Jahr 2026 ist (laut Systemzeit)
                     earn_date = datetime.strptime(f"{earn_str}2026", "%d.%m.%Y")
+                    # Risiko, wenn Earnings innerhalb der Options-Laufzeit liegen
                     if 0 <= (earn_date - heute_dt).days <= res.get('tage', 14):
                         is_earning_risk = True
                 except: pass
 
-            card_border = "4px solid #ef4444" if is_earning_risk else "1px solid #e5e7eb"
-            
-            # --- HTML-LAYOUT (STRIKT LINKSBÜNDIG) ---
+            if is_earning_risk:
+                # Fett-roter Rahmen (4px) und dezenter Glow
+                card_border = "4px solid #ef4444" 
+                card_shadow = "0 8px 16px rgba(239, 68, 68, 0.25)"
+                card_bg = "#fffcfc"
+            else:
+                # Normaler, cleaner Look
+                card_border = "1px solid #e5e7eb"
+                card_shadow = "0 4px 6px -1px rgba(0,0,0,0.05)"
+                card_bg = "#ffffff"
+
+            # --- 3. HTML-LAYOUT (Bündig links wegen Streamlit Rendering-Fix) ---
             html_code = f"""
-<div style="background: white; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); font-family: sans-serif;">
+<div style="background: {card_bg}; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: {card_shadow}; font-family: sans-serif;">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
 <span style="font-size: 1.2em; font-weight: 800; color: #111827;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{stars}</span></span>
 <span style="font-size: 0.75em; font-weight: 700; color: {s_color}; background: {s_color}10; padding: 2px 8px; border-radius: 6px;">{sent_icon} {status_txt}</span>
@@ -504,46 +520,37 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 <div style="font-size: 0.7em; color: #6b7280; font-weight: 600; text-transform: uppercase;">Yield p.a.</div>
 <div style="font-size: 1.9em; font-weight: 900; color: #111827;">{res['y_pa']:.1f}%</div>
 </div>
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
 <div style="border-left: 3px solid #8b5cf6; padding-left: 8px;">
-<div style="font-size: 0.6em; color: #6b7280; font-weight: 600;">STRIKE</div>
-<div style="font-size: 0.9em; font-weight: 700;">{res['strike']:.1f}$</div>
+<div style="font-size: 0.6em; color: #6b7280;">Strike</div>
+<div style="font-size: 0.9em; font-weight: 700;">{res['strike']:.1f}&#36;</div>
 </div>
 <div style="border-left: 3px solid #f59e0b; padding-left: 8px;">
-<div style="font-size: 0.6em; color: #6b7280; font-weight: 600;">MID/PRÄMIE</div>
-<div style="font-size: 0.9em; font-weight: 700;">{res['bid']:.2f}$</div>
+<div style="font-size: 0.65em; color: #6b7280;">Mid</div>
+<div style="font-size: 0.9em; font-weight: 700;">{res['bid']:.2f}&#36;</div>
 </div>
 <div style="border-left: 3px solid #3b82f6; padding-left: 8px;">
-<div style="font-size: 0.6em; color: #6b7280; font-weight: 600;">PUFFER</div>
+<div style="font-size: 0.65em; color: #6b7280;">Puffer</div>
 <div style="font-size: 0.9em; font-weight: 700;">{res['puffer']:.1f}%</div>
 </div>
 <div style="border-left: 3px solid {delta_col}; padding-left: 8px;">
-<div style="font-size: 0.6em; color: #6b7280; font-weight: 600;">DELTA</div>
+<div style="font-size: 0.65em; color: #6b7280;">Delta</div>
 <div style="font-size: 0.9em; font-weight: 700; color: {delta_col};">{delta_val:.2f}</div>
-</div>
-</div>
-<div style="background: #f9fafb; border-radius: 10px; padding: 10px; margin-bottom: 12px; border: 1px solid #f3f4f6;">
-<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-<span style="font-size: 0.65em; color: #6b7280; font-weight: 800;">EXPECTED MOVE (1σ)</span>
-<span style="font-size: 0.8em; font-weight: 800; color: {em_color};">±{em_val:.1f}%</span>
-</div>
-<div style="height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden;">
-<div style="width: {progress}%; height: 100%; background: {em_color};"></div>
-</div>
-<div style="font-size: 0.55em; color: #9ca3af; margin-top: 4px; text-align: right;">
-Schutz: {(puffer_val/max(0.1, em_val)):.1f}x
 </div>
 </div>
 <hr style="border: 0; border-top: 1px solid #f3f4f6; margin: 10px 0;">
 <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72em; color: #4b5563; margin-bottom: 10px;">
 <span>⏳ <b>{res['tage']}d</b></span>
-<span style="{rsi_style}">RSI: {rsi_val}</span>
+<div style="display: flex; gap: 4px;">
+<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; {rsi_style}">RSI: {rsi_val}</span>
+<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-weight: 700;">{mkt_cap:.0f}B</span>
+</div>
 <span style="font-weight: 800; color: {'#ef4444' if is_earning_risk else '#6b7280'};">
 {'⚠️' if is_earning_risk else '🗓️'} {earn_str}
 </span>
 </div>
 <div style="background: {a_color}10; color: {a_color}; padding: 8px; border-radius: 8px; border-left: 4px solid {a_color}; font-size: 0.7em; font-weight: bold; text-align: center;">
-{a_label}
+🚀 {a_label}
 </div>
 </div>
 """
@@ -829,5 +836,3 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
-
-
