@@ -457,7 +457,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             st.warning("Keine Treffer gefunden. Versuche den Puffer zu senken.")
             
 # =========================================================
-# --- SEKTION: RESULTATE ANZEIGEN (FIXED RENDERING) ---
+# --- SEKTION: RESULTATE ANZEIGEN (FULL DATA EDITION) ---
 # =========================================================
 if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
@@ -478,13 +478,15 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
             a_color = res.get('analyst_color', "#8b5cf6")
             mkt_cap = res.get('mkt_cap', 0)
             
-            # RSI & Delta Logik
+            # RSI Styling
             rsi_val = int(res.get('rsi', 50))
             rsi_style = "color: #ef4444; font-weight: 900;" if rsi_val >= 70 else "color: #10b981; font-weight: 700;" if rsi_val <= 35 else "color: #4b5563; font-weight: 700;"
+            
+            # Delta Styling
             delta_val = abs(res.get('delta', 0))
             delta_col = "#10b981" if delta_val < 0.20 else "#f59e0b" if delta_val < 0.30 else "#ef4444"
             
-            # Expected Move (EM)
+            # Expected Move (EM) Logik
             em_val = res.get('em_pct', 0)
             puffer = res.get('puffer', 0)
             em_color = "#10b981" if puffer > em_val else "#f59e0b" if puffer > (em_val * 0.8) else "#ef4444"
@@ -504,7 +506,7 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
             card_shadow = "0 8px 16px rgba(239, 68, 68, 0.25)" if is_earning_risk else "0 4px 6px -1px rgba(0,0,0,0.05)"
             card_bg = "#fffcfc" if is_earning_risk else "#ffffff"
 
-            # --- 2. HTML-LAYOUT (OHNE EINRÜCKUNG) ---
+            # --- 2. HTML-LAYOUT (Bündig links) ---
             html_code = f"""<div style="background: {card_bg}; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: {card_shadow}; font-family: sans-serif; color: #111827;">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
 <span style="font-size: 1.2em; font-weight: 800;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{stars}</span></span>
@@ -519,9 +521,17 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 <div style="font-size: 0.6em; color: #6b7280;">Strike</div>
 <div style="font-size: 0.9em; font-weight: 700;">{res['strike']:.1f}&#36;</div>
 </div>
+<div style="border-left: 3px solid #f59e0b; padding-left: 8px;">
+<div style="font-size: 0.6em; color: #6b7280;">Mid (Prämie)</div>
+<div style="font-size: 0.9em; font-weight: 700;">{res['bid']:.2f}&#36;</div>
+</div>
 <div style="border-left: 3px solid #3b82f6; padding-left: 8px;">
 <div style="font-size: 0.6em; color: #6b7280;">Puffer</div>
 <div style="font-size: 0.9em; font-weight: 700;">{res['puffer']:.1f}%</div>
+</div>
+<div style="border-left: 3px solid {delta_col}; padding-left: 8px;">
+<div style="font-size: 0.6em; color: #6b7280;">Delta</div>
+<div style="font-size: 0.9em; font-weight: 700; color: {delta_col};">{delta_val:.2f}</div>
 </div>
 </div>
 <div style="background: #f9fafb; border-radius: 10px; padding: 10px; margin-bottom: 15px; border: 1px solid #f3f4f6;">
@@ -828,6 +838,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
