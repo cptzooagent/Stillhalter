@@ -7,6 +7,18 @@ from datetime import datetime, timedelta
 import concurrent.futures
 import time
 
+# Erstelle eine Session, die sich wie ein normaler Browser ausgibt
+def get_session():
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    })
+    return session
+
+# Nutze die Session für deine Ticker-Abfragen
+# Beispiel für deine check_single_stock Funktion:
+# tk = yf.Ticker(symbol, session=get_session())
+
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
@@ -838,3 +850,4 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
