@@ -450,7 +450,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             st.warning("Keine Treffer gefunden. API-Blockade oder Puffer zu hoch.")
 
 # =========================================================
-# --- SEKTION: RESULTATE ANZEIGEN (MIT EM-VISUALISIERUNG) ---
+# --- SEKTION: RESULTATE ANZEIGEN (STRIKT LINKSBÜNDIG) ---
 # =========================================================
 if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
@@ -461,7 +461,7 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
-            # Daten-Vorbereitung
+            # --- DATEN-VORBEREITUNG ---
             earn_str = res.get('earn', "---")
             status_txt = res.get('status', "Trend")
             sent_icon = res.get('sent_icon', "🟢")
@@ -469,15 +469,13 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
             s_color = "#10b981" if "Trend" in status_txt else "#3b82f6"
             a_label = res.get('analyst_label', "Keine Analyse")
             a_color = res.get('analyst_color', "#8b5cf6")
-            mkt_cap = res.get('mkt_cap', 0)
             
-            # RSI & Delta Styling
             rsi_val = int(res.get('rsi', 50))
             rsi_style = "color: #ef4444;" if rsi_val >= 70 else "color: #10b981;" if rsi_val <= 35 else "color: #4b5563;"
             delta_val = abs(res.get('delta', 0))
             delta_col = "#10b981" if delta_val < 0.20 else "#f59e0b" if delta_val < 0.30 else "#ef4444"
             
-            # --- EXPECTED MOVE LOGIK ---
+            # Expected Move Logik
             em_val = res.get('em_pct', 0)
             puffer_val = res.get('puffer', 0)
             em_color = "#10b981" if puffer_val > em_val else "#f59e0b" if puffer_val > (em_val * 0.8) else "#ef4444"
@@ -487,6 +485,7 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
             is_earning_risk = False
             if earn_str and earn_str != "---":
                 try:
+                    # Annahme Jahr 2026 laut Systemzeit
                     earn_date = datetime.strptime(f"{earn_str}2026", "%d.%m.%Y")
                     if 0 <= (earn_date - heute_dt).days <= res.get('tage', 14):
                         is_earning_risk = True
@@ -494,7 +493,7 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 
             card_border = "4px solid #ef4444" if is_earning_risk else "1px solid #e5e7eb"
             
-            # HTML-LAYOUT
+            # --- HTML-LAYOUT (STRIKT LINKSBÜNDIG) ---
             html_code = f"""
 <div style="background: white; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); font-family: sans-serif;">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
@@ -505,30 +504,36 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 <div style="font-size: 0.7em; color: #6b7280; font-weight: 600; text-transform: uppercase;">Yield p.a.</div>
 <div style="font-size: 1.9em; font-weight: 900; color: #111827;">{res['y_pa']:.1f}%</div>
 </div>
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
 <div style="border-left: 3px solid #8b5cf6; padding-left: 8px;">
-<div style="font-size: 0.6em; color: #6b7280;">Strike</div>
+<div style="font-size: 0.6em; color: #6b7280; font-weight: 600;">STRIKE</div>
 <div style="font-size: 0.9em; font-weight: 700;">{res['strike']:.1f}$</div>
 </div>
+<div style="border-left: 3px solid #f59e0b; padding-left: 8px;">
+<div style="font-size: 0.6em; color: #6b7280; font-weight: 600;">MID/PRÄMIE</div>
+<div style="font-size: 0.9em; font-weight: 700;">{res['bid']:.2f}$</div>
+</div>
+<div style="border-left: 3px solid #3b82f6; padding-left: 8px;">
+<div style="font-size: 0.6em; color: #6b7280; font-weight: 600;">PUFFER</div>
+<div style="font-size: 0.9em; font-weight: 700;">{res['puffer']:.1f}%</div>
+</div>
 <div style="border-left: 3px solid {delta_col}; padding-left: 8px;">
-<div style="font-size: 0.65em; color: #6b7280;">Delta</div>
+<div style="font-size: 0.6em; color: #6b7280; font-weight: 600;">DELTA</div>
 <div style="font-size: 0.9em; font-weight: 700; color: {delta_col};">{delta_val:.2f}</div>
 </div>
 </div>
-
 <div style="background: #f9fafb; border-radius: 10px; padding: 10px; margin-bottom: 12px; border: 1px solid #f3f4f6;">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-        <span style="font-size: 0.65em; color: #6b7280; font-weight: 800;">EXPECTED MOVE (1σ)</span>
-        <span style="font-size: 0.8em; font-weight: 800; color: {em_color};">±{em_val:.1f}%</span>
-    </div>
-    <div style="height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden;">
-        <div style="width: {progress}%; height: 100%; background: {em_color};"></div>
-    </div>
-    <div style="font-size: 0.55em; color: #9ca3af; margin-top: 4px; text-align: right;">
-        Puffer-Schutz: {(puffer_val/max(0.1, em_val)):.1f}x
-    </div>
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+<span style="font-size: 0.65em; color: #6b7280; font-weight: 800;">EXPECTED MOVE (1σ)</span>
+<span style="font-size: 0.8em; font-weight: 800; color: {em_color};">±{em_val:.1f}%</span>
 </div>
-
+<div style="height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden;">
+<div style="width: {progress}%; height: 100%; background: {em_color};"></div>
+</div>
+<div style="font-size: 0.55em; color: #9ca3af; margin-top: 4px; text-align: right;">
+Schutz: {(puffer_val/max(0.1, em_val)):.1f}x
+</div>
+</div>
 <hr style="border: 0; border-top: 1px solid #f3f4f6; margin: 10px 0;">
 <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72em; color: #4b5563; margin-bottom: 10px;">
 <span>⏳ <b>{res['tage']}d</b></span>
@@ -824,4 +829,5 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
