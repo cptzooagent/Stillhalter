@@ -457,7 +457,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             st.warning("Keine Treffer gefunden. Versuche den Puffer zu senken.")
             
 # =========================================================
-# --- SEKTION: RESULTATE ANZEIGEN (EXPECTED MOVE EDITION) ---
+# --- SEKTION: RESULTATE ANZEIGEN (FIXED RENDERING) ---
 # =========================================================
 if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
@@ -478,26 +478,20 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
             a_color = res.get('analyst_color', "#8b5cf6")
             mkt_cap = res.get('mkt_cap', 0)
             
-            # RSI Styling
+            # RSI & Delta Logik
             rsi_val = int(res.get('rsi', 50))
-            if rsi_val >= 70: rsi_style = "color: #ef4444; font-weight: 900;"
-            elif rsi_val <= 35: rsi_style = "color: #10b981; font-weight: 700;"
-            else: rsi_style = "color: #4b5563; font-weight: 700;"
-            
-            # Delta Styling
+            rsi_style = "color: #ef4444; font-weight: 900;" if rsi_val >= 70 else "color: #10b981; font-weight: 700;" if rsi_val <= 35 else "color: #4b5563; font-weight: 700;"
             delta_val = abs(res.get('delta', 0))
             delta_col = "#10b981" if delta_val < 0.20 else "#f59e0b" if delta_val < 0.30 else "#ef4444"
             
-            # --- 2. EXPECTED MOVE (EM) LOGIK ---
+            # Expected Move (EM)
             em_val = res.get('em_pct', 0)
             puffer = res.get('puffer', 0)
-            # Sicherheit: Grün wenn Puffer > EM, Orange wenn Puffer knapp, Rot wenn Puffer < EM
             em_color = "#10b981" if puffer > em_val else "#f59e0b" if puffer > (em_val * 0.8) else "#ef4444"
             em_icon = "✅" if puffer > em_val else "⚠️"
-            # Fortschrittsbalken-Berechnung (max 100%)
             progress = min(100, (em_val / puffer * 100)) if puffer > 0 else 100
 
-            # --- 3. EARNINGS-RISIKO-CHECK & STYLING ---
+            # Earnings-Check
             is_earning_risk = False
             if earn_str and earn_str != "---":
                 try:
@@ -510,62 +504,51 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
             card_shadow = "0 8px 16px rgba(239, 68, 68, 0.25)" if is_earning_risk else "0 4px 6px -1px rgba(0,0,0,0.05)"
             card_bg = "#fffcfc" if is_earning_risk else "#ffffff"
 
-            # --- 4. HTML-LAYOUT ---
-            html_code = f"""
-<div style="background: {card_bg}; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: {card_shadow}; font-family: sans-serif;">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-        <span style="font-size: 1.2em; font-weight: 800; color: #111827;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{stars}</span></span>
-        <span style="font-size: 0.75em; font-weight: 700; color: {s_color}; background: {s_color}10; padding: 2px 8px; border-radius: 6px;">{sent_icon} {status_txt}</span>
-    </div>
-
-    <div style="margin: 10px 0;">
-        <div style="font-size: 0.7em; color: #6b7280; font-weight: 600; text-transform: uppercase;">Yield p.a.</div>
-        <div style="font-size: 1.9em; font-weight: 900; color: #111827;">{res['y_pa']:.1f}%</div>
-    </div>
-
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-        <div style="border-left: 3px solid #8b5cf6; padding-left: 8px;">
-            <div style="font-size: 0.6em; color: #6b7280;">Strike</div>
-            <div style="font-size: 0.9em; font-weight: 700;">{res['strike']:.1f}&#36;</div>
-        </div>
-        <div style="border-left: 3px solid #3b82f6; padding-left: 8px;">
-            <div style="font-size: 0.6em; color: #6b7280;">Puffer</div>
-            <div style="font-size: 0.9em; font-weight: 700;">{res['puffer']:.1f}%</div>
-        </div>
-    </div>
-
-    <div style="background: #f9fafb; border-radius: 10px; padding: 10px; margin-bottom: 15px; border: 1px solid #f3f4f6;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-            <span style="font-size: 0.65em; color: #6b7280; font-weight: 800; text-transform: uppercase;">Market Move (EM)</span>
-            <span style="font-size: 0.8em; font-weight: 800; color: {em_color};">{em_icon} ±{em_val:.1f}%</span>
-        </div>
-        <div style="height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden;">
-            <div style="width: {progress}%; height: 100%; background: {em_color}; transition: width 0.5s ease;"></div>
-        </div>
-        <div style="font-size: 0.55em; color: #9ca3af; margin-top: 4px; text-align: right;">Puffer vs. Volatilität</div>
-    </div>
-
-    <hr style="border: 0; border-top: 1px solid #f3f4f6; margin: 12px 0;">
-
-    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72em; color: #4b5563; margin-bottom: 10px;">
-        <span>⏳ <b>{res['tage']}d</b></span>
-        <div style="display: flex; gap: 4px;">
-            <span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; {rsi_style}">RSI: {rsi_val}</span>
-            <span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-weight: 700;">{mkt_cap:.0f}B</span>
-        </div>
-        <span style="font-weight: 800; color: {'#ef4444' if is_earning_risk else '#6b7280'};">
-            {'⚠️' if is_earning_risk else '🗓️'} {earn_str}
-        </span>
-    </div>
-
-    <div style="background: {a_color}10; color: {a_color}; padding: 8px; border-radius: 8px; border-left: 4px solid {a_color}; font-size: 0.7em; font-weight: bold; text-align: center;">
-        🚀 {a_label}
-    </div>
+            # --- 2. HTML-LAYOUT (OHNE EINRÜCKUNG) ---
+            html_code = f"""<div style="background: {card_bg}; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: {card_shadow}; font-family: sans-serif; color: #111827;">
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+<span style="font-size: 1.2em; font-weight: 800;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{stars}</span></span>
+<span style="font-size: 0.75em; font-weight: 700; color: {s_color}; background: {s_color}10; padding: 2px 8px; border-radius: 6px;">{sent_icon} {status_txt}</span>
 </div>
-"""
+<div style="margin: 10px 0;">
+<div style="font-size: 0.7em; color: #6b7280; font-weight: 600; text-transform: uppercase;">Yield p.a.</div>
+<div style="font-size: 1.9em; font-weight: 900;">{res['y_pa']:.1f}%</div>
+</div>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+<div style="border-left: 3px solid #8b5cf6; padding-left: 8px;">
+<div style="font-size: 0.6em; color: #6b7280;">Strike</div>
+<div style="font-size: 0.9em; font-weight: 700;">{res['strike']:.1f}&#36;</div>
+</div>
+<div style="border-left: 3px solid #3b82f6; padding-left: 8px;">
+<div style="font-size: 0.6em; color: #6b7280;">Puffer</div>
+<div style="font-size: 0.9em; font-weight: 700;">{res['puffer']:.1f}%</div>
+</div>
+</div>
+<div style="background: #f9fafb; border-radius: 10px; padding: 10px; margin-bottom: 15px; border: 1px solid #f3f4f6;">
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+<span style="font-size: 0.65em; color: #6b7280; font-weight: 800; text-transform: uppercase;">Market Move (EM)</span>
+<span style="font-size: 0.8em; font-weight: 800; color: {em_color};">{em_icon} ±{em_val:.1f}%</span>
+</div>
+<div style="height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden;">
+<div style="width: {progress}%; height: 100%; background: {em_color};"></div>
+</div>
+</div>
+<hr style="border: 0; border-top: 1px solid #f3f4f6; margin: 12px 0;">
+<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72em; color: #4b5563; margin-bottom: 10px;">
+<span>⏳ <b>{res['tage']}d</b></span>
+<div style="display: flex; gap: 4px;">
+<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; {rsi_style}">RSI: {rsi_val}</span>
+<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-weight: 700;">{mkt_cap:.0f}B</span>
+</div>
+<span style="font-weight: 800; color: {'#ef4444' if is_earning_risk else '#6b7280'};">
+{'⚠️' if is_earning_risk else '🗓️'} {earn_str}
+</span>
+</div>
+<div style="background: {a_color}10; color: {a_color}; padding: 8px; border-radius: 8px; border-left: 4px solid {a_color}; font-size: 0.7em; font-weight: bold; text-align: center;">
+🚀 {a_label}
+</div>
+</div>"""
             st.markdown(html_code, unsafe_allow_html=True)
-else:
-    st.info("Scanner bereit. Bitte auf '🚀 Profi-Scan starten' klicken.")
                     
 # --- SEKTION 2: DEPOT-MANAGER (MIT PIVOT-PUNKTEN) ---
 st.markdown("---")
@@ -845,6 +828,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
