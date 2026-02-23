@@ -200,6 +200,8 @@ with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_
 
 st.markdown("---")
 
+# --- SEKTION 1: PROFI-SCANNER
+
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
@@ -647,4 +649,5 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
