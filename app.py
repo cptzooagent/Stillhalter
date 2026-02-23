@@ -293,85 +293,57 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
 
         def check_single_stock(symbol):
             try:
-                time.sleep(0.3) 
+                time.sleep(0.4) 
                 tk = yf.Ticker(symbol)
                 info = tk.info
                 if not info or 'currentPrice' not in info: return None
-                
                 m_cap = info.get('marketCap', 0)
                 price = info.get('currentPrice', 0)
-                
-                # Basis-Filter (Preis & Cap)
                 if m_cap < p_min_cap or not (min_stock_price <= price <= max_stock_price): return None
-                
                 res = get_stock_data_full(symbol)
                 if res is None or res[0] is None: return None
                 _, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
-                
                 if only_uptrend and not uptrend: return None
-                
-                # Laufzeit finden (10-35 Tage für Liquidität)
-                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
+                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 30]
                 if not valid_dates: return None
                 target_date = valid_dates[0]
-                
                 chain = tk.option_chain(target_date).puts
                 target_strike = price * (1 - p_puffer)
-                
-                # Sicherheits-Check: Gibt es Puts unter dem Target?
                 opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
-                if opts.empty:
-                    # Fallback: Nimm den sichersten verfügbaren Strike, falls Puffer zu groß gewählt
-                    opts = chain.sort_values('strike', ascending=True) 
-                
+                if opts.empty: return None
                 o = opts.iloc[0]
                 days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 
-                # --- PREIS & SPREAD LOGIK (Gegen Ausreißer) ---
-                bid, ask = o['bid'], o['ask']
+                # --- NEU: EXPECTED MOVE BERECHNUNG ---
                 iv = o.get('impliedVolatility', 0)
-                if iv == 0: iv = 0.4
+                if iv == 0: iv = 0.4 # Fallback
+                # Formel: Preis * IV * Wurzel(Tage/365)
+                exp_move_abs = price * (iv * np.sqrt(days_to_exp / 365))
+                exp_move_pct = (exp_move_abs / price) * 100
+                current_puffer = ((price - o['strike']) / price) * 100
+                # Sicherheitsfaktor: Wie oft passt der Expected Move in meinen Puffer?
+                em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
                 
-                if bid > 0 and ask > 0:
-                    # Wenn Spread extrem (Ask > 3x Bid), ist der Preis unzuverlässig
-                    if ask > (bid * 3.0): 
-                        fair_price = bid # Konservativ den Ankaufspreis nehmen
-                    else:
-                        fair_price = (bid + ask) / 2
-                else:
-                    fair_price = o['lastPrice']
-                
-                if fair_price <= 0: return None
-
-                # Korrektes Delta (T/365!)
+                bid, ask = o['bid'], o['ask']
+                fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o['lastPrice']
                 delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv, option_type='put')
+                sent_icon, _ = get_finviz_sentiment(symbol)
                 y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
                 
-                # Ausreißer-Schutz: Renditen über 70% bei niedrigem Delta sind oft Datenfehler
-                if y_pa > 70 and abs(delta_val) < 0.12: return None
-                
                 if y_pa >= p_min_yield:
-                    current_puffer = ((price - o['strike']) / price) * 100
-                    exp_move_pct = (price * (iv * np.sqrt(days_to_exp / 365)) / price) * 100
-                    em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
-                    
                     analyst_txt, analyst_col = get_analyst_conviction(info)
-                    sent_icon, _ = get_finviz_sentiment(symbol)
-                    
-                    # Sterne-Rating Logik
                     s_val = 0.0
                     if "HYPER" in analyst_txt: s_val = 3.0
                     elif "Stark" in analyst_txt: s_val = 2.0
                     if rsi < 35: s_val += 0.5
                     if uptrend: s_val += 0.5
-
                     return {
                         'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
                         'puffer': current_puffer, 'bid': fair_price, 'rsi': rsi, 'earn': earn if earn else "---", 
                         'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip", 'delta': delta_val,
                         'sent_icon': sent_icon, 'stars_val': s_val, 'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️",
                         'analyst_label': analyst_txt, 'analyst_color': analyst_col, 'mkt_cap': m_cap / 1e9,
-                        'em_pct': exp_move_pct, 'em_safety': em_safety
+                        'em_pct': exp_move_pct, 'em_safety': em_safety # NEUE WERTE
                     }
             except: return None
 
@@ -751,13 +723,3 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
-
-
-
-
-
-
-
-
-
-
