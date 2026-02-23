@@ -184,27 +184,34 @@ try:
 except:
     stock_fg = 43  # Dein manueller Fallback-Wert von heute
 
-# --- MARKTBREITE DYNAMISIEREN ---
-# Berechnung: Wie viele NDQ100 Werte sind über dem SMA50?
-# Hier als stabiler Platzhalter, der sich an der Nasdaq-Distanz orientiert:
+# --- 1. DYNAMISCHE WERTE & MARKTBREITE ---
+# Diese Werte kommen aus deinen Funktionen (get_market_data, get_crypto_fg)
+cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
+crypto_fg = get_crypto_fg()  # Aktuell 14
+stock_fg = 43               # Hier später: stock_fg = get_stock_fg()
+
+# MARKTBREITE DYNAMISIEREN
+# Logik: Startwert 62% (Basis), korrigiert um die Nasdaq-Stärke/Schwäche
 breadth_val = int(62 + (dist_ndq * 2)) 
 breadth_val = max(10, min(95, breadth_val)) # Begrenzung auf 10-95%
 
-sentiment_gap = abs(stock_fg - crypto_fg) # Ergibt jetzt 29 (43 - 14)
+# SENTIMENT-CHECK
+sentiment_gap = abs(stock_fg - crypto_fg) # Differenz berechnen (z.B. 43-14 = 29)
 
-# --- DYNAMISCHE STATUS LOGIK ---
+# --- 2. DYNAMISCHE STATUS LOGIK (BANNER) ---
+# Schwellenwerte basierend auf Marktbedingungen und Shumer-Aspekten
 if dist_ndq < -2 or vix_val > 25:
     m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Nasdaq-Schwäche / Panikgefahr"
-    m_advice = f"VIX bei {vix_val:.1f}! Fokus auf Cash-Sicherung und weite Put-Puffer (>2.0x EM)."
-elif sentiment_gap > 30:
-    m_color, m_text = "#f39c12", "⚡ DIVERGENZ: Crypto-Angst vs. Stock-Gier"
-    m_advice = "Märkte laufen auseinander. Vorsicht bei Tech-Werten (Korrektur-Gefahr)."
+    m_advice = f"VIX bei {vix_val:.1f}! Fokus auf Kapitalschutz und weite Puffer (>2.0x EM)."
+elif sentiment_gap > 25:
+    m_color, m_text = "#f39c12", "⚡ DIVERGENZ: Krypto-Panik vs. Stock-Angst"
+    m_advice = f"Lücke von {sentiment_gap} Pkt! Krypto (14) signalisiert Stress, den Aktien (43) noch ignorieren."
 elif rsi_ndq > 72:
     m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT: Korrekturgefahr (RSI hoch)"
-    m_advice = "Nasdaq RSI bei {int(rsi_ndq)}. Keine neuen Puts mit engem Puffer."
+    m_advice = "Nasdaq RSI überkauft. Keine neuen Puts ohne massiven Puffer schreiben."
 else:
-    m_color, m_text = "#27ae60", "✅ TRENDSTARK: Marktumfeld ist konstruktiv"
-    m_advice = "Marktbreite ist gesund (62%). Puts auf Qualitäts-Dips (wie ACN) bevorzugt."
+    m_color, m_text = "#27ae60", "✅ SAMMELN: Umfeld stabil"
+    m_advice = f"Marktbreite bei {breadth_val}%. Zeit für Cash-Secured Puts auf Qualitäts-Dips."
 
 # --- UI: HAUPT-BANNER ---
 st.markdown(f'''
@@ -702,6 +709,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
