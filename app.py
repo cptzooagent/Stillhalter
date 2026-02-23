@@ -86,7 +86,7 @@ def get_combined_watchlist():
         url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
         df = pd.read_csv(url)
         tickers = df['Symbol'].tolist()
-        nasdaq_extra = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR", "HOOD", "PLTR", "SQ"]
+        nasdaq_extra = ["AMGN", "ABBV", "AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR", "HOOD", "PLTR", "SQ"]
         full_list = list(set(tickers + nasdaq_extra))
         return [t.replace('.', '-') for t in full_list]
     except: return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META"]
@@ -746,5 +746,6 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
