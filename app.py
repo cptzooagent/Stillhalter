@@ -292,25 +292,23 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         all_results = []
 
         def check_single_stock(symbol):
-            # 1. Kleiner Zufalls-Versatz, damit nicht alle Threads gleichzeitig feuern
             import random
-            time.sleep(random.uniform(0.2, 0.6))
+            # 1. Sanfter Start gegen Rate-Limiting
+            time.sleep(random.uniform(0.3, 0.8))
             
             try:
                 tk = yf.Ticker(symbol)
                 
-                # STUFE 1: Schnelle Kursdaten (verursacht selten Sperren)
-                # Wir holen erst die Historie für RSI/Trend
+                # STUFE 1: Schneller Vor-Check der Basisdaten
                 res = get_stock_data_full(symbol)
                 if res is None or res[0] is None: return None
-                price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+                price, dates, earn, rsi, uptrend, _, _, _ = res
                 
-                # Vor-Filter: Wenn diese Kriterien nicht erfüllt sind, STOPP (kein tk.info nötig!)
                 if only_uptrend and not uptrend: return None
                 if not (min_stock_price <= price <= max_stock_price): return None
                 
-                # STUFE 2: Options-Kette prüfen
-                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 30]
+                # STUFE 2: Optionsdaten mit Plausibilitäts-Check
+                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
                 if not valid_dates: return None
                 target_date = valid_dates[0]
                 
@@ -319,41 +317,43 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
                 if opts.empty: return None
                 o = opts.iloc[0]
-                
-                # Rendite-Check vorab
-                bid, ask = o['bid'], o['ask']
-                fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o['lastPrice']
-                days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
-                y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
-                
-                if y_pa < p_min_yield: return None
 
-                # STUFE 3: Die "teure" tk.info Abfrage (nur für Finalisten!)
-                # Hier knallt es meistens bei "Too Many Requests"
+                # PRÄMIEN-CHECK (Das löst die "komischen" Werte)
+                bid, ask = o['bid'], o['ask']
+                days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
+                
+                # Wenn Bid/Ask 0 ist oder der Spread > 50% vom Ask, sind die Daten Schrott
+                if bid <= 0.01 or ask <= 0.01: 
+                    fair_price = o['lastPrice'] 
+                elif (ask - bid) > (ask * 0.5): # Zu großer Spread = Warnsignal
+                    return None 
+                else:
+                    fair_price = (bid + ask) / 2
+
+                y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
+                if y_pa < p_min_yield or y_pa > 150: return None # Filtert unrealistische Ausreißer
+
+                # STUFE 3: Teure Info-Abfrage nur bei validen Setups
                 info = None
-                for _ in range(3): # 3 Versuche mit steigender Pause
+                for _ in range(2): 
                     try:
                         info = tk.info
-                        if info and 'marketCap' in info: break
-                    except:
-                        time.sleep(2)
+                        if 'marketCap' in info: break
+                    except: time.sleep(1)
                 
                 if not info: return None
-                
                 m_cap = info.get('marketCap', 0)
                 if m_cap < p_min_cap: return None
                 
-                # Wenn wir hier sind, hat die Aktie alle Hürden genommen
+                # Restliche Berechnungen (IV, Delta, EM)
                 iv = o.get('impliedVolatility', 0.4)
-                delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv, option_type='put')
+                delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv)
                 exp_move_pct = (price * iv * np.sqrt(days_to_exp / 365) / price) * 100
                 current_puffer = ((price - o['strike']) / price) * 100
-                em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
                 
                 analyst_txt, analyst_col = get_analyst_conviction(info)
                 sent_icon, _ = get_finviz_sentiment(symbol)
                 
-                # Stars-Logik
                 s_val = 0.0
                 if "HYPER" in analyst_txt: s_val = 3.0
                 elif "Stark" in analyst_txt: s_val = 2.0
@@ -362,15 +362,14 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
 
                 return {
                     'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
-                    'puffer': current_puffer, 'bid': fair_price, 'rsi': rsi, 'earn': earn if earn else "---", 
+                    'puffer': current_puffer, 'bid': fair_price, 'rsi': rsi, 'earn': earn, 
                     'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip", 'delta': delta_val,
                     'sent_icon': sent_icon, 'stars_val': s_val, 'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️",
                     'analyst_label': analyst_txt, 'analyst_color': analyst_col, 'mkt_cap': m_cap / 1e9,
-                    'em_pct': exp_move_pct, 'em_safety': em_safety
+                    'em_pct': exp_move_pct, 'em_safety': current_puffer / exp_move_pct if exp_move_pct > 0 else 0
                 }
-            except Exception as e:
-                return None
-
+            except: return None
+                
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
             for i, future in enumerate(concurrent.futures.as_completed(futures)):
@@ -747,4 +746,5 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
