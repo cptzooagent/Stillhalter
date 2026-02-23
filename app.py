@@ -6,6 +6,7 @@ from scipy.stats import norm
 from datetime import datetime, timedelta
 import concurrent.futures
 import time
+import fear_and_greed
 
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
@@ -196,7 +197,12 @@ def get_sector_performance():
 # --- 2. DATENBESCHAFFUNG & LOGIK ---
 cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
 crypto_fg = get_crypto_fg()  # Aktuell 14
-stock_fg = 43               # Dein aktueller CNN-Wert
+try:
+    # Holt den echten CNN Wert live
+    stock_fg = int(fear_and_greed.get_index().value)
+except:
+    # Falls die Seite mal down ist, bleibt die 43 als Sicherheitsnetz
+    stock_fg = 43
 
 # Dynamische Sektoren abrufen
 top_sec, weak_sec = get_sector_performance()
@@ -717,6 +723,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
