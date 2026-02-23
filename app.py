@@ -325,10 +325,22 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
                 
                 bid, ask = o['bid'], o['ask']
-                fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o['lastPrice']
+                
+                # 1. AUSREISSER-FILTER (Spread-Check)
+                if bid <= 0 or ask <= 0:
+                    fair_price = o['lastPrice']
+                elif ask > (bid * 2.0): # Wenn der Spread zu riesig ist -> Datenfehler
+                    return None
+                else:
+                    fair_price = (bid + ask) / 2
+                
                 delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv, option_type='put')
-                sent_icon, _ = get_finviz_sentiment(symbol)
                 y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
+                
+                # 2. PLAUSIBILITÄTS-FILTER (Schutz vor "Fantasie-Prämien" wie bei AMGN)
+                # Wenn Rendite > 50% p.a. bei sehr sicherem Delta (< 0.15) -> Weg damit!
+                if y_pa > 50 and abs(delta_val) < 0.15:
+                    return None
                 
                 if y_pa >= p_min_yield:
                     analyst_txt, analyst_col = get_analyst_conviction(info)
@@ -723,6 +735,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
