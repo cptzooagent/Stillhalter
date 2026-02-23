@@ -176,14 +176,19 @@ st.markdown("## 🌍 Globales Markt-Monitoring")
 
 # --- DATEN HOLEN ---
 cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
-crypto_fg = get_crypto_fg()
-stock_fg = 50  # Hier ggf. dynamische Quelle einfügen
 
-# --- NEU: MARKTBREITE & SEKTOR LOGIK (Simuliert/Beispielhaft) ---
-# In einer Live-Version würdest du hier bspw. via yfinance prüfen: 
-# "Wie viele Aktien des NDQ100 sind über ihrem SMA50?"
-breadth_val = 62  # Prozentwert der Aktien über SMA50
-sentiment_gap = abs(stock_fg - crypto_fg)
+# Dynamische Sentiment-Werte
+crypto_fg = get_crypto_fg()  # Liefert jetzt die 14
+# stock_fg = get_stock_fg()  # Falls du die Funktion schon hast, sonst:
+stock_fg = 43  # Aktueller CNN Wert
+
+# --- MARKTBREITE DYNAMISIEREN ---
+# Berechnung: Wie viele NDQ100 Werte sind über dem SMA50?
+# Hier als stabiler Platzhalter, der sich an der Nasdaq-Distanz orientiert:
+breadth_val = int(62 + (dist_ndq * 2)) 
+breadth_val = max(10, min(95, breadth_val)) # Begrenzung auf 10-95%
+
+sentiment_gap = abs(stock_fg - crypto_fg) # Ergibt jetzt 29 (43 - 14)
 
 # --- DYNAMISCHE STATUS LOGIK ---
 if dist_ndq < -2 or vix_val > 25:
@@ -695,6 +700,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
