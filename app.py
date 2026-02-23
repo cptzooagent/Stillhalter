@@ -176,11 +176,13 @@ st.markdown("## 🌍 Globales Markt-Monitoring")
 
 # --- DATEN HOLEN ---
 cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
+crypto_fg = get_crypto_fg()
 
-# Dynamische Sentiment-Werte
-crypto_fg = get_crypto_fg()  # Liefert jetzt die 14
-# stock_fg = get_stock_fg()  # Falls du die Funktion schon hast, sonst:
-stock_fg = 43  # Aktueller CNN Wert
+try:
+    import fear_and_greed
+    stock_fg = int(fear_and_greed.get_index().value)
+except:
+    stock_fg = 43  # Dein manueller Fallback-Wert von heute
 
 # --- MARKTBREITE DYNAMISIEREN ---
 # Berechnung: Wie viele NDQ100 Werte sind über dem SMA50?
@@ -700,6 +702,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
