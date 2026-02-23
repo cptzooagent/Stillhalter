@@ -274,7 +274,7 @@ with r2c3:
 
 st.markdown("---")
 
-# --- SEKTION 1: PROFI-SCANNER
+# --- SEKTION 1: PROFI-SCANNER ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
@@ -294,12 +294,12 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         def check_single_stock(symbol):
             import random
             # 1. Sanfter Start gegen Rate-Limiting
-            time.sleep(random.uniform(0.3, 0.8))
+            time.sleep(random.uniform(0.3, 0.7))
             
             try:
                 tk = yf.Ticker(symbol)
                 
-                # STUFE 1: Schneller Vor-Check der Basisdaten
+                # STUFE 1: Schneller Vor-Check der Basisdaten (History ist stabil)
                 res = get_stock_data_full(symbol)
                 if res is None or res[0] is None: return None
                 price, dates, earn, rsi, uptrend, _, _, _ = res
@@ -307,7 +307,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 if only_uptrend and not uptrend: return None
                 if not (min_stock_price <= price <= max_stock_price): return None
                 
-                # STUFE 2: Optionsdaten mit Plausibilitäts-Check
+                # STUFE 2: Optionsdaten
                 valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
                 if not valid_dates: return None
                 target_date = valid_dates[0]
@@ -318,34 +318,34 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 if opts.empty: return None
                 o = opts.iloc[0]
 
-                # PRÄMIEN-CHECK (Das löst die "komischen" Werte)
-                bid, ask = o['bid'], o['ask']
+                # --- PRÄMIEN-GUARD (Löst AMGN, CPAY, UNP Probleme) ---
+                bid, ask = o.get('bid', 0), o.get('ask', 0)
                 days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 
-                # Wenn Bid/Ask 0 ist oder der Spread > 50% vom Ask, sind die Daten Schrott
-                if bid <= 0.01 or ask <= 0.01: 
-                    fair_price = o['lastPrice'] 
-                elif (ask - bid) > (ask * 0.5): # Zu großer Spread = Warnsignal
-                    return None 
-                else:
+                # 1. Radikaler Spread-Filter: Wenn Ask > doppelte vom Bid -> Datenfehler bei Yahoo
+                if bid > 0.05 and ask > 0.05:
+                    if ask > (bid * 2.1): return None # Zu illiquid / Schrott-Daten
                     fair_price = (bid + ask) / 2
+                elif o.get('lastPrice', 0) > 0:
+                    fair_price = o['lastPrice']
+                else:
+                    return None
 
+                # 2. Rendite-Check mit Plausibilitäts-Cap
                 y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
-                if y_pa < p_min_yield or y_pa > 150: return None # Filtert unrealistische Ausreißer
+                if y_pa < p_min_yield or y_pa > 120: return None # Alles über 120% ist bei Bluechips fast immer ein Bug
 
-                # STUFE 3: Teure Info-Abfrage nur bei validen Setups
+                # STUFE 3: Teure Info-Abfrage nur für Finalisten (Gegen "Too Many Requests")
                 info = None
                 for _ in range(2): 
                     try:
                         info = tk.info
-                        if 'marketCap' in info: break
+                        if info and 'marketCap' in info: break
                     except: time.sleep(1)
                 
-                if not info: return None
-                m_cap = info.get('marketCap', 0)
-                if m_cap < p_min_cap: return None
+                if not info or info.get('marketCap', 0) < p_min_cap: return None
                 
-                # Restliche Berechnungen (IV, Delta, EM)
+                # Berechnungen
                 iv = o.get('impliedVolatility', 0.4)
                 delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv)
                 exp_move_pct = (price * iv * np.sqrt(days_to_exp / 365) / price) * 100
@@ -365,18 +365,20 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     'puffer': current_puffer, 'bid': fair_price, 'rsi': rsi, 'earn': earn, 
                     'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip", 'delta': delta_val,
                     'sent_icon': sent_icon, 'stars_val': s_val, 'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️",
-                    'analyst_label': analyst_txt, 'analyst_color': analyst_col, 'mkt_cap': m_cap / 1e9,
+                    'analyst_label': analyst_txt, 'analyst_color': analyst_col, 'mkt_cap': info.get('marketCap', 0) / 1e9,
                     'em_pct': exp_move_pct, 'em_safety': current_puffer / exp_move_pct if exp_move_pct > 0 else 0
                 }
             except: return None
                 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # WICHTIG: max_workers auf 3 reduziert für maximale Stabilität
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
             for i, future in enumerate(concurrent.futures.as_completed(futures)):
                 res_data = future.result()
                 if res_data: all_results.append(res_data)
                 progress_bar.progress((i + 1) / len(ticker_liste))
                 if i % 5 == 0: status_text.text(f"Checke {i}/{len(ticker_liste)} Ticker...")
+        
         status_text.empty(); progress_bar.empty()
         if all_results:
             st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (float(x.get('stars_val', 0)), float(x.get('y_pa', 0))), reverse=True)
@@ -384,6 +386,8 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         else:
             st.session_state.profi_scan_results = []
             st.warning("Keine Treffer gefunden.")
+
+# --- AB HIER BLEIBT DEIN CODE FÜR DIE RENDERING-LOGIK (DIE CARDS) GLEICH ---
 
 if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
@@ -746,6 +750,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
