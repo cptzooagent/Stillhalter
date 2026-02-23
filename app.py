@@ -292,60 +292,84 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         all_results = []
 
         def check_single_stock(symbol):
+            # 1. Kleiner Zufalls-Versatz, damit nicht alle Threads gleichzeitig feuern
+            import random
+            time.sleep(random.uniform(0.2, 0.6))
+            
             try:
-                time.sleep(0.4) 
                 tk = yf.Ticker(symbol)
-                info = tk.info
-                if not info or 'currentPrice' not in info: return None
-                m_cap = info.get('marketCap', 0)
-                price = info.get('currentPrice', 0)
-                if m_cap < p_min_cap or not (min_stock_price <= price <= max_stock_price): return None
+                
+                # STUFE 1: Schnelle Kursdaten (verursacht selten Sperren)
+                # Wir holen erst die Historie für RSI/Trend
                 res = get_stock_data_full(symbol)
                 if res is None or res[0] is None: return None
-                _, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+                price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+                
+                # Vor-Filter: Wenn diese Kriterien nicht erfüllt sind, STOPP (kein tk.info nötig!)
                 if only_uptrend and not uptrend: return None
+                if not (min_stock_price <= price <= max_stock_price): return None
+                
+                # STUFE 2: Options-Kette prüfen
                 valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 30]
                 if not valid_dates: return None
                 target_date = valid_dates[0]
+                
                 chain = tk.option_chain(target_date).puts
                 target_strike = price * (1 - p_puffer)
                 opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
                 if opts.empty: return None
                 o = opts.iloc[0]
-                days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 
-                # --- NEU: EXPECTED MOVE BERECHNUNG ---
-                iv = o.get('impliedVolatility', 0)
-                if iv == 0: iv = 0.4 # Fallback
-                # Formel: Preis * IV * Wurzel(Tage/365)
-                exp_move_abs = price * (iv * np.sqrt(days_to_exp / 365))
-                exp_move_pct = (exp_move_abs / price) * 100
-                current_puffer = ((price - o['strike']) / price) * 100
-                # Sicherheitsfaktor: Wie oft passt der Expected Move in meinen Puffer?
-                em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
-                
+                # Rendite-Check vorab
                 bid, ask = o['bid'], o['ask']
                 fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o['lastPrice']
-                delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv, option_type='put')
-                sent_icon, _ = get_finviz_sentiment(symbol)
+                days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
                 
-                if y_pa >= p_min_yield:
-                    analyst_txt, analyst_col = get_analyst_conviction(info)
-                    s_val = 0.0
-                    if "HYPER" in analyst_txt: s_val = 3.0
-                    elif "Stark" in analyst_txt: s_val = 2.0
-                    if rsi < 35: s_val += 0.5
-                    if uptrend: s_val += 0.5
-                    return {
-                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
-                        'puffer': current_puffer, 'bid': fair_price, 'rsi': rsi, 'earn': earn if earn else "---", 
-                        'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip", 'delta': delta_val,
-                        'sent_icon': sent_icon, 'stars_val': s_val, 'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️",
-                        'analyst_label': analyst_txt, 'analyst_color': analyst_col, 'mkt_cap': m_cap / 1e9,
-                        'em_pct': exp_move_pct, 'em_safety': em_safety # NEUE WERTE
-                    }
-            except: return None
+                if y_pa < p_min_yield: return None
+
+                # STUFE 3: Die "teure" tk.info Abfrage (nur für Finalisten!)
+                # Hier knallt es meistens bei "Too Many Requests"
+                info = None
+                for _ in range(3): # 3 Versuche mit steigender Pause
+                    try:
+                        info = tk.info
+                        if info and 'marketCap' in info: break
+                    except:
+                        time.sleep(2)
+                
+                if not info: return None
+                
+                m_cap = info.get('marketCap', 0)
+                if m_cap < p_min_cap: return None
+                
+                # Wenn wir hier sind, hat die Aktie alle Hürden genommen
+                iv = o.get('impliedVolatility', 0.4)
+                delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv, option_type='put')
+                exp_move_pct = (price * iv * np.sqrt(days_to_exp / 365) / price) * 100
+                current_puffer = ((price - o['strike']) / price) * 100
+                em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
+                
+                analyst_txt, analyst_col = get_analyst_conviction(info)
+                sent_icon, _ = get_finviz_sentiment(symbol)
+                
+                # Stars-Logik
+                s_val = 0.0
+                if "HYPER" in analyst_txt: s_val = 3.0
+                elif "Stark" in analyst_txt: s_val = 2.0
+                if rsi < 35: s_val += 0.5
+                if uptrend: s_val += 0.5
+
+                return {
+                    'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
+                    'puffer': current_puffer, 'bid': fair_price, 'rsi': rsi, 'earn': earn if earn else "---", 
+                    'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip", 'delta': delta_val,
+                    'sent_icon': sent_icon, 'stars_val': s_val, 'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️",
+                    'analyst_label': analyst_txt, 'analyst_color': analyst_col, 'mkt_cap': m_cap / 1e9,
+                    'em_pct': exp_move_pct, 'em_safety': em_safety
+                }
+            except Exception as e:
+                return None
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
@@ -723,3 +747,4 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
