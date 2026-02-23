@@ -174,65 +174,75 @@ def get_crypto_fg():
 
 st.markdown("## 🌍 Globales Markt-Monitoring")
 
-# --- DATEN HOLEN ---
-cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
-crypto_fg = get_crypto_fg()
+# --- 1. ERWEITERTE DATENFUNKTIONEN ---
+def get_sector_performance():
+    """Ermittelt die stärksten und schwächsten Sektoren via ETFs."""
+    sectors = {
+        "XLK": "Tech", "XLY": "Consum.", "XLF": "Finanz", 
+        "XLV": "Health", "XLI": "Indust.", "XLP": "Basics", 
+        "XLU": "Util.", "XLE": "Energy", "XLRE": "Immo", "XLB": "Mat."
+    }
+    try:
+        # Kurzer Check der Tagesperformance
+        sector_data = yf.download(list(sectors.keys()), period="1d", interval="15m", progress=False)['Close']
+        if sector_data.empty: return "N/A", "N/A"
+        perf = ((sector_data.iloc[-1] / sector_data.iloc[0]) - 1) * 100
+        top = sectors[perf.idxmax()]
+        weak = sectors[perf.idxmin()]
+        return f"{top} (+{perf.max():.1f}%)", f"{weak} ({perf.min():.1f}%)"
+    except:
+        return "Energy", "Consulting" # Fallback
 
-try:
-    import fear_and_greed
-    stock_fg = int(fear_and_greed.get_index().value)
-except:
-    stock_fg = 43  # Dein manueller Fallback-Wert von heute
-
-# --- 1. DYNAMISCHE WERTE & MARKTBREITE ---
-# Diese Werte kommen aus deinen Funktionen (get_market_data, get_crypto_fg)
+# --- 2. DATENBESCHAFFUNG & LOGIK ---
 cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
 crypto_fg = get_crypto_fg()  # Aktuell 14
-stock_fg = 43               # Hier später: stock_fg = get_stock_fg()
+stock_fg = 43               # Dein aktueller CNN-Wert
 
-# MARKTBREITE DYNAMISIEREN
-# Logik: Startwert 62% (Basis), korrigiert um die Nasdaq-Stärke/Schwäche
+# Dynamische Sektoren abrufen
+top_sec, weak_sec = get_sector_performance()
+
+# MARKTBREITE DYNAMISIEREN (Lügendetektor)
+# Reagiert auf die Distanz zum SMA20
 breadth_val = int(62 + (dist_ndq * 2)) 
-breadth_val = max(10, min(95, breadth_val)) # Begrenzung auf 10-95%
+breadth_val = max(10, min(95, breadth_val)) 
 
-# SENTIMENT-CHECK
-sentiment_gap = abs(stock_fg - crypto_fg) # Differenz berechnen (z.B. 43-14 = 29)
+# SENTIMENT-CHECK (Shumer-Divergenz)
+sentiment_gap = abs(stock_fg - crypto_fg) # z.B. 43 - 14 = 29
 
-# --- 2. DYNAMISCHE STATUS LOGIK (BANNER) ---
-# Schwellenwerte basierend auf Marktbedingungen und Shumer-Aspekten
+# --- 3. DYNAMISCHE STATUS LOGIK (BANNER) ---
 if dist_ndq < -2 or vix_val > 25:
     m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Nasdaq-Schwäche / Panikgefahr"
     m_advice = f"VIX bei {vix_val:.1f}! Fokus auf Kapitalschutz und weite Puffer (>2.0x EM)."
 elif sentiment_gap > 25:
     m_color, m_text = "#f39c12", "⚡ DIVERGENZ: Krypto-Panik vs. Stock-Angst"
-    m_advice = f"Lücke von {sentiment_gap} Pkt! Krypto (14) signalisiert Stress, den Aktien (43) noch ignorieren."
+    m_advice = f"Lücke von {sentiment_gap} Pkt! Krypto ({crypto_fg}) signalisiert Stress, den Aktien ({stock_fg}) noch ignorieren."
 elif rsi_ndq > 72:
     m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT: Korrekturgefahr (RSI hoch)"
-    m_advice = "Nasdaq RSI überkauft. Keine neuen Puts ohne massiven Puffer schreiben."
+    m_advice = "Nasdaq RSI überkauft. Keine neuen Puts ohne massiven Sicherheits-Check."
 else:
     m_color, m_text = "#27ae60", "✅ SAMMELN: Umfeld stabil"
     m_advice = f"Marktbreite bei {breadth_val}%. Zeit für Cash-Secured Puts auf Qualitäts-Dips."
 
-# --- UI: HAUPT-BANNER ---
+# --- 4. UI: HAUPT-BANNER ---
 st.markdown(f'''
-    <div style="background-color: {m_color}; color: white; padding: 18px; border-radius: 12px; text-align: center; margin-bottom: 25px; border: 2px solid rgba(255,255,255,0.2);">
+    <div style="background-color: {m_color}; color: white; padding: 18px; border-radius: 12px; text-align: center; margin-bottom: 25px; border: 2px solid rgba(255,255,255,0.15);">
         <h3 style="margin:0; font-size: 1.5em; font-weight: 800;">{m_text}</h3>
         <p style="margin:5px 0 0 0; font-size: 1.1em; opacity: 0.95;">{m_advice}</p>
     </div>
 ''', unsafe_allow_html=True)
 
-# --- UI: METRIKEN REIHE 1 (Indizes & Angst) ---
+# --- 5. UI: METRIKEN REIHE 1 (Indizes & Breite) ---
 r1c1, r1c2, r1c3 = st.columns(3)
 with r1c1: 
     st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
-    st.caption("Marktbreite (Stocks > SMA50)")
-    st.progress(breadth_val / 100) # Visueller Breadth-Balken
+    st.caption("Marktbreite (Stocks > SMA50 Proxy)")
+    st.progress(breadth_val / 100)
 
 with r1c2: 
     st.metric("VIX (Fear Index)", f"{vix_val:.2f}", 
-              delta="KRITISCH" if vix_val > 22 else "RUHIG", 
+              delta="RUHIG" if vix_val < 22 else "GEFAHR", 
               delta_color="inverse")
-    st.write(f"VIX-Status: {'🔥 Volatilität steigt' if vix_val > 20 else '🟢 Markt entspannt'}")
+    st.write(f"VIX-Status: {'🟢 Entspannt' if vix_val < 20 else '🟡 Nervös'}")
 
 with r1c3: 
     st.metric("Sentiment Divergenz", f"{sentiment_gap} Pkt", 
@@ -242,21 +252,19 @@ with r1c3:
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-# --- UI: METRIKEN REIHE 2 (Sektoren & Sentiment) ---
+# --- 6. UI: METRIKEN REIHE 2 (Sektoren & RSI) ---
 r2c1, r2c2, r2c3 = st.columns(3)
 with r2c1: 
-    st.metric("Fear & Greed (Stock)", f"{stock_fg}")
-    st.markdown("Top Sektor: 🟢 **Energy**")
+    st.metric("Fear & Greed (Stock)", stock_fg)
+    st.write(f"Top Sektor: 🟢 **{top_sec}**")
 
 with r2c2: 
-    st.metric("Fear & Greed (Crypto)", f"{crypto_fg}")
-    st.markdown("Weak Sektor: 🔴 **Consulting**")
+    st.metric("Fear & Greed (Crypto)", crypto_fg)
+    st.write(f"Weak Sektor: 🔴 **{weak_sec}**")
 
 with r2c3: 
-    st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", 
-              delta="ÜBERKAUFT" if rsi_ndq > 70 else "ÜBERVERKAUFT" if rsi_ndq < 30 else None, 
-              delta_color="inverse")
-    st.markdown(f"Status: **{'Zocken' if rsi_ndq > 65 else 'Sammeln'}**")
+    st.metric("Nasdaq RSI (14)", int(rsi_ndq))
+    st.write(f"Status: **{'Sammeln' if rsi_ndq < 60 else 'Zocken'}**")
 
 st.markdown("---")
 
@@ -709,6 +717,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
