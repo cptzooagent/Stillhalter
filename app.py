@@ -255,7 +255,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
         st.rerun()
 
-# --- DAS DESIGN AUS DEINEM SCREENSHOT ---
+# --- REPARIERTE ANZEIGE-LOGIK (Fix für Bild 54) ---
 if st.session_state.profi_scan_results:
     res_list = st.session_state.profi_scan_results
     st.subheader(f"🎯 Top-Setups nach Qualität ({len(res_list)} Treffer)")
@@ -263,52 +263,53 @@ if st.session_state.profi_scan_results:
     
     for idx, res in enumerate(res_list):
         with cols[idx % 4]:
-            # Trend-Badge
-            trend_html = '<span style="color:#27ae60; font-size:0.7em;">🛡️ Trend</span>' if res['uptrend'] else '<span style="color:#e67e22; font-size:0.7em;">💎 Dip</span>'
+            # Badge für Trend/Dip vorbereiten
+            trend_badge = '<span style="color:#27ae60; font-size:0.7em;">🛡️ Trend</span>' if res['uptrend'] else '<span style="color:#e67e22; font-size:0.7em;">💎 Dip</span>'
             
-            st.markdown(f"""
-            <div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 15px; background: white; box-shadow: 2px 2px 10px rgba(0,0,0,0.05); height: 420px; position: relative; margin-bottom:20px;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <b style="font-size: 1.4em;">{res['symbol']}</b>
-                    <span style="color: #f1c40f;">{res['stars']}</span>
-                    {trend_html}
-                </div>
-                <p style="margin: 0; font-size: 0.7em; color: gray;">YIELD P.A.</p>
-                <div style="font-size: 1.8em; font-weight: bold; color: #1e1e1e;">{res['y_pa']:.1f}%</div>
-                
-                <div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 0.8em;">
-                    <div><span style="color:gray;">Strike</span><br><b>{res['strike']:.1f}$</b></div>
-                    <div style="border-left: 2px solid #f1c40f; padding-left: 10px;"><span style="color:gray;">Mid</span><br><b>{res['bid']:.2f}$</b></div>
-                </div>
-                
-                <div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 0.8em;">
-                    <div><span style="color:gray;">Puffer</span><br><b style="color:#2980b9;">{res['puffer']:.1f}%</b></div>
-                    <div style="border-left: 2px solid #27ae60; padding-left: 10px;"><span style="color:gray;">Delta</span><br><b style="color:#27ae60;">{res['delta']:.2f}</b></div>
-                </div>
-                
-                <div style="margin-top: 15px; font-size: 0.7em; border-top: 1px dashed #ddd; padding-top: 5px;">
-                    <div style="display: flex; justify-content: space-between;">
-                        <span>Stat. Erwartung (EM):</span>
-                        <b style="color:#e67e22;">±{res['em_pct']:.1f}%</b>
-                    </div>
-                    <div style="background: #eee; height: 4px; border-radius: 2px; margin-top: 3px;">
-                        <div style="background: #e67e22; width: {min(res['em_safety']*50, 100)}%; height: 4px; border-radius: 2px;"></div>
-                    </div>
-                    <p style="margin-top:2px;">Sicherheit: {res['em_safety']:.1f} EM</p>
-                </div>
-                
-                <div style="display: flex; justify-content: space-between; margin-top: 15px; font-size: 0.7em; color: #666;">
-                    <span>⏳ {res['tage']}d</span>
-                    <span>RSI: {int(res['rsi'])}</span>
-                    <span>{res['m_cap']:.0f}B</span>
-                    <span>📅 {res['earn']}</span>
-                </div>
-                
-                <div style="margin-top: 10px; background: #f9f0ff; color: {res['analyst_color']}; padding: 5px; border-radius: 5px; font-size: 0.65em; text-align: center; font-weight: bold;">
-                    🚀 {res['analyst_label']}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            # WICHTIG: Das HTML muss direkt am Zeilenanfang stehen (keine Tabs/Leerzeichen davor im String)
+            html_card = f"""
+<div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 15px; background: white; box-shadow: 2px 2px 10px rgba(0,0,0,0.05); height: 420px; margin-bottom:20px; font-family: sans-serif;">
+<div style="display: flex; justify-content: space-between; align-items: center;">
+<b style="font-size: 1.2em;">{res['symbol']}</b>
+<span style="color: #f1c40f;">{res['stars']}</span>
+{trend_badge}
+</div>
+<p style="margin: 5px 0 0 0; font-size: 0.7em; color: gray;">YIELD P.A.</p>
+<div style="font-size: 1.8em; font-weight: bold; color: #1e1e1e;">{res['y_pa']:.1f}%</div>
+
+<div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 0.8em;">
+<div><span style="color:gray;">Strike</span><br><b>{res['strike']:.1f}$</b></div>
+<div style="border-left: 2px solid #f1c40f; padding-left: 10px;"><span style="color:gray;">Mid</span><br><b>{res['bid']:.2f}$</b></div>
+</div>
+
+<div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 0.8em;">
+<div><span style="color:gray;">Puffer</span><br><b style="color:#2980b9;">{res['puffer']:.1f}%</b></div>
+<div style="border-left: 2px solid #27ae60; padding-left: 10px;"><span style="color:gray;">Delta</span><br><b style="color:#27ae60;">{res['delta']:.2f}</b></div>
+</div>
+
+<div style="margin-top: 15px; font-size: 0.7em; border-top: 1px dashed #ddd; padding-top: 5px;">
+<div style="display: flex; justify-content: space-between;">
+<span>Stat. Erwartung (EM):</span>
+<b style="color:#e67e22;">±{res['em_pct']:.1f}%</b>
+</div>
+<div style="background: #eee; height: 4px; border-radius: 2px; margin-top: 3px;">
+<div style="background: #e67e22; width: {max(5, min(res['em_safety']*50, 100))}%; height: 4px; border-radius: 2px;"></div>
+</div>
+<p style="margin-top:2px;">Sicherheit: {res['em_safety']:.1f} EM</p>
+</div>
+
+<div style="display: flex; justify-content: space-between; margin-top: 15px; font-size: 0.7em; color: #666;">
+<span>⏳ {res['tage']}d</span>
+<span>RSI: {int(res['rsi'])}</span>
+<span>📅 {res['earn']}</span>
+</div>
+
+<div style="margin-top: 10px; background: #f0f7ff; color: #2980b9; padding: 5px; border-radius: 5px; font-size: 0.65em; text-align: center; font-weight: bold;">
+{res['analyst_label']}
+</div>
+</div>
+"""
+            st.markdown(html_card, unsafe_allow_html=True)
                     
 # --- SEKTION 2: DEPOT-MANAGER (STABILISIERTE VERSION) ---
 st.markdown("---")
@@ -455,6 +456,7 @@ if symbol_input:
             st.error(f"Fehler: {e}")
 
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
+
 
 
 
