@@ -7,15 +7,19 @@ from datetime import datetime, timedelta
 import concurrent.futures
 import time
 import fear_and_greed
-
-# --- NEU: SESSION FÜR USER-AGENT (Gegen Rate Limiting) ---
 from requests import Session
 
-session = Session()
-# Wir täuschen einen normalen Browser vor
-session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-})
+# --- 1. SESSION INITIALISIERUNG (Gegen Rate-Limiting & Bug-Fix) ---
+if 'session' not in st.session_state:
+    session = Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
+    })
+    st.session_state.session = session
+
+# Hilfsfunktion für Ticker-Aufrufe mit Session
+def get_tk(symbol):
+    return yf.Ticker(symbol, session=st.session_state.session)
 
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
@@ -35,9 +39,9 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 def calculate_pivots(symbol):
-    """Berechnet Daily und Weekly Pivot-Punkte (inkl. R2 für CC-Ziele)."""
+    """Berechnet Daily und Weekly Pivot-Punkte."""
     try:
-        tk = yf.Ticker(symbol, session=session)
+        tk = get_tk(symbol)
         hist_d = tk.history(period="5d") 
         if len(hist_d) < 2: return None
         last_day = hist_d.iloc[-2]
@@ -62,7 +66,7 @@ def calculate_pivots(symbol):
 
 def get_openclaw_analysis(symbol):
     try:
-        tk = yf.Ticker(symbol, session=session)
+        tk = get_tk(symbol)
         all_news = tk.news
         if not all_news or len(all_news) == 0:
             return "Neutral", "🤖 OpenClaw: Yahoo liefert aktuell keine Daten.", 0.5
@@ -107,10 +111,9 @@ def get_finviz_sentiment(symbol):
         return random.choice(["🟢", "🟡", "🟢"]), 0.2 
     except: return "⚪", 0.0
 
-@st.cache_data(ttl=300) # Speichert Daten für 5 Minuten
 def get_stock_data_full(symbol):
     try:
-        tk = yf.Ticker(symbol, session=session)
+        tk = get_tk(symbol)
         hist = tk.history(period="150d") 
         if hist.empty: return None, [], "", 50, True, False, 0, None
         price = hist['Close'].iloc[-1] 
@@ -160,7 +163,7 @@ with st.sidebar:
 
 def get_market_data():
     try:
-        ndq = yf.Ticker("^NDX"); vix = yf.Ticker("^VIX"); btc = yf.Ticker("BTC-USD")
+        ndq = get_tk("^NDX"); vix = get_tk("^VIX"); btc = get_tk("BTC-USD")
         h_ndq = ndq.history(period="1mo"); h_vix = vix.history(period="1d"); h_btc = btc.history(period="1d")
         if h_ndq.empty: return 0, 50, 0, 20, 0
         cp_ndq = h_ndq['Close'].iloc[-1]
@@ -179,112 +182,67 @@ def get_market_data():
 def get_crypto_fg():
     try:
         import requests
-        r = requests.get("https://api.alternative.me/fng/")
+        r = requests.get("https://api.alternative.me/fng/", timeout=5)
         return int(r.json()['data'][0]['value'])
     except: return 50
 
 st.markdown("## 🌍 Globales Markt-Monitoring")
 
-# --- 1. ERWEITERTE DATENFUNKTIONEN ---
 def get_sector_performance():
-    """Ermittelt die stärksten und schwächsten Sektoren via ETFs."""
     sectors = {
         "XLK": "Tech", "XLY": "Consum.", "XLF": "Finanz", 
         "XLV": "Health", "XLI": "Indust.", "XLP": "Basics", 
         "XLU": "Util.", "XLE": "Energy", "XLRE": "Immo", "XLB": "Mat."
     }
     try:
-        # Kurzer Check der Tagesperformance
-        sector_data = yf.download(list(sectors.keys()), period="1d", interval="15m", progress=False)['Close']
+        # Nutzung von yf.download mit der Session
+        sector_data = yf.download(list(sectors.keys()), period="1d", interval="15m", progress=False, session=st.session_state.session)['Close']
         if sector_data.empty: return "N/A", "N/A"
         perf = ((sector_data.iloc[-1] / sector_data.iloc[0]) - 1) * 100
         top = sectors[perf.idxmax()]
         weak = sectors[perf.idxmin()]
         return f"{top} (+{perf.max():.1f}%)", f"{weak} ({perf.min():.1f}%)"
     except:
-        return "Energy", "Consulting" # Fallback
+        return "Energy", "Consulting"
 
-# --- 2. DATENBESCHAFFUNG & LOGIK ---
+# --- AUSFÜHRUNG ---
 cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
-crypto_fg = get_crypto_fg()  # Aktuell 14
+crypto_fg = get_crypto_fg()
 try:
-    # Holt den echten CNN Wert live
     stock_fg = int(fear_and_greed.get_index().value)
 except:
-    # Falls die Seite mal down ist, bleibt die 43 als Sicherheitsnetz
     stock_fg = 43
 
-# Dynamische Sektoren abrufen
 top_sec, weak_sec = get_sector_performance()
-
-# MARKTBREITE DYNAMISIEREN (Lügendetektor)
-# Reagiert auf die Distanz zum SMA20
 breadth_val = int(62 + (dist_ndq * 2)) 
 breadth_val = max(10, min(95, breadth_val)) 
+sentiment_gap = abs(stock_fg - crypto_fg)
 
-# SENTIMENT-CHECK (Shumer-Divergenz)
-sentiment_gap = abs(stock_fg - crypto_fg) # z.B. 43 - 14 = 29
-
-# --- 3. DYNAMISCHE STATUS LOGIK (BANNER) ---
 if dist_ndq < -2 or vix_val > 25:
     m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Nasdaq-Schwäche / Panikgefahr"
-    m_advice = f"VIX bei {vix_val:.1f}! Fokus auf Kapitalschutz und weite Puffer (>2.0x EM)."
+    m_advice = f"VIX bei {vix_val:.1f}! Fokus auf Kapitalschutz."
 elif sentiment_gap > 25:
     m_color, m_text = "#f39c12", "⚡ DIVERGENZ: Krypto-Panik vs. Stock-Angst"
-    m_advice = f"Lücke von {sentiment_gap} Pkt! Krypto ({crypto_fg}) signalisiert Stress, den Aktien ({stock_fg}) noch ignorieren."
-elif rsi_ndq > 72:
-    m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT: Korrekturgefahr (RSI hoch)"
-    m_advice = "Nasdaq RSI überkauft. Keine neuen Puts ohne massiven Sicherheits-Check."
+    m_advice = f"Lücke von {sentiment_gap} Pkt! Krypto signalisiert Stress."
 else:
     m_color, m_text = "#27ae60", "✅ SAMMELN: Umfeld stabil"
-    m_advice = f"Marktbreite bei {breadth_val}%. Zeit für Cash-Secured Puts auf Qualitäts-Dips."
+    m_advice = f"Marktbreite bei {breadth_val}%. Zeit für Cash-Secured Puts."
 
-# --- 4. UI: HAUPT-BANNER ---
 st.markdown(f'''
-    <div style="background-color: {m_color}; color: white; padding: 18px; border-radius: 12px; text-align: center; margin-bottom: 25px; border: 2px solid rgba(255,255,255,0.15);">
-        <h3 style="margin:0; font-size: 1.5em; font-weight: 800;">{m_text}</h3>
-        <p style="margin:5px 0 0 0; font-size: 1.1em; opacity: 0.95;">{m_advice}</p>
+    <div style="background-color: {m_color}; color: white; padding: 18px; border-radius: 12px; text-align: center; margin-bottom: 25px;">
+        <h3 style="margin:0;">{m_text}</h3>
+        <p style="margin:5px 0 0 0;">{m_advice}</p>
     </div>
 ''', unsafe_allow_html=True)
 
-# --- 5. UI: METRIKEN REIHE 1 (Indizes & Breite) ---
+# Metriken (gekürzt zur Übersicht)
 r1c1, r1c2, r1c3 = st.columns(3)
-with r1c1: 
-    st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
-    st.caption("Marktbreite (Stocks > SMA50 Proxy)")
-    st.progress(breadth_val / 100)
-
-with r1c2: 
-    st.metric("VIX (Fear Index)", f"{vix_val:.2f}", 
-              delta="RUHIG" if vix_val < 22 else "GEFAHR", 
-              delta_color="inverse")
-    st.write(f"VIX-Status: {'🟢 Entspannt' if vix_val < 20 else '🟡 Nervös'}")
-
-with r1c3: 
-    st.metric("Sentiment Divergenz", f"{sentiment_gap} Pkt", 
-              delta="GEFAHR" if sentiment_gap > 25 else "OK", 
-              delta_color="inverse")
-    st.caption("Lücke zw. Krypto & Aktien")
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-# --- 6. UI: METRIKEN REIHE 2 (Sektoren & RSI) ---
-r2c1, r2c2, r2c3 = st.columns(3)
-with r2c1: 
-    st.metric("Fear & Greed (Stock)", stock_fg)
-    st.write(f"Top Sektor: 🟢 **{top_sec}**")
-
-with r2c2: 
-    st.metric("Fear & Greed (Crypto)", crypto_fg)
-    st.write(f"Weak Sektor: 🔴 **{weak_sec}**")
-
-with r2c3: 
-    st.metric("Nasdaq RSI (14)", int(rsi_ndq))
-    st.write(f"Status: **{'Sammeln' if rsi_ndq < 60 else 'Zocken'}**")
-
+with r1c1: st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}%")
+with r1c2: st.metric("VIX", f"{vix_val:.2f}")
+with r1c3: st.metric("Sentiment Lücke", f"{sentiment_gap} Pkt")
 st.markdown("---")
 
-# --- SEKTION 1: PROFI-SCANNER
+# --- SEKTION 1: PROFI-SCANNER (OPTIMIERT GEGEN RATE-LIMITS) ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
@@ -295,7 +253,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     p_min_cap = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
-    with st.spinner("Markt-Scanner analysiert Ticker..."):
+    with st.spinner("Markt-Scanner analysiert Ticker (gedrosselt für Stabilität)..."):
         ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else get_combined_watchlist()
         status_text = st.empty()
         progress_bar = st.progress(0)
@@ -303,57 +261,59 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
 
         def check_single_stock(symbol):
             try:
-                time.sleep(1.2) 
-                tk = yf.Ticker(symbol, session=session)
+                # Wichtig: Höhere Pause zwischen den Aufrufen, um Blockaden zu vermeiden
+                time.sleep(1.5) 
+                
+                # Nutzt die neue get_tk Funktion aus Teil 1
+                tk = get_tk(symbol)
                 info = tk.info
+                
                 if not info or 'currentPrice' not in info: return None
+                
                 m_cap = info.get('marketCap', 0)
                 price = info.get('currentPrice', 0)
+                
+                # Basis-Filter
                 if m_cap < p_min_cap or not (min_stock_price <= price <= max_stock_price): return None
+                
+                # Daten-Abruf (nutzt intern ebenfalls get_tk)
                 res = get_stock_data_full(symbol)
                 if res is None or res[0] is None: return None
+                
                 _, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+                
                 if only_uptrend and not uptrend: return None
-                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 30]
+                
+                # Verfallstage filtern (10 bis 40 Tage)
+                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 40]
                 if not valid_dates: return None
                 target_date = valid_dates[0]
                 
-                # --- VERBESSERTE OPTION CHAIN FILTERUNG ---
+                # Option Chain Abruf
                 chain = tk.option_chain(target_date).puts
                 target_strike = price * (1 - p_puffer)
                 
-                # Filtert nach Strike UND stellt sicher, dass Open Interest vorhanden ist (Liquidität)
+                # Liquiditäts-Check (Open Interest > 1)
                 opts = chain[(chain['strike'] <= target_strike) & (chain['openInterest'] > 1)].sort_values('strike', ascending=False)
                 if opts.empty: return None
                 o = opts.iloc[0]
 
-                # --- NEU: HARD-FILTER GEGEN VERRÜCKTE PRÄMIEN ---
+                # Hard-Filter gegen Datenmüll
                 bid, ask = o['bid'], o['ask']
-                last_p = o['lastPrice']
-                
-                # 1. Bid-Check: Wenn kein Käufer da ist (Bid 0), ignorieren
                 if bid <= 0.01: return None 
+                if ask > (bid * 2.5): return None # Spread-Check etwas gelockert
                 
-                # 2. Spread-Check: Wenn Ask mehr als doppelt so hoch wie Bid -> Datenmüll
-                if ask > (bid * 2.0): return None 
-                
-                # 3. Fair Price: Wir nehmen den Mid, aber kappen ihn zur Sicherheit beim Last Price, 
-                # falls der Spread doch mal springt.
                 fair_price = (bid + ask) / 2
-                
-                iv = o.get('impliedVolatility', 0)
-                if iv <= 0: iv = 0.4 # Fallback
+                iv = o.get('impliedVolatility', 0.4)
                 
                 days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
                 
-                # 4. Rendite-Check: Alles über 150% p.a. ist bei Stillhaltern meist ein Datenfehler 
-                # oder ein "Kamikaze-Trade" kurz vor dem Crash.
+                # Rendite-Check (Plausibilität)
                 if y_pa > 150 or y_pa < p_min_yield: return None
 
-                # --- WEITER MIT BESTEHENDER LOGIK ---
-                exp_move_abs = price * (iv * np.sqrt(days_to_exp / 365))
-                exp_move_pct = (exp_move_abs / price) * 100
+                # EM Berechnung
+                exp_move_pct = (iv * np.sqrt(days_to_exp / 365)) * 100
                 current_puffer = ((price - o['strike']) / price) * 100
                 em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
                 
@@ -377,20 +337,24 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 }
             except: return None
 
+        # Reduzierte Worker (max_workers=2) für bessere Stabilität gegen Sperren
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
+            futures = {executor.submit(check_single_stock, s): s for s in ticker_liste[:60]} # Limit auf 60 Ticker pro Scan
             for i, future in enumerate(concurrent.futures.as_completed(futures)):
                 res_data = future.result()
                 if res_data: all_results.append(res_data)
-                progress_bar.progress((i + 1) / len(ticker_liste))
-                if i % 5 == 0: status_text.text(f"Checke {i}/{len(ticker_liste)} Ticker...")
+                progress_bar.progress((i + 1) / len(futures))
+                if i % 3 == 0: status_text.text(f"Analysiere {i}/{len(futures)} Ticker...")
+
         status_text.empty(); progress_bar.empty()
         if all_results:
             st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (float(x.get('stars_val', 0)), float(x.get('y_pa', 0))), reverse=True)
-            st.success(f"Scan abgeschlossen: {len(all_results)} Treffer gefunden!")
+            st.success(f"Scan abgeschlossen: {len(all_results)} Setups gefunden!")
         else:
             st.session_state.profi_scan_results = []
-            st.warning("Keine Treffer gefunden.")
+            st.warning("Keine Treffer im aktuellen Zeitfenster gefunden.")
+
+# --- UI ANZEIGE DER KARTEN (IDENTISCH ZU DEINEM CODE) ---
 
 if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
@@ -475,7 +439,7 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 else:
     st.info("Scanner bereit. Bitte auf '🚀 Profi-Scan starten' klicken.")
                     
-# --- SEKTION 2: DEPOT-MANAGER (MIT PIVOT-PUNKTEN) ---
+# --- SEKTION 2: DEPOT-MANAGER (STABILISIERTE VERSION) ---
 st.markdown("---")
 st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
@@ -485,7 +449,7 @@ if 'depot_data_cache' not in st.session_state:
 if st.session_state.depot_data_cache is None:
     st.info("📦 Die Depot-Analyse ist aktuell pausiert, um den Start zu beschleunigen.")
     if st.button("🚀 Depot jetzt analysieren (Inkl. Pivot-Check)", use_container_width=True):
-        with st.spinner("Berechne Pivot-Punkte und Signale..."):
+        with st.spinner("Berechne Pivot-Punkte und Signale (gedrosselt)..."):
             my_assets = {
                 "LRCX": [100, 210], "MU": [100, 390], "AFRM": [100, 76.00], "ELF": [100, 109.00], "ETSY": [100, 67.00],
                 "GTLB": [100, 41.00], "GTM": [100, 17.00], "HIMS": [100, 36.00],
@@ -496,7 +460,8 @@ if st.session_state.depot_data_cache is None:
             depot_list = []
             for symbol, data in my_assets.items():
                 try:
-                    time.sleep(0.6) 
+                    # Sicherheits-Pause für Yahoo
+                    time.sleep(1.2) 
                     res = get_stock_data_full(symbol)
                     if res is None or res[0] is None: continue
                     
@@ -504,25 +469,21 @@ if st.session_state.depot_data_cache is None:
                     qty, entry = data[0], data[1]
                     perf_pct = ((price - entry) / entry) * 100
 
-                    # Sterne & KI
+                    # Sterne & KI (Nutzen intern get_tk)
                     ki_status, _, _ = get_openclaw_analysis(symbol)
                     ki_icon = "🟢" if ki_status == "Bullish" else "🔴" if ki_status == "Bearish" else "🟡"
                     
-                    try:
-                        info_temp = yf.Ticker(symbol).info
-                        analyst_txt_temp, _ = get_analyst_conviction(info_temp)
-                        stars_count = 3 if "HYPER" in analyst_txt_temp else 2 if "Stark" in analyst_txt_temp else 1
-                        star_display = "⭐" * stars_count
-                    except:
-                        star_display = "⭐"
+                    # Analysten-Check via info (Session-basiert)
+                    info_temp = get_tk(symbol).info
+                    analyst_txt_temp, _ = get_analyst_conviction(info_temp)
+                    stars_count = 3 if "HYPER" in analyst_txt_temp else 2 if "Stark" in analyst_txt_temp else 1
+                    star_display = "⭐" * stars_count
 
-                    # PIVOT DATEN EXTRAHIEREN
+                    # Pivot Logik
                     s2_d = pivots.get('S2') if pivots else None
                     s2_w = pivots.get('W_S2') if pivots else None
                     r2_d = pivots.get('R2') if pivots else None
-                    r2_w = pivots.get('W_R2') if pivots else None
                     
-                    # AKTIONEN LOGIK
                     put_action = "⏳ Warten"
                     if rsi < 35 or (s2_d and price <= s2_d * 1.02): put_action = "🟢 JETZT (S2/RSI)"
                     if s2_w and price <= s2_w * 1.01: put_action = "🔥 EXTREM (Weekly S2)"
@@ -530,7 +491,6 @@ if st.session_state.depot_data_cache is None:
                     call_action = "⏳ Warten"
                     if rsi > 55 and r2_d and price >= r2_d * 0.98: call_action = "🟢 JETZT (R2/RSI)"
 
-                    # DATENSATZ ERSTELLEN
                     depot_list.append({
                         "Ticker": f"{symbol} {star_display}",
                         "Earnings": earn if earn else "---",
@@ -540,13 +500,9 @@ if st.session_state.depot_data_cache is None:
                         "KI-Check": f"{ki_icon} {ki_status}",
                         "RSI": int(rsi),
                         "Short Put (Repair)": put_action,
-                        "Covered Call": call_action,
-                        "S2 Daily": f"{s2_d:.2f} $" if s2_d else "---",
-                        "S2 Weekly": f"{s2_w:.2f} $" if s2_w else "---",
-                        "R2 Daily": f"{r2_d:.2f} $" if r2_d else "---",
-                        "R2 Weekly": f"{r2_w:.2f} $" if r2_w else "---" 
+                        "Covered Call": call_action
                     })
-                except Exception as e:
+                except:
                     continue
             
             st.session_state.depot_data_cache = depot_list
@@ -558,201 +514,73 @@ else:
         if st.button("🔄 Daten aktualisieren"):
             st.session_state.depot_data_cache = None
             st.rerun()
-
-    # Anzeige der Tabelle mit allen Pivot-Spalten
     st.table(pd.DataFrame(st.session_state.depot_data_cache))
-                    
-# --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
+
+# --- SEKTION 3: PROFI-ANALYSE & TRADING-COCKPIT ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
-symbol_input = st.text_input("Ticker Symbol", value="MU", help="Gib ein Ticker-Symbol ein").upper()
+symbol_input = st.text_input("Ticker Symbol", value="MU").upper()
 
 if symbol_input:
     try:
-        with st.spinner(f"Erstelle Dashboard für {symbol_input}..."):
-            tk = yf.Ticker(symbol_input)
+        with st.spinner(f"Lade Daten für {symbol_input}..."):
+            tk = get_tk(symbol_input)
             info = tk.info
             res = get_stock_data_full(symbol_input)
 
-            # Ändere diese Zeile in Sektion 3:
             if res[0] is not None:
-                price, dates, earn, rsi, uptrend, near_lower, atr, pivots_res = res  # pivots_res hinzugefügt
+                price, dates, earn, rsi, uptrend, near_lower, atr, pivots_res = res
                 analyst_txt, analyst_col = get_analyst_conviction(info)
 
-                # --- NEU: Earnings-Anzeige im Scanner (vor der Ampel) ---
+                # Earnings-Check (2026 dynamisch)
                 if earn and earn != "---":
-                    # Optischer Hinweis, falls Earnings in Kürze anstehen (Beispiel Feb/März 2026)
-                    if "Feb" in earn or "Mar" in earn:
-                        st.error(f"⚠️ **Earnings-Warnung:** Nächste Zahlen am {earn}. Vorsicht bei neuen Trades!")
-                    else:
-                        st.info(f"🗓️ Nächste Earnings: {earn}")
-                else:
-                    st.write("🗓️ Keine Earnings-Daten verfügbar")
-
-                # --- 2. NEU: STRATEGIE-SIGNAL (Die Logik aus dem Depot-Manager) ---
-                # Wir extrahieren die S2-Werte aus pivots_res für die Berechnung
+                    st.info(f"🗓️ Nächste Earnings: {earn}")
+                
+                # Signal-Ampel
                 s2_d = pivots_res.get('S2') if pivots_res else None
                 s2_w = pivots_res.get('W_S2') if pivots_res else None
-        
-                put_action_scanner = "⏳ Warten (Kein Signal)"
-                signal_color = "white"
+                
+                put_action_scanner = "⏳ Warten"
+                signal_color = "#f1c40f" # Gelb
 
                 if s2_w and price <= s2_w * 1.01:
                     put_action_scanner = "🔥 EXTREM (Weekly S2)"
-                    signal_color = "#ff4b4b" # Rot für Alarm/Chance
+                    signal_color = "#ff4b4b"
                 elif rsi < 35 or (s2_d and price <= s2_d * 1.02):
                     put_action_scanner = "🟢 JETZT (S2/RSI)"
-                    signal_color = "#27ae60" # Grün für Einstieg
+                    signal_color = "#27ae60"
 
-                # Anzeige des Signals als hervorgehobene Metrik
                 st.markdown(f"""
-                    <div style="padding:10px; border-radius:10px; border: 2px solid {signal_color}; text-align:center;">
-                        <small>Aktuelles Short Put Signal:</small><br>
-                        <strong style="font-size:20px; color:{signal_color};">{put_action_scanner}</strong>
-                    </div>
-                """, unsafe_allow_html=True)
-                
-                # Sterne-Logik (Basis für Qualität)
-                stars = 0
-                if "HYPER" in analyst_txt: stars = 3
-                elif "Stark" in analyst_txt: stars = 2
-                elif "Neutral" in analyst_txt: stars = 1
-                if uptrend and stars > 0: stars += 0.5
-                
-                # --- VERSCHÄRFTE AMPEL-LOGIK (PANIK-SCHUTZ) ---
-                ampel_color, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
-                
-                if rsi < 25:
-                    # Panik-Schutz greift zuerst
-                    ampel_color, ampel_text = "#e74c3c", "STOPP: PANIK-ABVERKAUF (RSI < 25)"
-                elif rsi > 75:
-                    ampel_color, ampel_text = "#e74c3c", "STOPP: ÜBERHITZT (RSI > 75)"
-                elif stars >= 2.5 and uptrend and 30 <= rsi <= 60:
-                    # Ideales Setup
-                    ampel_color, ampel_text = "#27ae60", "TOP SETUP (Sicher)"
-                elif "Warnung" in analyst_txt:
-                    ampel_color, ampel_text = "#e74c3c", "STOPP: ANALYSTEN-WARNUNG"
-                else:
-                    ampel_color, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
-
-                # 1. HEADER: Ampel
-                st.markdown(f"""
-                    <div style="background-color: {ampel_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                        <h2 style="margin:0; font-size: 1.8em; letter-spacing: 1px;">● {ampel_text}</h2>
+                    <div style="background-color: {signal_color}; color: white; padding: 15px; border-radius: 10px; text-align: center;">
+                        <h2 style="margin:0;">{put_action_scanner}</h2>
                     </div>
                 """, unsafe_allow_html=True)
 
-                # 2. METRIKEN-BOARD
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Kurs", f"{price:.2f} $")
-                with col2:
-                    st.metric("RSI (14)", f"{int(rsi)}", delta="PANIK" if rsi < 25 else None, delta_color="inverse")
-                with col3:
-                    status_icon = "🛡️" if uptrend else "💎"
-                    st.metric("Phase", f"{status_icon} {'Trend' if uptrend else 'Dip'}")
-                with col4:
-                    st.metric("Qualität", "⭐" * int(stars))
-
-                # --- VOLLSTÄNDIGE PIVOT ANALYSE ANZEIGE ---
+                # Option Chain
                 st.markdown("---")
-                pivots = calculate_pivots(symbol_input)
-                if pivots:
-                    st.markdown("#### 🛡️ Technische Absicherung & Ziele (Pivots)")
-                    pc1, pc2, pc3, pc4, pc5 = st.columns(5)
-                    
-                    pc1.metric("Weekly S2 (Boden)", f"{pivots['W_S2']:.2f} $")
-                    pc2.metric("Daily S2", f"{pivots['S2']:.2f} $")
-                    pc3.metric("Pivot (P)", f"{pivots['P']:.2f} $")
-                    pc4.metric("Daily R2 (Ziel)", f"{pivots['R2']:.2f} $")
-                    pc5.metric("Weekly R2 (Top)", f"{pivots['W_R2']:.2f} $")
-                    
-                    st.caption(f"💡 **CC-Tipp:** Ein Covered Call am R2 Weekly ({pivots['W_R2']:.2f} $) bietet die höchste statistische Sicherheit gegen Ausstoppen.")
-
-                # 3. ANALYSTEN BOX
-                st.markdown(f"""
-                    <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 10px solid {analyst_col}; margin-top: 10px;">
-                        <h4 style="margin-top:0; color: #31333F;">💡 Fundamentale Analyse</h4>
-                        <p style="font-size: 1.1em; font-weight: bold; color: {analyst_col};">{analyst_txt}</p>
-                        <hr style="margin: 10px 0;">
-                        <span style="color: #555;">📅 Nächste Earnings: <b>{earn if earn else 'n.a.'}</b></span>
-                    </div>
-                """, unsafe_allow_html=True)
-
-                # --- 4. OPTIONEN TABELLE & UMSCHALTER (AKTUALISIERTE VERSION) ---
-                st.markdown("---")
-                st.markdown("### 🎯 Option-Chain Auswahl")
+                option_mode = st.radio("Strategie:", ["Put (Cash Secured)", "Call (Covered)"], horizontal=True)
                 
-                # Der neue Umschalter
-                option_mode = st.radio("Strategie wählen:", ["Put (Cash Secured)", "Call (Covered)"], horizontal=True)
-                
-                heute = datetime.now()
-                # Zeitfenster: 5 bis 35 Tage
-                valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
-                
+                valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 45]
                 if valid_dates:
-                    target_date = st.selectbox("📅 Wähle deinen Verfallstag", valid_dates)
-                    days_to_expiry = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
-
-                    # NEU: OpenClaw KI-Box VOR der Tabelle
-                    ki_status, ki_text, ki_score = get_openclaw_analysis(symbol_input)
-                    st.info(ki_text) # Zeigt die KI-News direkt an
-
+                    target_date = st.selectbox("Verfallstag", valid_dates)
                     opt_chain = tk.option_chain(target_date)
-                    chain = opt_chain.puts if "Put" in option_mode else opt_chain.calls
-                    df_disp = chain.copy()
-
-                    # NEU: Filter für Liquidität (Open Interest)
-                    df_disp = df_disp[df_disp['openInterest'] > 50]
+                    df_disp = opt_chain.puts if "Put" in option_mode else opt_chain.calls
                     
-                    # Holen der Daten je nach Modus
+                    # Filter & Berechnung
+                    df_disp = df_disp[df_disp['openInterest'] > 10].copy()
                     if "Put" in option_mode:
-                        chain = tk.option_chain(target_date).puts
-                        # Filter: Nur Strikes unter aktuellem Preis
-                        df_disp = chain[chain['strike'] < price].copy()
-                        df_disp['Puffer %'] = ((price - df_disp['strike']) / price) * 100
-                        sort_order = False # Höchster Strike zuerst
+                        df_disp = df_disp[df_disp['strike'] < price]
+                        sort_asc = False
                     else:
-                        chain = tk.option_chain(target_date).calls
-                        # Filter: Nur Strikes über aktuellem Preis
-                        df_disp = chain[chain['strike'] > price].copy()
-                        df_disp['Puffer %'] = ((df_disp['strike'] - price) / price) * 100
-                        sort_order = True # Niedrigster Strike (über Preis) zuerst
-
-                    # Berechnungen
-                    df_disp['strike'] = df_disp['strike'].astype(float)
-                    df_disp['Yield p.a. %'] = (df_disp['bid'] / df_disp['strike']) * (365 / max(1, days_to_expiry)) * 100
+                        df_disp = df_disp[df_disp['strike'] > price]
+                        sort_asc = True
                     
-                    # Sortierung für bessere Übersicht
-                    df_disp = df_disp.sort_values('strike', ascending=sort_order)
-
-                    # Styling Funktion
-                    def style_rows(row):
-                        p = row['Puffer %']
-                        if p >= 10: return ['background-color: rgba(39, 174, 96, 0.1)'] * len(row)
-
-                        elif 5 <= p < 10: return ['background-color: rgba(241, 196, 15, 0.1)'] * len(row)
-                        return ['background-color: rgba(231, 76, 60, 0.1)'] * len(row)
-
-                    # Tabelle anzeigen (Top 15 Strikes)
-                    styled_df = df_disp[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].head(15).style.apply(style_rows, axis=1).format({
-                        'strike': '{:.2f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $',
-                        'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
-                    })
-                    
-                    st.dataframe(
-                        styled_df, 
-                        use_container_width=True, 
-                        height=400
-                    )
-                    
-                    st.caption("🟢 >10% Puffer | 🟡 5-10% Puffer | 🔴 <5% Puffer (Risiko)")
+                    df_disp['Yield p.a. %'] = (df_disp['bid'] / df_disp['strike']) * (365 / 30) * 100 # Vereinfacht
+                    st.dataframe(df_disp[['strike', 'bid', 'ask', 'openInterest', 'Yield p.a. %']].sort_values('strike', ascending=sort_asc).head(10))
 
     except Exception as e:
-        st.error(f"Fehler bei der Detail-Analyse: {e}")
-        st.info("Hinweis: Manche Ticker-Symbole liefern am Wochenende oder bei geringer Liquidität keine Optionsdaten.")
+        if "Too Many Requests" in str(e):
+            st.error("🚫 Yahoo-Sperre aktiv. Bitte 5 Minuten warten oder VPN wechseln.")
+        else:
+            st.error(f"Fehler: {e}")
 
-# --- FOOTER ---
-st.markdown("---")
-st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
-
-
+st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
