@@ -8,6 +8,15 @@ import concurrent.futures
 import time
 import fear_and_greed
 
+# --- NEU: SESSION FÜR USER-AGENT (Gegen Rate Limiting) ---
+from requests import Session
+
+session = Session()
+# Wir täuschen einen normalen Browser vor
+session.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+})
+
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
@@ -98,6 +107,7 @@ def get_finviz_sentiment(symbol):
         return random.choice(["🟢", "🟡", "🟢"]), 0.2 
     except: return "⚪", 0.0
 
+@st.cache_data(ttl=300) # Speichert Daten für 5 Minuten
 def get_stock_data_full(symbol):
     try:
         tk = yf.Ticker(symbol)
@@ -293,7 +303,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
 
         def check_single_stock(symbol):
             try:
-                time.sleep(0.4) 
+                time.sleep(1.2) 
                 tk = yf.Ticker(symbol)
                 info = tk.info
                 if not info or 'currentPrice' not in info: return None
@@ -367,7 +377,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 }
             except: return None
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
             for i, future in enumerate(concurrent.futures.as_completed(futures)):
                 res_data = future.result()
@@ -744,3 +754,4 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
