@@ -173,81 +173,30 @@ def get_crypto_fg():
     except: return 50
 
 st.markdown("## 🌍 Globales Markt-Monitoring")
-
-# --- DATEN HOLEN ---
 cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
+crypto_fg = get_crypto_fg()
+stock_fg = 50 
 
-# Dynamische Sentiment-Werte
-crypto_fg = get_crypto_fg()  # Liefert jetzt die 14
-# stock_fg = get_stock_fg()  # Falls du die Funktion schon hast, sonst:
-stock_fg = 43  # Aktueller CNN Wert
-
-# --- MARKTBREITE DYNAMISIEREN ---
-# Berechnung: Wie viele NDQ100 Werte sind über dem SMA50?
-# Hier als stabiler Platzhalter, der sich an der Nasdaq-Distanz orientiert:
-breadth_val = int(62 + (dist_ndq * 2)) 
-breadth_val = max(10, min(95, breadth_val)) # Begrenzung auf 10-95%
-
-sentiment_gap = abs(stock_fg - crypto_fg) # Ergibt jetzt 29 (43 - 14)
-
-# --- DYNAMISCHE STATUS LOGIK ---
 if dist_ndq < -2 or vix_val > 25:
-    m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Nasdaq-Schwäche / Panikgefahr"
-    m_advice = f"VIX bei {vix_val:.1f}! Fokus auf Cash-Sicherung und weite Put-Puffer (>2.0x EM)."
-elif sentiment_gap > 30:
-    m_color, m_text = "#f39c12", "⚡ DIVERGENZ: Crypto-Angst vs. Stock-Gier"
-    m_advice = "Märkte laufen auseinander. Vorsicht bei Tech-Werten (Korrektur-Gefahr)."
-elif rsi_ndq > 72:
-    m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT: Korrekturgefahr (RSI hoch)"
-    m_advice = "Nasdaq RSI bei {int(rsi_ndq)}. Keine neuen Puts mit engem Puffer."
+    m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Nasdaq-Schwäche / Hohe Volatilität"
+    m_advice = "Defensiv agieren. Fokus auf Call-Verkäufe zur Depot-Absicherung."
+elif rsi_ndq > 72 or stock_fg > 80:
+    m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT: Korrekturgefahr (Gier/RSI hoch)"
+    m_advice = "Keine neuen Puts mit engem Puffer. Gewinne sichern."
 else:
     m_color, m_text = "#27ae60", "✅ TRENDSTARK: Marktumfeld ist konstruktiv"
-    m_advice = "Marktbreite ist gesund (62%). Puts auf Qualitäts-Dips (wie ACN) bevorzugt."
+    m_advice = "Puts auf starke Aktien bei Rücksetzern möglich."
 
-# --- UI: HAUPT-BANNER ---
-st.markdown(f'''
-    <div style="background-color: {m_color}; color: white; padding: 18px; border-radius: 12px; text-align: center; margin-bottom: 25px; border: 2px solid rgba(255,255,255,0.2);">
-        <h3 style="margin:0; font-size: 1.5em; font-weight: 800;">{m_text}</h3>
-        <p style="margin:5px 0 0 0; font-size: 1.1em; opacity: 0.95;">{m_advice}</p>
-    </div>
-''', unsafe_allow_html=True)
+st.markdown(f'<div style="background-color: {m_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;"><h3 style="margin:0; font-size: 1.4em;">{m_text}</h3><p style="margin:0; opacity: 0.9;">{m_advice}</p></div>', unsafe_allow_html=True)
 
-# --- UI: METRIKEN REIHE 1 (Indizes & Angst) ---
 r1c1, r1c2, r1c3 = st.columns(3)
-with r1c1: 
-    st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
-    st.caption("Marktbreite (Stocks > SMA50)")
-    st.progress(breadth_val / 100) # Visueller Breadth-Balken
-
-with r1c2: 
-    st.metric("VIX (Fear Index)", f"{vix_val:.2f}", 
-              delta="KRITISCH" if vix_val > 22 else "RUHIG", 
-              delta_color="inverse")
-    st.write(f"VIX-Status: {'🔥 Volatilität steigt' if vix_val > 20 else '🟢 Markt entspannt'}")
-
-with r1c3: 
-    st.metric("Sentiment Divergenz", f"{sentiment_gap} Pkt", 
-              delta="GEFAHR" if sentiment_gap > 25 else "OK", 
-              delta_color="inverse")
-    st.caption("Lücke zw. Krypto & Aktien")
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-# --- UI: METRIKEN REIHE 2 (Sektoren & Sentiment) ---
 r2c1, r2c2, r2c3 = st.columns(3)
-with r2c1: 
-    st.metric("Fear & Greed (Stock)", f"{stock_fg}")
-    st.markdown("Top Sektor: 🟢 **Energy**")
-
-with r2c2: 
-    st.metric("Fear & Greed (Crypto)", f"{crypto_fg}")
-    st.markdown("Weak Sektor: 🔴 **Consulting**")
-
-with r2c3: 
-    st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", 
-              delta="ÜBERKAUFT" if rsi_ndq > 70 else "ÜBERVERKAUFT" if rsi_ndq < 30 else None, 
-              delta_color="inverse")
-    st.markdown(f"Status: **{'Zocken' if rsi_ndq > 65 else 'Sammeln'}**")
+with r1c1: st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
+with r1c2: st.metric("Bitcoin", f"{btc_val:,.0f} $")
+with r1c3: st.metric("VIX (Angst)", f"{vix_val:.2f}", delta="HOCH" if vix_val > 22 else "Normal", delta_color="inverse")
+with r2c1: st.metric("Fear & Greed (Stock)", f"{stock_fg}")
+with r2c2: st.metric("Fear & Greed (Crypto)", f"{crypto_fg}")
+with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_ndq > 70 else None, delta_color="inverse")
 
 st.markdown("---")
 
