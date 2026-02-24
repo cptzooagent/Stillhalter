@@ -170,7 +170,7 @@ col_m2.metric("VIX (Angst)", f"{vix_val:.2f}")
 col_m3.metric("Status", "Risk-On" if vix_val < 20 else "Risk-Off")
 st.markdown("---")
 
-# --- SEKTION 2: PROFI-SCANNER (STABILISIERT & FILTER-FIX) ---
+# --- SEKTION 2: PROFI-SCANNER (DESIGN-RESTORATION) ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
@@ -181,8 +181,8 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     p_min_cap = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
-    with st.spinner("Scanner läuft... (Sicherheits-Drosselung aktiv)"):
-        # Liste wird erweitert für mehr Treffer
+    with st.spinner("Scanner analysiert den Markt... (Drosselung aktiv)"):
+        # Nutzt die Watchlist aus Teil 1
         ticker_liste = ["AAPL", "TSLA", "NVDA", "AMD", "MSFT", "AMZN", "META", "GOOGL", "NFLX", "COIN", "PLTR", "MU", "CRWD", "MARA"] if test_modus else get_combined_watchlist()
         
         status_text = st.empty()
@@ -191,93 +191,124 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
 
         def check_single_stock(symbol):
             try:
-                # WICHTIG: 1.5s Pause damit Yahoo nicht blockt
-                time.sleep(1.5) 
+                time.sleep(1.5) # WICHTIG gegen "Too Many Requests"
                 tk = get_tk(symbol)
                 info = tk.info
-                
-                # Prüfen ob Preis überhaupt da ist
                 price = info.get('currentPrice', info.get('regularMarketPrice'))
-                if not price: return None
+                if not price or not (min_stock_price <= price <= max_stock_price): return None
                 
-                # Checke Preis-Spanne aus deiner Sidebar
-                if not (min_stock_price <= price <= max_stock_price): return None
-                
-                # Daten-Abruf (Pivots, RSI, Trends)
                 res = get_stock_data_full(symbol)
                 if not res or res[0] is None: return None
                 price, dates, earn, rsi, uptrend, _, atr, pivots = res
                 
-                # Filter: Aufwärtstrend (nur wenn Checkbox aktiv)
                 if only_uptrend and not uptrend: return None
                 
-                # Verfallstage: Wir weiten das Fenster auf 5-45 Tage aus
                 valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
                 if not valid_dates: return None
                 
-                # Wir nehmen den nächsten sinnvollen Freitag
                 target_date = valid_dates[0]
                 chain = tk.option_chain(target_date).puts
-                
-                # Strike-Berechnung mit deinem Puffer-Slider
                 target_strike = price * (1 - p_puffer)
                 
-                # Filter für Puts (Strike unter Preis + Liquidität)
-                # Wir senken das OpenInterest-Limit auf > 0 für mehr Treffer im Test
                 opts = chain[(chain['strike'] <= target_strike) & (chain['openInterest'] >= 0)].sort_values('strike', ascending=False)
                 if opts.empty: return None
                 o = opts.iloc[0]
 
-                # Rendite Berechnung
-                bid = o['bid'] if o['bid'] > 0 else (o['lastPrice'] * 0.9) # Fallback auf LastPrice
+                # Berechnungen für das Design
+                bid = o['bid'] if o['bid'] > 0 else (o['lastPrice'] * 0.95)
                 days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 y_pa = (bid / o['strike']) * (365 / max(1, days_to_exp)) * 100
                 
-                # Rendite-Check gegen deinen Sidebar-Einsteller
                 if y_pa < p_min_yield: return None
 
-                # Alles ok -> Ergebnis speichern
+                iv = o.get('impliedVolatility', 0.5)
+                exp_move_pct = (iv * np.sqrt(days_to_exp / 365)) * 100
+                current_puffer = ((price - o['strike']) / price) * 100
+                em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 1.0
+                delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv)
+                
                 analyst_txt, analyst_col = get_analyst_conviction(info)
                 ki_status, ki_text, _ = get_openclaw_analysis(symbol)
+                
+                # Sterne-Logik
+                stars = 2
+                if "HYPER" in analyst_txt: stars = 3
+                if rsi < 40: stars += 1
 
                 return {
                     'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
-                    'puffer': ((price - o['strike']) / price) * 100, 'bid': bid, 'rsi': rsi, 
-                    'earn': earn, 'tage': days_to_exp, 'stars_str': "⭐" * 2,
+                    'puffer': current_puffer, 'bid': bid, 'rsi': rsi, 'earn': earn, 
+                    'tage': days_to_exp, 'stars': "⭐" * min(stars, 3), 'delta': abs(delta_val),
                     'analyst_label': analyst_txt, 'analyst_color': analyst_col,
-                    'ki_info': ki_text
+                    'ki_info': ki_text, 'uptrend': uptrend, 'em_pct': exp_move_pct, 'em_safety': em_safety,
+                    'm_cap': info.get('marketCap', 0) / 1e9
                 }
             except: return None
 
-        # Threading für Geschwindigkeit (max_workers=2 ist sicher)
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            futures = {executor.submit(check_single_stock, s): s for s in ticker_liste[:30]}
+            futures = {executor.submit(check_single_stock, s): s for s in ticker_liste[:40]}
             for i, future in enumerate(concurrent.futures.as_completed(futures)):
                 res_data = future.result()
                 if res_data: all_results.append(res_data)
                 progress_bar.progress((i + 1) / len(futures))
 
-        st.session_state.profi_scan_results = all_results
+        st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
         st.rerun()
 
-# --- ANZEIGE DER KARTEN ---
+# --- DAS DESIGN AUS DEINEM SCREENSHOT ---
 if st.session_state.profi_scan_results:
     res_list = st.session_state.profi_scan_results
-    cols = st.columns(3)
+    st.subheader(f"🎯 Top-Setups nach Qualität ({len(res_list)} Treffer)")
+    cols = st.columns(4)
+    
     for idx, res in enumerate(res_list):
-        with cols[idx % 3]:
+        with cols[idx % 4]:
+            # Trend-Badge
+            trend_html = '<span style="color:#27ae60; font-size:0.7em;">🛡️ Trend</span>' if res['uptrend'] else '<span style="color:#e67e22; font-size:0.7em;">💎 Dip</span>'
+            
             st.markdown(f"""
-            <div style="border:1px solid #ddd; padding:15px; border-radius:10px; margin-bottom:10px;">
-                <h4>{res['symbol']} - {res['stars_str']}</h4>
-                <p><b>Rendite: {res['y_pa']:.1f}% p.a.</b><br>
-                Strike: {res['strike']:.2f}$ (Puffer: {res['puffer']:.1f}%)<br>
-                RSI: {int(res['rsi'])} | Laufzeit: {res['tage']} Tage</p>
-                <p style="color:{res['analyst_color']}; font-size:0.8em;">{res['analyst_label']}</p>
-                <p style="font-size:0.7em; color:gray;">{res['ki_info']}</p>
+            <div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 15px; background: white; box-shadow: 2px 2px 10px rgba(0,0,0,0.05); height: 420px; position: relative; margin-bottom:20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <b style="font-size: 1.4em;">{res['symbol']}</b>
+                    <span style="color: #f1c40f;">{res['stars']}</span>
+                    {trend_html}
+                </div>
+                <p style="margin: 0; font-size: 0.7em; color: gray;">YIELD P.A.</p>
+                <div style="font-size: 1.8em; font-weight: bold; color: #1e1e1e;">{res['y_pa']:.1f}%</div>
+                
+                <div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 0.8em;">
+                    <div><span style="color:gray;">Strike</span><br><b>{res['strike']:.1f}$</b></div>
+                    <div style="border-left: 2px solid #f1c40f; padding-left: 10px;"><span style="color:gray;">Mid</span><br><b>{res['bid']:.2f}$</b></div>
+                </div>
+                
+                <div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 0.8em;">
+                    <div><span style="color:gray;">Puffer</span><br><b style="color:#2980b9;">{res['puffer']:.1f}%</b></div>
+                    <div style="border-left: 2px solid #27ae60; padding-left: 10px;"><span style="color:gray;">Delta</span><br><b style="color:#27ae60;">{res['delta']:.2f}</b></div>
+                </div>
+                
+                <div style="margin-top: 15px; font-size: 0.7em; border-top: 1px dashed #ddd; padding-top: 5px;">
+                    <div style="display: flex; justify-content: space-between;">
+                        <span>Stat. Erwartung (EM):</span>
+                        <b style="color:#e67e22;">±{res['em_pct']:.1f}%</b>
+                    </div>
+                    <div style="background: #eee; height: 4px; border-radius: 2px; margin-top: 3px;">
+                        <div style="background: #e67e22; width: {min(res['em_safety']*50, 100)}%; height: 4px; border-radius: 2px;"></div>
+                    </div>
+                    <p style="margin-top:2px;">Sicherheit: {res['em_safety']:.1x} EM</p>
+                </div>
+                
+                <div style="display: flex; justify-content: space-between; margin-top: 15px; font-size: 0.7em; color: #666;">
+                    <span>⏳ {res['tage']}d</span>
+                    <span>RSI: {int(res['rsi'])}</span>
+                    <span>{res['m_cap']:.0f}B</span>
+                    <span>📅 {res['earn']}</span>
+                </div>
+                
+                <div style="margin-top: 10px; background: #f9f0ff; color: {res['analyst_color']}; padding: 5px; border-radius: 5px; font-size: 0.65em; text-align: center; font-weight: bold;">
+                    🚀 {res['analyst_label']}
+                </div>
             </div>
             """, unsafe_allow_html=True)
-else:
-    st.info("Keine Treffer. Tipp: Verringere den 'Puffer %' oder die 'Mindestrendite' in der Sidebar.")
                     
 # --- SEKTION 2: DEPOT-MANAGER (STABILISIERTE VERSION) ---
 st.markdown("---")
@@ -424,5 +455,6 @@ if symbol_input:
             st.error(f"Fehler: {e}")
 
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
+
 
 
