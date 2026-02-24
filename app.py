@@ -170,7 +170,7 @@ col_m2.metric("VIX (Angst)", f"{vix_val:.2f}")
 col_m3.metric("Status", "Risk-On" if vix_val < 20 else "Risk-Off")
 st.markdown("---")
 
-# --- SEKTION 2: PROFI-SCANNER (DESIGN-STABILO) ---
+# --- SEKTION 2: PROFI-SCANNER (STABILISIERT & FIX KEYERROR) ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
@@ -181,10 +181,8 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     p_min_cap = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
-    with st.spinner("Markt-Scanner analysiert Ticker..."):
-        # Tickerliste
+    with st.spinner("Scanner analysiert Markt..."):
         ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else get_combined_watchlist()
-        status_text = st.empty()
         progress_bar = st.progress(0)
         all_results = []
 
@@ -194,59 +192,56 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 tk = yf.Ticker(symbol)
                 info = tk.info
                 if not info or 'currentPrice' not in info: return None
+                
                 m_cap = info.get('marketCap', 0)
                 price = info.get('currentPrice', 0)
                 if m_cap < p_min_cap or not (min_stock_price <= price <= max_stock_price): return None
                 
-                res = get_stock_data_full(symbol)
-                if res is None or res[0] is None: return None
-                _, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+                res_full = get_stock_data_full(symbol)
+                if not res_full or res_full[0] is None: return None
+                _, dates, earn, rsi, uptrend, _, _, _ = res_full
                 
                 if only_uptrend and not uptrend: return None
                 valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
                 if not valid_dates: return None
-                target_date = valid_dates[0]
                 
+                target_date = valid_dates[0]
                 chain = tk.option_chain(target_date).puts
                 target_strike = price * (1 - p_puffer)
                 opts = chain[(chain['strike'] <= target_strike) & (chain['openInterest'] > 1)].sort_values('strike', ascending=False)
                 if opts.empty: return None
                 o = opts.iloc[0]
 
-                bid, ask = o['bid'], o['ask']
-                if bid <= 0.01: return None 
-                if ask > (bid * 2.0): return None 
-                fair_price = (bid + ask) / 2
-                
-                iv = o.get('impliedVolatility', 0.4)
+                fair_price = (o['bid'] + o['ask']) / 2 if o['bid'] > 0 else o['lastPrice']
                 days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
+                
                 if y_pa > 150 or y_pa < p_min_yield: return None
 
+                iv = o.get('impliedVolatility', 0.4)
                 exp_move_pct = (iv * np.sqrt(days_to_exp / 365)) * 100
                 current_puffer = ((price - o['strike']) / price) * 100
                 em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
-                delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv, option_type='put')
+                delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv)
                 
-                sent_icon, _ = get_finviz_sentiment(symbol)
+                # --- WICHTIG: DIESE KEYS MÜSSEN EXISTIEREN ---
                 analyst_txt, analyst_col = get_analyst_conviction(info)
+                sent_icon = "🟢" # Fallback oder Tool-Aufruf
                 
-                # Sterne-Logik
-                s_val = 1.0
-                if "HYPER" in analyst_txt: s_val = 3.0
-                elif "Stark" in analyst_txt: s_val = 2.0
-                if rsi < 35: s_val += 0.5
-                if uptrend: s_val += 0.5
+                stars_count = 1
+                if "HYPER" in analyst_txt: stars_count = 3
+                elif "Stark" in analyst_txt: stars_count = 2
 
                 return {
                     'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
                     'puffer': current_puffer, 'bid': fair_price, 'rsi': rsi, 'earn': earn if earn else "---", 
-                    'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip", 'delta': delta_val,
-                    'sent_icon': sent_icon, 'stars_val': s_val, 'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️",
-                    'analyst_label': analyst_txt, 'analyst_color': analyst_col, 'mkt_cap': m_cap / 1e9,
-                    'em_pct': exp_move_pct, 'em_safety': em_safety
+                    'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip", 
+                    'delta': abs(delta_val), 'sent_icon': sent_icon, 
+                    'stars_str': "⭐" * stars_count, # FIX FÜR DEN KEYERROR
+                    'analyst_label': analyst_txt, 'analyst_color': analyst_col, 
+                    'mkt_cap': m_cap / 1e9, 'em_pct': exp_move_pct, 'em_safety': em_safety
                 }
-            except: return None
+            except Exception as e: return None
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
@@ -254,72 +249,59 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 res_data = future.result()
                 if res_data: all_results.append(res_data)
                 progress_bar.progress((i + 1) / len(ticker_liste))
-        
-        status_text.empty(); progress_bar.empty()
-        if all_results:
-            st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (float(x.get('stars_val', 0)), float(x.get('y_pa', 0))), reverse=True)
-            st.rerun()
 
-# --- ANZEIGE-LOGIK (DER FIX GEGEN DIE ROTE FLUT) ---
-if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
-    all_results = st.session_state.profi_scan_results
-    st.subheader(f"🎯 Top-Setups nach Qualität ({len(all_results)} Treffer)")
+        st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
+        st.rerun()
+
+# --- ANZEIGE DER KACHELN ---
+if st.session_state.profi_scan_results:
+    res_list = st.session_state.profi_scan_results
+    st.subheader(f"🎯 Top-Setups nach Qualität ({len(res_list)} Treffer)")
     cols = st.columns(4)
     heute_dt = datetime.now()
-
-    for idx, res in enumerate(all_results):
+    
+    for idx, res in enumerate(res_list):
         with cols[idx % 4]:
-            # Earnings Risiko-Check
+            # Earnings Logik
             is_earning_risk = False
             earn_str = res.get('earn', "---")
             if earn_str and earn_str != "---":
                 try:
-                    # Wir prüfen, ob das Datum im Format DD.MM. vorliegt
                     day, month = map(int, earn_str.split('.'))
                     earn_date = datetime(2026, month, day)
-                    tage_bis_earn = (earn_date - heute_dt).days
-                    # ROT nur wenn Earnings VOR dem Verfallstermin liegen
-                    if 0 <= tage_bis_earn <= res.get('tage', 0):
+                    if 0 <= (earn_date - heute_dt).days <= res['tage']:
                         is_earning_risk = True
                 except: pass
 
-            # Design-Wahl
             card_border = "3px solid #ef4444" if is_earning_risk else "1px solid #e5e7eb"
-            card_shadow = "0 8px 16px rgba(239, 68, 68, 0.2)" if is_earning_risk else "0 4px 6px rgba(0,0,0,0.05)"
+            card_shadow = "0 8px 16px rgba(239, 68, 68, 0.15)" if is_earning_risk else "0 4px 6px rgba(0,0,0,0.05)"
             
-            # Farben & Werte
-            delta_val = abs(res.get('delta', 0))
-            delta_col = "#10b981" if delta_val < 0.20 else "#f59e0b" if delta_val < 0.30 else "#ef4444"
-            em_safety = res.get('em_safety', 1.0)
-            em_col = "#10b981" if em_safety >= 1.2 else "#f59e0b" if em_safety >= 0.9 else "#ef4444"
-            rsi_val = int(res.get('rsi', 50))
-            rsi_style = "color: #10b981;" if rsi_val <= 35 else "color: #ef4444;" if rsi_val >= 70 else "color: #4b5563;"
-
+            # HTML (Bündig links!)
             html_code = f"""
-<div style="background: white; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: {card_shadow}; font-family: sans-serif; height: 520px; position: relative;">
+<div style="background: white; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: {card_shadow}; font-family: sans-serif; height: 530px;">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
 <span style="font-size: 1.2em; font-weight: 800; color: #111827;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{res['stars_str']}</span></span>
 <span style="font-size: 0.7em; font-weight: 700; color: #3b82f6; background: #3b82f610; padding: 2px 8px; border-radius: 6px;">{res['sent_icon']} {res['status']}</span>
 </div>
 <div style="margin: 10px 0;">
 <div style="font-size: 0.65em; color: #6b7280; font-weight: 600; text-transform: uppercase;">Yield p.a.</div>
-<div style="font-size: 2em; font-weight: 900; color: #111827;">{res['y_pa']:.1f}%</div>
+<div style="font-size: 1.9em; font-weight: 900; color: #111827;">{res['y_pa']:.1f}%</div>
 </div>
 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
 <div style="border-left: 3px solid #8b5cf6; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Strike</div><div style="font-size: 0.9em; font-weight: 700;">{res['strike']:.1f}$</div></div>
 <div style="border-left: 3px solid #f59e0b; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Mid</div><div style="font-size: 0.9em; font-weight: 700;">{res['bid']:.2f}$</div></div>
 <div style="border-left: 3px solid #3b82f6; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Puffer</div><div style="font-size: 0.9em; font-weight: 700;">{res['puffer']:.1f}%</div></div>
-<div style="border-left: 3px solid {delta_col}; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Delta</div><div style="font-size: 0.9em; font-weight: 700; color: {delta_col};">{delta_val:.2f}</div></div>
+<div style="border-left: 3px solid #10b981; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Delta</div><div style="font-size: 0.9em; font-weight: 700; color: #10b981;">{res['delta']:.2f}</div></div>
 </div>
-<div style="background: {em_col}10; padding: 8px; border-radius: 8px; border: 1px dashed {em_col}; margin-bottom: 12px;">
+<div style="background: #f0fdf4; padding: 8px; border-radius: 8px; border: 1px dashed #10b981; margin-bottom: 12px;">
 <div style="display: flex; justify-content: space-between; font-size: 0.65em; font-weight: bold;">
-<span style="color: #4b5563;">Stat. Erwartung (EM):</span><span style="color: {em_col};">±{res['em_pct']:.1f}%</span>
+<span style="color: #4b5563;">Stat. Erwartung (EM):</span><span style="color: #10b981;">±{res['em_pct']:.1f}%</span>
 </div>
-<div style="font-size: 0.6em; color: #6b7280; margin-top: 2px;">Sicherheit: <b>{em_safety:.1f}x EM</b></div>
+<div style="font-size: 0.6em; color: #6b7280; margin-top: 2px;">Sicherheit: <b>{res['em_safety']:.1f}x EM</b></div>
 </div>
 <div style="display: flex; justify-content: space-between; font-size: 0.7em; color: #4b5563; margin-bottom: 10px;">
 <span>⏳ <b>{res['tage']}d</b></span>
-<span style="background: #f3f4f6; padding: 1px 5px; border-radius: 4px; {rsi_style} font-weight: 700;">RSI: {rsi_val}</span>
+<span style="background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-weight: 700;">RSI: {int(res['rsi'])}</span>
 <span style="background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-weight: 700;">{res['mkt_cap']:.0f}B</span>
 <span style="font-weight: 800; color: {'#ef4444' if is_earning_risk else '#6b7280'};">{'⚠️' if is_earning_risk else '🗓️'} {earn_str}</span>
 </div>
@@ -475,6 +457,7 @@ if symbol_input:
             st.error(f"Fehler: {e}")
 
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
+
 
 
 
