@@ -170,7 +170,7 @@ col_m2.metric("VIX (Angst)", f"{vix_val:.2f}")
 col_m3.metric("Status", "Risk-On" if vix_val < 20 else "Risk-Off")
 st.markdown("---")
 
-# --- SEKTION 2: PROFI-SCANNER (DESIGN-RESTORATION) ---
+# --- SEKTION 2: PROFI-SCANNER (STABILISIERT & DESIGN-FIX) ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
@@ -181,9 +181,8 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     p_min_cap = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
-    with st.spinner("Scanner analysiert den Markt... (Drosselung aktiv)"):
-        # Nutzt die Watchlist aus Teil 1
-        ticker_liste = ["AAPL", "TSLA", "NVDA", "AMD", "MSFT", "AMZN", "META", "GOOGL", "NFLX", "COIN", "PLTR", "MU", "CRWD", "MARA"] if test_modus else get_combined_watchlist()
+    with st.spinner("Scanner analysiert Ticker... (Drosselung gegen Sperren aktiv)"):
+        ticker_liste = ["AAPL", "TSLA", "NVDA", "AMD", "MSFT", "AMZN", "META", "GOOGL", "NFLX", "COIN", "PLTR", "MU", "CRWD", "MARA", "AFRM", "HIMS", "NET", "AVGO", "MSTR"] if test_modus else get_combined_watchlist()
         
         status_text = st.empty()
         progress_bar = st.progress(0)
@@ -191,7 +190,8 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
 
         def check_single_stock(symbol):
             try:
-                time.sleep(1.5) # WICHTIG gegen "Too Many Requests"
+                # Wichtig: 1.5s Pause verhindert 'Too Many Requests' (Bild 1)
+                time.sleep(1.5) 
                 tk = get_tk(symbol)
                 info = tk.info
                 price = info.get('currentPrice', info.get('regularMarketPrice'))
@@ -214,7 +214,6 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 if opts.empty: return None
                 o = opts.iloc[0]
 
-                # Berechnungen für das Design
                 bid = o['bid'] if o['bid'] > 0 else (o['lastPrice'] * 0.95)
                 days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 y_pa = (bid / o['strike']) * (365 / max(1, days_to_exp)) * 100
@@ -230,16 +229,11 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 analyst_txt, analyst_col = get_analyst_conviction(info)
                 ki_status, ki_text, _ = get_openclaw_analysis(symbol)
                 
-                # Sterne-Logik
-                stars = 2
-                if "HYPER" in analyst_txt: stars = 3
-                if rsi < 40: stars += 1
-
                 return {
                     'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
                     'puffer': current_puffer, 'bid': bid, 'rsi': rsi, 'earn': earn, 
-                    'tage': days_to_exp, 'stars': "⭐" * min(stars, 3), 'delta': abs(delta_val),
-                    'analyst_label': analyst_txt, 'analyst_color': analyst_col,
+                    'tage': days_to_exp, 'stars': "⭐" * 3 if "HYPER" in analyst_txt else "⭐" * 2, 
+                    'delta': abs(delta_val), 'analyst_label': analyst_txt, 'analyst_color': analyst_col,
                     'ki_info': ki_text, 'uptrend': uptrend, 'em_pct': exp_move_pct, 'em_safety': em_safety,
                     'm_cap': info.get('marketCap', 0) / 1e9
                 }
@@ -255,7 +249,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
         st.rerun()
 
-# --- REPARIERTE ANZEIGE-LOGIK (Fix für Bild 54) ---
+# --- ANZEIGE DER KACHELN (DESIGN FIX: LINKSBÜNDIG FÜR STREAMLIT RENDERING) ---
 if st.session_state.profi_scan_results:
     res_list = st.session_state.profi_scan_results
     st.subheader(f"🎯 Top-Setups nach Qualität ({len(res_list)} Treffer)")
@@ -263,49 +257,43 @@ if st.session_state.profi_scan_results:
     
     for idx, res in enumerate(res_list):
         with cols[idx % 4]:
-            # Badge für Trend/Dip vorbereiten
-            trend_badge = '<span style="color:#27ae60; font-size:0.7em;">🛡️ Trend</span>' if res['uptrend'] else '<span style="color:#e67e22; font-size:0.7em;">💎 Dip</span>'
+            trend_icon = "🟢" if res['uptrend'] else "🟡"
+            trend_label = "Trend" if res['uptrend'] else "Dip"
             
-            # WICHTIG: Das HTML muss direkt am Zeilenanfang stehen (keine Tabs/Leerzeichen davor im String)
+            # WICHTIG: Das HTML klebt am linken Rand!
             html_card = f"""
-<div style="border: 1px solid #e0e0e0; border-radius: 12px; padding: 15px; background: white; box-shadow: 2px 2px 10px rgba(0,0,0,0.05); height: 420px; margin-bottom:20px; font-family: sans-serif;">
-<div style="display: flex; justify-content: space-between; align-items: center;">
-<b style="font-size: 1.2em;">{res['symbol']}</b>
-<span style="color: #f1c40f;">{res['stars']}</span>
-{trend_badge}
+<div style="border: 1px solid #e0e0e0; border-radius: 15px; padding: 16px; background: white; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif; height: 530px; position: relative; margin-bottom: 20px;">
+<div style="display: flex; justify-content: space-between; align-items: flex-start;">
+<div><b style="font-size: 1.4em; color: #111827;">{res['symbol']}</b><span style="margin-left: 5px;">⚠️</span></div>
+<div style="background: #f0fdf4; border: 1px solid #dcfce7; padding: 2px 8px; border-radius: 10px; font-size: 0.65em; display: flex; align-items: center;">
+{trend_icon} <span style="color: #166534; margin-left: 4px; font-weight: bold;">🛡️ {trend_label}</span>
 </div>
-<p style="margin: 5px 0 0 0; font-size: 0.7em; color: gray;">YIELD P.A.</p>
-<div style="font-size: 1.8em; font-weight: bold; color: #1e1e1e;">{res['y_pa']:.1f}%</div>
-
-<div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 0.8em;">
-<div><span style="color:gray;">Strike</span><br><b>{res['strike']:.1f}$</b></div>
-<div style="border-left: 2px solid #f1c40f; padding-left: 10px;"><span style="color:gray;">Mid</span><br><b>{res['bid']:.2f}$</b></div>
 </div>
-
-<div style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 0.8em;">
-<div><span style="color:gray;">Puffer</span><br><b style="color:#2980b9;">{res['puffer']:.1f}%</b></div>
-<div style="border-left: 2px solid #27ae60; padding-left: 10px;"><span style="color:gray;">Delta</span><br><b style="color:#27ae60;">{res['delta']:.2f}</b></div>
+<p style="margin: 10px 0 0 0; font-size: 0.65em; color: #6b7280; letter-spacing: 0.05em;">YIELD P.A.</p>
+<div style="font-size: 2.2em; font-weight: 800; color: #111827; margin-bottom: 15px;">{res['y_pa']:.1f}%</div>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 15px;">
+<div style="border-left: 3px solid #8b5cf6; padding-left: 8px;"><span style="font-size: 0.6em; color: #6b7280;">Strike</span><br><b>{res['strike']:.1f}$</b></div>
+<div style="border-left: 3px solid #f59e0b; padding-left: 8px;"><span style="font-size: 0.6em; color: #6b7280;">Mid</span><br><b>{res['bid']:.2f}$</b></div>
+<div style="border-left: 3px solid #3b82f6; padding-left: 8px;"><span style="font-size: 0.6em; color: #6b7280;">Puffer</span><br><b>{res['puffer']:.1f}%</b></div>
+<div style="border-left: 3px solid #10b981; padding-left: 8px;"><span style="font-size: 0.6em; color: #6b7280;">Delta</span><br><b style="color: #10b981;">{res['delta']:.2f}</b></div>
 </div>
-
-<div style="margin-top: 15px; font-size: 0.7em; border-top: 1px dashed #ddd; padding-top: 5px;">
-<div style="display: flex; justify-content: space-between;">
-<span>Stat. Erwartung (EM):</span>
-<b style="color:#e67e22;">±{res['em_pct']:.1f}%</b>
+<div style="border: 1px dashed #f59e0b; border-radius: 8px; padding: 8px; background: #fffcf0; margin-bottom: 12px;">
+<div style="display: flex; justify-content: space-between; font-size: 0.7em; font-weight: bold;">
+<span style="color: #4b5563;">Stat. Erwartung (EM):</span><span style="color: #f59e0b;">±{res['em_pct']:.1f}%</span>
 </div>
-<div style="background: #eee; height: 4px; border-radius: 2px; margin-top: 3px;">
-<div style="background: #e67e22; width: {max(5, min(res['em_safety']*50, 100))}%; height: 4px; border-radius: 2px;"></div>
+<p style="margin: 4px 0 0 0; font-size: 0.65em; color: #6b7280;">Sicherheit: {res['em_safety']:.1f}x EM</p>
 </div>
-<p style="margin-top:2px;">Sicherheit: {res['em_safety']:.1f} EM</p>
+<div style="background: #f3f4f6; border-radius: 8px; padding: 8px; font-size: 0.65em; color: #374151; display: flex; align-items: center; margin-bottom: 12px; border-left: 4px solid #9ca3af;">
+<span style="margin-right: 6px;">🟡</span> {res['ki_info'][:65]}...
 </div>
-
-<div style="display: flex; justify-content: space-between; margin-top: 15px; font-size: 0.7em; color: #666;">
+<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.7em; color: #4b5563; margin-bottom: 12px;">
 <span>⏳ {res['tage']}d</span>
-<span>RSI: {int(res['rsi'])}</span>
+<span style="background: #f0fdf4; color: #166534; padding: 2px 6px; border-radius: 4px; font-weight: bold;">RSI: {int(res['rsi'])}</span>
+<span>{res['m_cap']:.0f}B</span>
 <span>📅 {res['earn']}</span>
 </div>
-
-<div style="margin-top: 10px; background: #f0f7ff; color: #2980b9; padding: 5px; border-radius: 5px; font-size: 0.65em; text-align: center; font-weight: bold;">
-{res['analyst_label']}
+<div style="background: #fff7ed; color: {res['analyst_color']}; border: 1px solid #ffedd5; padding: 6px; border-radius: 8px; font-size: 0.65em; text-align: center; font-weight: bold;">
+🚀 {res['analyst_label']}
 </div>
 </div>
 """
@@ -456,6 +444,7 @@ if symbol_input:
             st.error(f"Fehler: {e}")
 
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
+
 
 
 
