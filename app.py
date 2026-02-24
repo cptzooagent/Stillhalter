@@ -294,7 +294,7 @@ if st.session_state.profi_scan_results:
                     <div style="background: #eee; height: 4px; border-radius: 2px; margin-top: 3px;">
                         <div style="background: #e67e22; width: {min(res['em_safety']*50, 100)}%; height: 4px; border-radius: 2px;"></div>
                     </div>
-                    <p style="margin-top:2px;">Sicherheit: {res['em_safety']:.1x} EM</p>
+                    <p style="margin-top:2px;">Sicherheit: {res['em_safety']:.1f} EM</p>
                 </div>
                 
                 <div style="display: flex; justify-content: space-between; margin-top: 15px; font-size: 0.7em; color: #666;">
@@ -455,6 +455,7 @@ if symbol_input:
             st.error(f"Fehler: {e}")
 
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
+
 
 
 
