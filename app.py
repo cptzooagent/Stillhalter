@@ -247,7 +247,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
         st.rerun()
 
-# --- ANZEIGE DER KACHELN (MIT EARNINGS-ALARM & STRENGER LINKSBÜNDIGKEIT) ---
+# --- ANZEIGE DER KACHELN (FIX: NUR ECHTE EARNINGS SIND ROT) ---
 if st.session_state.profi_scan_results:
     res_list = st.session_state.profi_scan_results
     st.subheader(f"🎯 Top-Setups nach Qualität ({len(res_list)} Treffer)")
@@ -255,8 +255,13 @@ if st.session_state.profi_scan_results:
     
     for idx, res in enumerate(res_list):
         with cols[idx % 4]:
-            # Earnings-Check: Wenn Datum vorhanden, Rahmen Rot färben
-            is_earning = True if (res['earn'] and res['earn'] != "") else False
+            # VERBESSERTE LOGIK: Nur rot, wenn ein echtes Datum/Text vorhanden ist, der nicht "N/A" lautet
+            earn_val = res.get('earn', "")
+            is_earning = False
+            if earn_val and str(earn_val).strip().upper() not in ["N/A", "NONE", "", "NAN"]:
+                is_earning = True
+            
+            # Design-Variablen basierend auf Earnings-Status
             card_border = "3px solid #ef4444" if is_earning else "1px solid #e0e0e0"
             card_shadow = "0 10px 20px rgba(239, 68, 68, 0.15)" if is_earning else "0 4px 6px rgba(0,0,0,0.05)"
             earn_label = '<span style="color: #ef4444; font-size: 0.8em; font-weight: bold; margin-left: 5px;">⚠️ EARNINGS!</span>' if is_earning else ""
@@ -285,12 +290,12 @@ if st.session_state.profi_scan_results:
 <p style="margin: 4px 0 0 0; font-size: 0.65em; color: #6b7280;">Sicherheit: {res['em_safety']:.1f}x EM</p>
 </div>
 <div style="background: #f3f4f6; border-radius: 8px; padding: 8px; font-size: 0.65em; color: #374151; display: flex; align-items: center; margin-bottom: 12px; border-left: 4px solid #9ca3af;">
-<span style="margin-right: 6px;">🟡</span> {res['ki_info'][:65]}...
+<span style="margin-right: 6px;">🟡</span> {str(res['ki_info'])[:65]}...
 </div>
 <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75em; color: #4b5563; margin-bottom: 12px;">
 <span>⏳ {res['tage']}d</span>
 <span style="background: #f0fdf4; color: #166534; padding: 2px 6px; border-radius: 4px; font-weight: bold;">RSI: {int(res['rsi'])}</span>
-<span>📅 {res['earn'] if res['earn'] else 'N/A'}</span>
+<span>📅 {earn_val if is_earning else 'keine'}</span>
 </div>
 <div style="background: {res['analyst_color']}20; color: {res['analyst_color']}; border: 1px solid {res['analyst_color']}40; padding: 6px; border-radius: 8px; font-size: 0.65em; text-align: center; font-weight: bold;">
 🚀 {res['analyst_label']}
@@ -444,6 +449,7 @@ if symbol_input:
             st.error(f"Fehler: {e}")
 
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
+
 
 
 
