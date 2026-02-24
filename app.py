@@ -170,7 +170,7 @@ col_m2.metric("VIX (Angst)", f"{vix_val:.2f}")
 col_m3.metric("Status", "Risk-On" if vix_val < 20 else "Risk-Off")
 st.markdown("---")
 
-# --- SEKTION 2: PROFI-SCANNER (STABILISIERT & DESIGN-FIX) ---
+# --- SEKTION 2: PROFI-SCANNER (MIT EARNINGS-LOGIK & DESIGN-FIX) ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
@@ -181,16 +181,14 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     p_min_cap = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
-    with st.spinner("Scanner analysiert Ticker... (Drosselung gegen Sperren aktiv)"):
+    with st.spinner("Marktanalyse läuft..."):
         ticker_liste = ["AAPL", "TSLA", "NVDA", "AMD", "MSFT", "AMZN", "META", "GOOGL", "NFLX", "COIN", "PLTR", "MU", "CRWD", "MARA", "AFRM", "HIMS", "NET", "AVGO", "MSTR"] if test_modus else get_combined_watchlist()
         
-        status_text = st.empty()
         progress_bar = st.progress(0)
         all_results = []
 
         def check_single_stock(symbol):
             try:
-                # Wichtig: 1.5s Pause verhindert 'Too Many Requests' (Bild 1)
                 time.sleep(1.5) 
                 tk = get_tk(symbol)
                 info = tk.info
@@ -210,7 +208,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 chain = tk.option_chain(target_date).puts
                 target_strike = price * (1 - p_puffer)
                 
-                opts = chain[(chain['strike'] <= target_strike) & (chain['openInterest'] >= 0)].sort_values('strike', ascending=False)
+                opts = chain[(chain['strike'] <= target_strike)].sort_values('strike', ascending=False)
                 if opts.empty: return None
                 o = opts.iloc[0]
 
@@ -249,7 +247,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
         st.rerun()
 
-# --- ANZEIGE DER KACHELN (DESIGN FIX: LINKSBÜNDIG FÜR STREAMLIT RENDERING) ---
+# --- ANZEIGE DER KACHELN (MIT EARNINGS-ALARM & STRENGER LINKSBÜNDIGKEIT) ---
 if st.session_state.profi_scan_results:
     res_list = st.session_state.profi_scan_results
     st.subheader(f"🎯 Top-Setups nach Qualität ({len(res_list)} Treffer)")
@@ -257,16 +255,19 @@ if st.session_state.profi_scan_results:
     
     for idx, res in enumerate(res_list):
         with cols[idx % 4]:
-            trend_icon = "🟢" if res['uptrend'] else "🟡"
-            trend_label = "Trend" if res['uptrend'] else "Dip"
+            # Earnings-Check: Wenn Datum vorhanden, Rahmen Rot färben
+            is_earning = True if (res['earn'] and res['earn'] != "") else False
+            card_border = "3px solid #ef4444" if is_earning else "1px solid #e0e0e0"
+            card_shadow = "0 10px 20px rgba(239, 68, 68, 0.15)" if is_earning else "0 4px 6px rgba(0,0,0,0.05)"
+            earn_label = '<span style="color: #ef4444; font-size: 0.8em; font-weight: bold; margin-left: 5px;">⚠️ EARNINGS!</span>' if is_earning else ""
             
-            # WICHTIG: Das HTML klebt am linken Rand!
+            # HTML-Code (Muss bündig links stehen für Streamlit!)
             html_card = f"""
-<div style="border: 1px solid #e0e0e0; border-radius: 15px; padding: 16px; background: white; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif; height: 530px; position: relative; margin-bottom: 20px;">
+<div style="border: {card_border}; border-radius: 15px; padding: 16px; background: white; box-shadow: {card_shadow}; font-family: sans-serif; height: 535px; position: relative; margin-bottom: 25px;">
 <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-<div><b style="font-size: 1.4em; color: #111827;">{res['symbol']}</b><span style="margin-left: 5px;">⚠️</span></div>
+<div><b style="font-size: 1.4em; color: #111827;">{res['symbol']}</b>{earn_label}</div>
 <div style="background: #f0fdf4; border: 1px solid #dcfce7; padding: 2px 8px; border-radius: 10px; font-size: 0.65em; display: flex; align-items: center;">
-{trend_icon} <span style="color: #166534; margin-left: 4px; font-weight: bold;">🛡️ {trend_label}</span>
+{"🟢" if res['uptrend'] else "🟡"} <span style="color: #166534; margin-left: 4px; font-weight: bold;">🛡️ {"Trend" if res['uptrend'] else "Dip"}</span>
 </div>
 </div>
 <p style="margin: 10px 0 0 0; font-size: 0.65em; color: #6b7280; letter-spacing: 0.05em;">YIELD P.A.</p>
@@ -286,13 +287,12 @@ if st.session_state.profi_scan_results:
 <div style="background: #f3f4f6; border-radius: 8px; padding: 8px; font-size: 0.65em; color: #374151; display: flex; align-items: center; margin-bottom: 12px; border-left: 4px solid #9ca3af;">
 <span style="margin-right: 6px;">🟡</span> {res['ki_info'][:65]}...
 </div>
-<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.7em; color: #4b5563; margin-bottom: 12px;">
+<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75em; color: #4b5563; margin-bottom: 12px;">
 <span>⏳ {res['tage']}d</span>
 <span style="background: #f0fdf4; color: #166534; padding: 2px 6px; border-radius: 4px; font-weight: bold;">RSI: {int(res['rsi'])}</span>
-<span>{res['m_cap']:.0f}B</span>
-<span>📅 {res['earn']}</span>
+<span>📅 {res['earn'] if res['earn'] else 'N/A'}</span>
 </div>
-<div style="background: #fff7ed; color: {res['analyst_color']}; border: 1px solid #ffedd5; padding: 6px; border-radius: 8px; font-size: 0.65em; text-align: center; font-weight: bold;">
+<div style="background: {res['analyst_color']}20; color: {res['analyst_color']}; border: 1px solid {res['analyst_color']}40; padding: 6px; border-radius: 8px; font-size: 0.65em; text-align: center; font-weight: bold;">
 🚀 {res['analyst_label']}
 </div>
 </div>
@@ -444,6 +444,7 @@ if symbol_input:
             st.error(f"Fehler: {e}")
 
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
+
 
 
 
