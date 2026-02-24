@@ -1,7 +1,6 @@
-streamlit>=1.30.0
-pandas>=2.0.0
 yfinance>=0.2.40
-numpy>=1.24.0
-scipy>=1.10.0
-fear-and-greed
-requests>=2.31.0
+pandas
+numpy
+scipy
+fear_and_greed
+requests
