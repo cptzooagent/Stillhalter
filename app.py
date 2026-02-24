@@ -7,6 +7,23 @@ from datetime import datetime, timedelta
 import concurrent.futures
 import time
 import fear_and_greed
+import requests
+
+# --- 0. SESSION & ANTI-BLOCK SETUP ---
+@st.cache_resource
+def get_yf_session():
+    """Erstellt eine persistente Session, um Yahoo-Blockaden (401) zu umgehen."""
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Origin': 'https://finance.yahoo.com',
+        'Referer': 'https://finance.yahoo.com/'
+    })
+    return session
+
+yf_session = get_yf_session()
 
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
@@ -26,9 +43,8 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 def calculate_pivots(symbol):
-    """Berechnet Daily und Weekly Pivot-Punkte (inkl. R2 für CC-Ziele)."""
     try:
-        tk = yf.Ticker(symbol)
+        tk = yf.Ticker(symbol, session=yf_session)
         hist_d = tk.history(period="5d") 
         if len(hist_d) < 2: return None
         last_day = hist_d.iloc[-2]
@@ -53,7 +69,7 @@ def calculate_pivots(symbol):
 
 def get_openclaw_analysis(symbol):
     try:
-        tk = yf.Ticker(symbol)
+        tk = yf.Ticker(symbol, session=yf_session)
         all_news = tk.news
         if not all_news or len(all_news) == 0:
             return "Neutral", "🤖 OpenClaw: Yahoo liefert aktuell keine Daten.", 0.5
@@ -91,16 +107,9 @@ def get_combined_watchlist():
         return [t.replace('.', '-') for t in full_list]
     except: return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META"]
 
-@st.cache_data(ttl=3600)
-def get_finviz_sentiment(symbol):
-    try:
-        import random
-        return random.choice(["🟢", "🟡", "🟢"]), 0.2 
-    except: return "⚪", 0.0
-
 def get_stock_data_full(symbol):
     try:
-        tk = yf.Ticker(symbol)
+        tk = yf.Ticker(symbol, session=yf_session)
         hist = tk.history(period="150d") 
         if hist.empty: return None, [], "", 50, True, False, 0, None
         price = hist['Close'].iloc[-1] 
@@ -126,7 +135,7 @@ def get_stock_data_full(symbol):
 
 def get_analyst_conviction(info):
     try:
-        current = info.get('current_price', info.get('currentPrice', 1))
+        current = info.get('currentPrice', 1)
         target = info.get('targetMedianPrice', 0)
         upside = ((target / current) - 1) * 100 if target > 0 else 0
         rev_growth = info.get('revenueGrowth', 0) * 100
@@ -150,8 +159,12 @@ with st.sidebar:
 
 def get_market_data():
     try:
-        ndq = yf.Ticker("^NDX"); vix = yf.Ticker("^VIX"); btc = yf.Ticker("BTC-USD")
-        h_ndq = ndq.history(period="1mo"); h_vix = vix.history(period="1d"); h_btc = btc.history(period="1d")
+        ndq = yf.Ticker("^NDX", session=yf_session)
+        vix = yf.Ticker("^VIX", session=yf_session)
+        btc = yf.Ticker("BTC-USD", session=yf_session)
+        h_ndq = ndq.history(period="1mo")
+        h_vix = vix.history(period="1d")
+        h_btc = btc.history(period="1d")
         if h_ndq.empty: return 0, 50, 0, 20, 0
         cp_ndq = h_ndq['Close'].iloc[-1]
         sma20_ndq = h_ndq['Close'].rolling(window=20).mean().iloc[-1]
@@ -168,219 +181,105 @@ def get_market_data():
 
 def get_crypto_fg():
     try:
-        import requests
-        r = requests.get("https://api.alternative.me/fng/")
+        r = requests.get("https://api.alternative.me/fng/", timeout=5)
         return int(r.json()['data'][0]['value'])
     except: return 50
 
-st.markdown("## 🌍 Globales Markt-Monitoring")
-
-# --- 1. ERWEITERTE DATENFUNKTIONEN ---
-def get_sector_performance():
-    """Ermittelt die stärksten und schwächsten Sektoren via ETFs."""
-    sectors = {
-        "XLK": "Tech", "XLY": "Consum.", "XLF": "Finanz", 
-        "XLV": "Health", "XLI": "Indust.", "XLP": "Basics", 
-        "XLU": "Util.", "XLE": "Energy", "XLRE": "Immo", "XLB": "Mat."
-    }
-    try:
-        # Kurzer Check der Tagesperformance
-        sector_data = yf.download(list(sectors.keys()), period="1d", interval="15m", progress=False)['Close']
-        if sector_data.empty: return "N/A", "N/A"
-        perf = ((sector_data.iloc[-1] / sector_data.iloc[0]) - 1) * 100
-        top = sectors[perf.idxmax()]
-        weak = sectors[perf.idxmin()]
-        return f"{top} (+{perf.max():.1f}%)", f"{weak} ({perf.min():.1f}%)"
-    except:
-        return "Energy", "Consulting" # Fallback
-
-# --- 2. DATENBESCHAFFUNG & LOGIK ---
+# --- DATA FETCHING ---
 cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
-crypto_fg = get_crypto_fg()  # Aktuell 14
+crypto_fg = get_crypto_fg()
 try:
-    # Holt den echten CNN Wert live
     stock_fg = int(fear_and_greed.get_index().value)
 except:
-    # Falls die Seite mal down ist, bleibt die 43 als Sicherheitsnetz
     stock_fg = 43
 
-# Dynamische Sektoren abrufen
-top_sec, weak_sec = get_sector_performance()
+# MARKTBREITE & STATUS
+breadth_val = max(10, min(95, int(62 + (dist_ndq * 2))))
+sentiment_gap = abs(stock_fg - crypto_fg)
 
-# MARKTBREITE DYNAMISIEREN (Lügendetektor)
-# Reagiert auf die Distanz zum SMA20
-breadth_val = int(62 + (dist_ndq * 2)) 
-breadth_val = max(10, min(95, breadth_val)) 
-
-# SENTIMENT-CHECK (Shumer-Divergenz)
-sentiment_gap = abs(stock_fg - crypto_fg) # z.B. 43 - 14 = 29
-
-# --- 3. DYNAMISCHE STATUS LOGIK (BANNER) ---
 if dist_ndq < -2 or vix_val > 25:
-    m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Nasdaq-Schwäche / Panikgefahr"
-    m_advice = f"VIX bei {vix_val:.1f}! Fokus auf Kapitalschutz und weite Puffer (>2.0x EM)."
+    m_color, m_text, m_advice = "#e74c3c", "🚨 MARKT-ALARM", f"VIX bei {vix_val:.1f}! Fokus auf Kapitalschutz."
 elif sentiment_gap > 25:
-    m_color, m_text = "#f39c12", "⚡ DIVERGENZ: Krypto-Panik vs. Stock-Angst"
-    m_advice = f"Lücke von {sentiment_gap} Pkt! Krypto ({crypto_fg}) signalisiert Stress, den Aktien ({stock_fg}) noch ignorieren."
-elif rsi_ndq > 72:
-    m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT: Korrekturgefahr (RSI hoch)"
-    m_advice = "Nasdaq RSI überkauft. Keine neuen Puts ohne massiven Sicherheits-Check."
+    m_color, m_text, m_advice = "#f39c12", "⚡ DIVERGENZ", f"Lücke von {sentiment_gap} Pkt! Krypto zeigt Stress."
 else:
-    m_color, m_text = "#27ae60", "✅ SAMMELN: Umfeld stabil"
-    m_advice = f"Marktbreite bei {breadth_val}%. Zeit für Cash-Secured Puts auf Qualitäts-Dips."
+    m_color, m_text, m_advice = "#27ae60", "✅ SAMMELN", "Umfeld stabil. Zeit für CSPs auf Qualitäts-Dips."
 
-# --- 4. UI: HAUPT-BANNER ---
-st.markdown(f'''
-    <div style="background-color: {m_color}; color: white; padding: 18px; border-radius: 12px; text-align: center; margin-bottom: 25px; border: 2px solid rgba(255,255,255,0.15);">
-        <h3 style="margin:0; font-size: 1.5em; font-weight: 800;">{m_text}</h3>
-        <p style="margin:5px 0 0 0; font-size: 1.1em; opacity: 0.95;">{m_advice}</p>
-    </div>
-''', unsafe_allow_html=True)
+st.markdown(f'<div style="background-color: {m_color}; color: white; padding: 18px; border-radius: 12px; text-align: center; margin-bottom: 25px;"><h3>{m_text}</h3><p>{m_advice}</p></div>', unsafe_allow_html=True)
 
-# --- 5. UI: METRIKEN REIHE 1 (Indizes & Breite) ---
-r1c1, r1c2, r1c3 = st.columns(3)
-with r1c1: 
-    st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
-    st.caption("Marktbreite (Stocks > SMA50 Proxy)")
-    st.progress(breadth_val / 100)
-
-with r1c2: 
-    st.metric("VIX (Fear Index)", f"{vix_val:.2f}", 
-              delta="RUHIG" if vix_val < 22 else "GEFAHR", 
-              delta_color="inverse")
-    st.write(f"VIX-Status: {'🟢 Entspannt' if vix_val < 20 else '🟡 Nervös'}")
-
-with r1c3: 
-    st.metric("Sentiment Divergenz", f"{sentiment_gap} Pkt", 
-              delta="GEFAHR" if sentiment_gap > 25 else "OK", 
-              delta_color="inverse")
-    st.caption("Lücke zw. Krypto & Aktien")
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-# --- 6. UI: METRIKEN REIHE 2 (Sektoren & RSI) ---
-r2c1, r2c2, r2c3 = st.columns(3)
-with r2c1: 
-    st.metric("Fear & Greed (Stock)", stock_fg)
-    st.write(f"Top Sektor: 🟢 **{top_sec}**")
-
-with r2c2: 
-    st.metric("Fear & Greed (Crypto)", crypto_fg)
-    st.write(f"Weak Sektor: 🔴 **{weak_sec}**")
-
-with r2c3: 
-    st.metric("Nasdaq RSI (14)", int(rsi_ndq))
-    st.write(f"Status: **{'Sammeln' if rsi_ndq < 60 else 'Zocken'}**")
-
-st.markdown("---")
-
-# --- SEKTION 1: PROFI-SCANNER
-
+# Scanner Logik
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
-if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
+if st.button("🚀 Profi-Scan starten"):
     p_puffer = otm_puffer_slider / 100 
     p_min_yield = min_yield_pa
     p_min_cap = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
-    with st.spinner("Markt-Scanner analysiert Ticker..."):
-        ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else get_combined_watchlist()
-        status_text = st.empty()
-        progress_bar = st.progress(0)
+    with st.spinner("Scanne Markt..."):
+        ticker_liste = ["APP", "AVGO", "NET", "CRWD", "NVDA", "TSLA", "PLTR", "COIN", "MSTR", "DELL", "DDOG", "MU"] if test_modus else get_combined_watchlist()
         all_results = []
 
         def check_single_stock(symbol):
             try:
-                time.sleep(0.4) 
-                tk = yf.Ticker(symbol)
+                time.sleep(0.5) # Höherer Sleep gegen Yahoo-Sperre
+                tk = yf.Ticker(symbol, session=yf_session)
                 info = tk.info
                 if not info or 'currentPrice' not in info: return None
+                
                 m_cap = info.get('marketCap', 0)
                 price = info.get('currentPrice', 0)
                 if m_cap < p_min_cap or not (min_stock_price <= price <= max_stock_price): return None
+                
                 res = get_stock_data_full(symbol)
                 if res is None or res[0] is None: return None
                 _, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
-                if only_uptrend and not uptrend: return None
-                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 30]
+                
+                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
                 if not valid_dates: return None
                 target_date = valid_dates[0]
                 
-                # --- VERBESSERTE OPTION CHAIN FILTERUNG ---
                 chain = tk.option_chain(target_date).puts
                 target_strike = price * (1 - p_puffer)
-                
-                # Filtert nach Strike UND stellt sicher, dass Open Interest vorhanden ist (Liquidität)
                 opts = chain[(chain['strike'] <= target_strike) & (chain['openInterest'] > 1)].sort_values('strike', ascending=False)
                 if opts.empty: return None
                 o = opts.iloc[0]
 
-                # --- NEU: HARD-FILTER GEGEN VERRÜCKTE PRÄMIEN ---
                 bid, ask = o['bid'], o['ask']
-                last_p = o['lastPrice']
+                if bid <= 0.01 or ask > (bid * 2.5): return None 
                 
-                # 1. Bid-Check: Wenn kein Käufer da ist (Bid 0), ignorieren
-                if bid <= 0.01: return None 
-                
-                # 2. Spread-Check: Wenn Ask mehr als doppelt so hoch wie Bid -> Datenmüll
-                if ask > (bid * 2.0): return None 
-                
-                # 3. Fair Price: Wir nehmen den Mid, aber kappen ihn zur Sicherheit beim Last Price, 
-                # falls der Spread doch mal springt.
                 fair_price = (bid + ask) / 2
-                
-                iv = o.get('impliedVolatility', 0)
-                if iv <= 0: iv = 0.4 # Fallback
-                
+                iv = o.get('impliedVolatility', 0.4)
                 days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
                 
-                # 4. Rendite-Check: Alles über 150% p.a. ist bei Stillhaltern meist ein Datenfehler 
-                # oder ein "Kamikaze-Trade" kurz vor dem Crash.
                 if y_pa > 150 or y_pa < p_min_yield: return None
 
-                # --- WEITER MIT BESTEHENDER LOGIK ---
-                exp_move_abs = price * (iv * np.sqrt(days_to_exp / 365))
-                exp_move_pct = (exp_move_abs / price) * 100
+                exp_move_pct = (price * (iv * np.sqrt(days_to_exp / 365)) / price) * 100
                 current_puffer = ((price - o['strike']) / price) * 100
                 em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
                 
-                delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv, option_type='put')
-                sent_icon, _ = get_finviz_sentiment(symbol)
-                
+                delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv)
                 analyst_txt, analyst_col = get_analyst_conviction(info)
-                s_val = 0.0
-                if "HYPER" in analyst_txt: s_val = 3.0
-                elif "Stark" in analyst_txt: s_val = 2.0
-                if rsi < 35: s_val += 0.5
-                if uptrend: s_val += 0.5
 
                 return {
                     'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
-                    'puffer': current_puffer, 'bid': fair_price, 'rsi': rsi, 'earn': earn if earn else "---", 
+                    'puffer': current_puffer, 'bid': fair_price, 'rsi': rsi, 'earn': earn, 
                     'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip", 'delta': delta_val,
-                    'sent_icon': sent_icon, 'stars_val': s_val, 'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️",
+                    'stars_str': "⭐" * (3 if "HYPER" in analyst_txt else 2 if "Stark" in analyst_txt else 1),
                     'analyst_label': analyst_txt, 'analyst_color': analyst_col, 'mkt_cap': m_cap / 1e9,
                     'em_pct': exp_move_pct, 'em_safety': em_safety
                 }
             except: return None
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # Reduzierte Worker gegen Rate-Limiting auf Streamlit Cloud
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
-            for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            for future in concurrent.futures.as_completed(futures):
                 res_data = future.result()
                 if res_data: all_results.append(res_data)
-                progress_bar.progress((i + 1) / len(ticker_liste))
-                if i % 5 == 0: status_text.text(f"Checke {i}/{len(ticker_liste)} Ticker...")
-        status_text.empty(); progress_bar.empty()
-        if all_results:
-            st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (float(x.get('stars_val', 0)), float(x.get('y_pa', 0))), reverse=True)
-            st.success(f"Scan abgeschlossen: {len(all_results)} Treffer gefunden!")
-        else:
-            st.session_state.profi_scan_results = []
-            st.warning("Keine Treffer gefunden.")
+
+        st.session_state.profi_scan_results = all_results
 
 if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
@@ -464,3 +363,4 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
             st.markdown(html_code, unsafe_allow_html=True)
 else:
     st.info("Scanner bereit. Bitte auf '🚀 Profi-Scan starten' klicken.")
+
