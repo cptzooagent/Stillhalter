@@ -6,20 +6,14 @@ from scipy.stats import norm
 from datetime import datetime, timedelta
 import concurrent.futures
 import time
-import fear_and_greed
-from requests import Session
 
-# --- 1. SESSION INITIALISIERUNG (Gegen Rate-Limiting & Bug-Fix) ---
-if 'session' not in st.session_state:
-    session = Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36'
-    })
-    st.session_state.session = session
+# --- 1. REINIGUNG & INITIALISIERUNG (Fix für curl_cffi & _expire_after) ---
+# Wir lassen yfinance die Verbindung selbst verwalten, um TLS-Konflikte zu vermeiden.
 
-# Hilfsfunktion für Ticker-Aufrufe mit Session
 def get_tk(symbol):
-    return yf.Ticker(symbol, session=st.session_state.session)
+    """Gibt ein Standard Ticker-Objekt zurück. 
+    yfinance nutzt intern curl_cffi, wenn es in den Requirements steht."""
+    return yf.Ticker(symbol)
 
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
@@ -69,17 +63,10 @@ def get_openclaw_analysis(symbol):
         tk = get_tk(symbol)
         all_news = tk.news
         if not all_news or len(all_news) == 0:
-            return "Neutral", "🤖 OpenClaw: Yahoo liefert aktuell keine Daten.", 0.5
+            return "Neutral", "🤖 OpenClaw: Yahoo liefert aktuell keine News.", 0.5
         huge_blob = str(all_news).lower()
-        display_text = ""
-        for n in all_news:
-            for val in n.values():
-                if isinstance(val, str) and val.count(" ") > 3:
-                    display_text = val
-                    break
-            if display_text: break
-        if not display_text:
-            display_text = all_news[0].get('title', 'Marktstimmung aktiv (Text folgt)')
+        display_text = all_news[0].get('title', 'Marktstimmung aktiv')
+        
         score = 0.5
         bull_words = ['earnings', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'up', 'bull', 'upgrade']
         bear_words = ['sell-off', 'disruption', 'miss', 'down', 'risk', 'decline', 'short', 'warning', 'sell']
@@ -91,7 +78,7 @@ def get_openclaw_analysis(symbol):
         status = "Bullish" if score > 0.55 else "Bearish" if score < 0.45 else "Neutral"
         icon = "🟢" if status == "Bullish" else "🔴" if status == "Bearish" else "🟡"
         return status, f"{icon} OpenClaw: {display_text[:90]}", score
-    except Exception: return "N/A", "🤖 OpenClaw: System-Reset...", 0.5
+    except: return "N/A", "🤖 OpenClaw: System-Standby...", 0.5
 
 @st.cache_data(ttl=86400)
 def get_combined_watchlist():
@@ -104,13 +91,6 @@ def get_combined_watchlist():
         return [t.replace('.', '-') for t in full_list]
     except: return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META"]
 
-@st.cache_data(ttl=3600)
-def get_finviz_sentiment(symbol):
-    try:
-        import random
-        return random.choice(["🟢", "🟡", "🟢"]), 0.2 
-    except: return "⚪", 0.0
-
 def get_stock_data_full(symbol):
     try:
         tk = get_tk(symbol)
@@ -122,10 +102,6 @@ def get_stock_data_full(symbol):
         rsi_val = rsi_series.iloc[-1]
         sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1] if len(hist) >= 200 else hist['Close'].mean()
         is_uptrend = price > sma_200
-        sma_20 = hist['Close'].rolling(window=20).mean()
-        std_20 = hist['Close'].rolling(window=20).std()
-        lower_band = (sma_20 - 2 * std_20).iloc[-1]
-        is_near_lower = price <= (lower_band * 1.02)
         atr = (hist['High'] - hist['Low']).rolling(window=14).mean().iloc[-1]
         pivots = calculate_pivots(symbol)
         earn_str = ""
@@ -134,112 +110,64 @@ def get_stock_data_full(symbol):
             if cal is not None and 'Earnings Date' in cal:
                 earn_str = cal['Earnings Date'][0].strftime('%d.%m.')
         except: pass
-        return price, dates, earn_str, rsi_val, is_uptrend, is_near_lower, atr, pivots
+        return price, dates, earn_str, rsi_val, is_uptrend, False, atr, pivots
     except: return None, [], "", 50, True, False, 0, None
 
 def get_analyst_conviction(info):
     try:
-        current = info.get('current_price', info.get('currentPrice', 1))
+        current = info.get('currentPrice', 1)
         target = info.get('targetMedianPrice', 0)
         upside = ((target / current) - 1) * 100 if target > 0 else 0
         rev_growth = info.get('revenueGrowth', 0) * 100
-        if rev_growth > 40: return f"🚀 HYPER-GROWTH (+{rev_growth:.0f}% Wachst.)", "#9b59b6"
-        elif upside > 15 and rev_growth > 5: return f"✅ Stark (Ziel: +{upside:.0f}%, Wachst.: {rev_growth:.1f}%)", "#27ae60"
-        elif upside > 25: return f"💎 Quality-Dip (Ziel: +{upside:.0f}%)", "#2980b9"
-        elif upside < 0 or rev_growth < -2: return f"⚠️ Warnung (Ziel: {upside:.1f}%, Wachst.: {rev_growth:.1f}%)", "#e67e22"
-        return f"⚖️ Neutral (Ziel: {upside:.0f}%)", "#7f8c8d"
+        if rev_growth > 40: return f"🚀 HYPER-GROWTH (+{rev_growth:.0f}%)", "#9b59b6"
+        elif upside > 15: return f"✅ Stark (+{upside:.0f}%)", "#27ae60"
+        elif upside < 0: return f"⚠️ Warnung ({upside:.1f}%)", "#e67e22"
+        return f"⚖️ Neutral ({upside:.0f}%)", "#7f8c8d"
     except: return "🔍 Check nötig", "#7f8c8d"
 
+# --- SIDEBAR ---
 with st.sidebar:
-    st.header("🛡️ Strategie-Einstellungen")
-    otm_puffer_slider = st.slider("Gewünschter Puffer (%)", 3, 25, 15, key="puffer_sid")
-    min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 0, 100, 12, key="yield_sid")
-    min_stock_price, max_stock_price = st.slider("Aktienpreis-Spanne ($)", 0, 1000, (60, 500), key="price_sid")
-    st.markdown("---")
-    st.subheader("Qualitäts-Filter")
-    min_mkt_cap = st.slider("Mindest-Marktkapitalisierung (Mrd. $)", 1, 1000, 20, key="mkt_cap_sid")
-    only_uptrend = st.checkbox("Nur Aufwärtstrend (SMA 200)", value=False, key="trend_sid")
-    test_modus = st.checkbox("🛠️ Simulations-Modus (Test)", value=False, key="sim_checkbox")
+    st.header("🛡️ Scanner-Filter")
+    otm_puffer_slider = st.slider("Puffer (%)", 3, 25, 15)
+    min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 0, 100, 12)
+    min_stock_price, max_stock_price = st.slider("Preis ($)", 0, 1000, (60, 500))
+    min_mkt_cap = st.slider("Market Cap (Mrd. $)", 1, 1000, 20)
+    only_uptrend = st.checkbox("Nur Aufwärtstrend", value=False)
+    test_modus = st.checkbox("🛠️ Simulation", value=True)
 
+# --- MARKT-MONITORING ---
 def get_market_data():
     try:
-        ndq = get_tk("^NDX"); vix = get_tk("^VIX"); btc = get_tk("BTC-USD")
-        h_ndq = ndq.history(period="1mo"); h_vix = vix.history(period="1d"); h_btc = btc.history(period="1d")
-        if h_ndq.empty: return 0, 50, 0, 20, 0
+        # Kurze Pause für API-Stabilität
+        time.sleep(0.5)
+        ndq = get_tk("^NDX"); vix = get_tk("^VIX")
+        h_ndq = ndq.history(period="1mo"); h_vix = vix.history(period="1d")
+        if h_ndq.empty: return 0, 50, 0, 20
         cp_ndq = h_ndq['Close'].iloc[-1]
         sma20_ndq = h_ndq['Close'].rolling(window=20).mean().iloc[-1]
         dist_ndq = ((cp_ndq - sma20_ndq) / sma20_ndq) * 100
-        delta = h_ndq['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        rsi_ndq = 100 - (100 / (1 + rs)).iloc[-1]
         v_val = h_vix['Close'].iloc[-1] if not h_vix.empty else 20
-        b_val = h_btc['Close'].iloc[-1] if not h_btc.empty else 0
-        return cp_ndq, rsi_ndq, dist_ndq, v_val, b_val
-    except: return 0, 50, 0, 20, 0
-
-def get_crypto_fg():
-    try:
-        import requests
-        r = requests.get("https://api.alternative.me/fng/", timeout=5)
-        return int(r.json()['data'][0]['value'])
-    except: return 50
+        return cp_ndq, 50, dist_ndq, v_val
+    except: return 0, 50, 0, 20
 
 st.markdown("## 🌍 Globales Markt-Monitoring")
-
-def get_sector_performance():
-    sectors = {
-        "XLK": "Tech", "XLY": "Consum.", "XLF": "Finanz", 
-        "XLV": "Health", "XLI": "Indust.", "XLP": "Basics", 
-        "XLU": "Util.", "XLE": "Energy", "XLRE": "Immo", "XLB": "Mat."
-    }
-    try:
-        # Nutzung von yf.download mit der Session
-        sector_data = yf.download(list(sectors.keys()), period="1d", interval="15m", progress=False, session=st.session_state.session)['Close']
-        if sector_data.empty: return "N/A", "N/A"
-        perf = ((sector_data.iloc[-1] / sector_data.iloc[0]) - 1) * 100
-        top = sectors[perf.idxmax()]
-        weak = sectors[perf.idxmin()]
-        return f"{top} (+{perf.max():.1f}%)", f"{weak} ({perf.min():.1f}%)"
-    except:
-        return "Energy", "Consulting"
-
-# --- AUSFÜHRUNG ---
-cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
-crypto_fg = get_crypto_fg()
-try:
-    stock_fg = int(fear_and_greed.get_index().value)
-except:
-    stock_fg = 43
-
-top_sec, weak_sec = get_sector_performance()
-breadth_val = int(62 + (dist_ndq * 2)) 
-breadth_val = max(10, min(95, breadth_val)) 
-sentiment_gap = abs(stock_fg - crypto_fg)
+cp_ndq, rsi_ndq, dist_ndq, vix_val = get_market_data()
 
 if dist_ndq < -2 or vix_val > 25:
-    m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Nasdaq-Schwäche / Panikgefahr"
-    m_advice = f"VIX bei {vix_val:.1f}! Fokus auf Kapitalschutz."
-elif sentiment_gap > 25:
-    m_color, m_text = "#f39c12", "⚡ DIVERGENZ: Krypto-Panik vs. Stock-Angst"
-    m_advice = f"Lücke von {sentiment_gap} Pkt! Krypto signalisiert Stress."
+    m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Volatilität erhöht"
 else:
-    m_color, m_text = "#27ae60", "✅ SAMMELN: Umfeld stabil"
-    m_advice = f"Marktbreite bei {breadth_val}%. Zeit für Cash-Secured Puts."
+    m_color, m_text = "#27ae60", "✅ STABIL: Umfeld für Stillhalter geeignet"
 
 st.markdown(f'''
-    <div style="background-color: {m_color}; color: white; padding: 18px; border-radius: 12px; text-align: center; margin-bottom: 25px;">
+    <div style="background-color: {m_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
         <h3 style="margin:0;">{m_text}</h3>
-        <p style="margin:5px 0 0 0;">{m_advice}</p>
     </div>
 ''', unsafe_allow_html=True)
 
-# Metriken (gekürzt zur Übersicht)
-r1c1, r1c2, r1c3 = st.columns(3)
-with r1c1: st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}%")
-with r1c2: st.metric("VIX", f"{vix_val:.2f}")
-with r1c3: st.metric("Sentiment Lücke", f"{sentiment_gap} Pkt")
+col_m1, col_m2, col_m3 = st.columns(3)
+col_m1.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}%")
+col_m2.metric("VIX (Angst)", f"{vix_val:.2f}")
+col_m3.metric("Status", "Risk-On" if vix_val < 20 else "Risk-Off")
 st.markdown("---")
 
 # --- SEKTION 1: PROFI-SCANNER (OPTIMIERT GEGEN RATE-LIMITS) ---
@@ -584,3 +512,4 @@ if symbol_input:
             st.error(f"Fehler: {e}")
 
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
+
