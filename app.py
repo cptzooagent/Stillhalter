@@ -148,23 +148,48 @@ with st.sidebar:
     only_uptrend = st.checkbox("Nur Aufwärtstrend (SMA 200)", value=False, key="trend_sid")
     test_modus = st.checkbox("🛠️ Simulations-Modus (Test)", value=False, key="sim_checkbox")
 
+# --- NEU: SICHERE VERBINDUNG OBEN EINBAUEN ---
+# (Direkt nach den Imports einfügen)
+yf_session = requests.Session()
+yf_session.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+})
+
 def get_market_data():
     try:
-        ndq = yf.Ticker("^NDX"); vix = yf.Ticker("^VIX"); btc = yf.Ticker("BTC-USD")
-        h_ndq = ndq.history(period="1mo"); h_vix = vix.history(period="1d"); h_btc = btc.history(period="1d")
-        if h_ndq.empty: return 0, 50, 0, 20, 0
+        # Wir übergeben die yf_session an JEDEN Ticker-Aufruf
+        ndq = yf.Ticker("^NDX", session=yf_session)
+        vix = yf.Ticker("^VIX", session=yf_session)
+        btc = yf.Ticker("BTC-USD", session=yf_session)
+        
+        # Falls Yahoo blockiert, liefern diese Aufrufe leere Dataframes
+        h_ndq = ndq.history(period="1mo")
+        h_vix = vix.history(period="1d")
+        h_btc = btc.history(period="1d")
+        
+        if h_ndq.empty: 
+            st.warning("Yahoo liefert aktuell keine Marktdaten (Empty Response).")
+            return 0, 50, 0, 20, 0
+            
         cp_ndq = h_ndq['Close'].iloc[-1]
         sma20_ndq = h_ndq['Close'].rolling(window=20).mean().iloc[-1]
         dist_ndq = ((cp_ndq - sma20_ndq) / sma20_ndq) * 100
+        
+        # RSI Berechnung
         delta = h_ndq['Close'].diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
         rs = gain / loss
         rsi_ndq = 100 - (100 / (1 + rs)).iloc[-1]
+        
         v_val = h_vix['Close'].iloc[-1] if not h_vix.empty else 20
         b_val = h_btc['Close'].iloc[-1] if not h_btc.empty else 0
+        
         return cp_ndq, rsi_ndq, dist_ndq, v_val, b_val
-    except: return 0, 50, 0, 20, 0
+    except Exception as e:
+        # Dies zeigt dir den Fehler direkt in der Streamlit-Oberfläche an
+        st.error(f"Verbindungsfehler zu Yahoo: {e}")
+        return 0, 50, 0, 20, 0
 
 def get_crypto_fg():
     try:
@@ -705,5 +730,6 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
