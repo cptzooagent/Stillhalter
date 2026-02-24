@@ -1,6 +1,8 @@
-yfinance>=0.2.40
+streamlit
 pandas
+yfinance>=0.2.40
 numpy
 scipy
-fear_and_greed
+fear-and-greed
 requests
+curl_cffi
