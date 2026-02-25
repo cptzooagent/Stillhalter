@@ -135,21 +135,21 @@ st.markdown(f'<div style="background:{m_color};color:white;padding:15px;border-r
 st.columns(3)[0].metric("Nasdaq 100", f"{ndx_price:,.0f}", f"{dist_ndx:.1f}%")
 
 # ==========================================
-# --- BLOCK 1: PROFI-SCANNER (REPAIR-VERSION) ---
+# --- BLOCK 1: PROFI-SCANNER (STABILITÄTS-UPGRADE) ---
 # ==========================================
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
-    # Filter aus der Sidebar holen
+    # Filter-Werte sicher abrufen
     p_puffer = otm_puffer_slider / 100 
     p_min_yield = min_yield_pa
     p_min_cap = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
     with st.spinner("Scanner analysiert Markt & News..."):
-        # Ticker-Liste (Falls Testmodus an ist, nimm kleine Liste, sonst große)
+        # Liste der Ticker
         ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else get_combined_watchlist()
         
         progress_bar = st.progress(0)
@@ -158,74 +158,74 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         def check_single_stock(symbol):
             try:
                 tk = get_tk(symbol)
-                info = tk.info
-                if not info or 'currentPrice' not in info: return None
-                
-                price = info.get('currentPrice', 0)
-                m_cap = info.get('marketCap', 0)
+                # Direktes Dictionary-Get gegen KeyErrors
+                info = tk.info if tk.info else {}
+                price = info.get('currentPrice')
+                if not price: return None
                 
                 # Market Cap Check
-                if m_cap < p_min_cap: return None
+                if info.get('marketCap', 0) < p_min_cap: return None
                 
-                # --- SICHERES DATEN-HOLEN (FIX FÜR BILD 91) ---
+                # Marktdaten holen
                 stock_res = get_stock_data_full(symbol)
-                if not stock_res or stock_res[0] is None: return None
+                if not stock_res or not stock_res[1]: return None # Keine Datumsangaben vorhanden
                 
-                # Wir greifen per Index zu, um Unpacking-Fehler zu vermeiden
                 dates = stock_res[1]
-                earn  = stock_res[2]
-                rsi   = stock_res[3]
-                trend = stock_res[4]
-                # Optional: ATR/Pivots falls vorhanden
-                atr   = stock_res[6] if len(stock_res) > 6 else 0
+                earn  = stock_res[2] if len(stock_res) > 2 else "---"
+                rsi   = stock_res[3] if len(stock_res) > 3 else 50
+                trend_ok = stock_res[4] if len(stock_res) > 4 else True
                 
-                # OpenClaw Analyse
-                sent_status, sent_msg, _ = get_openclaw_analysis(symbol)
+                # OpenClaw News (mit Fallback)
+                try:
+                    sent_status, sent_msg, _ = get_openclaw_analysis(symbol)
+                except:
+                    sent_status, sent_msg = "Neutral", "Keine News-Daten verfügbar."
                 
-                # Optionen suchen (10-45 Tage)
-                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
+                # Options-Laufzeiten filtern
+                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 48]
                 if not valid_dates: return None
                 
+                # Beste Option finden
                 target_date = valid_dates[0]
                 chain = tk.option_chain(target_date).puts
                 target_strike = price * (1 - p_puffer)
-                opts = chain[(chain['strike'] <= target_strike) & (chain['openInterest'] > 0)].sort_values('strike', ascending=False)
+                opts = chain[(chain['strike'] <= target_strike) & (chain['openInterest'] >= 0)].sort_values('strike', ascending=False)
                 
                 if opts.empty: return None
                 o = opts.iloc[0]
 
-                # Rendite Berechnung
-                fair_price = (o['bid'] + o['ask']) / 2
+                # Rendite & EM
+                fair_price = (o.get('bid', 0) + o.get('ask', 0)) / 2
+                if fair_price <= 0: return None
+                
                 days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
                 
-                # Rendite Check
+                # Wichtig: Check, ob Rendite passt
                 if y_pa < p_min_yield: return None
 
-                # Analysten & Wachstum (Lila Box Daten)
-                analyst_txt, analyst_col = get_analyst_conviction(info)
-                
-                # EM Berechnung (Statistische Erwartung)
+                # Analysten-Label
+                a_txt, a_col = get_analyst_conviction(info)
                 iv = o.get('impliedVolatility', 0.4)
-                em_val = 1.25 * iv * price * (days_to_exp/365)**0.5
-                em_pct = (em_val / price) * 100
+                em_val = 1.2 * iv * price * (days_to_exp/365)**0.5
+                em_pct = (em_val / price) * 100 if price > 0 else 0
 
                 return {
                     'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
                     'puffer': ((price - o['strike']) / price) * 100, 'bid': fair_price, 
                     'rsi': rsi, 'earn': earn, 'tage': days_to_exp, 
-                    'status': "Trend" if trend else "Dip", 
-                    'delta': abs(calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv)), 
+                    'status': "Trend" if trend_ok else "Dip", 
+                    'delta': abs(o.get('delta', 0.15)), 
                     'sent_icon': "🟢" if sent_status == "Bullish" else "🔴" if sent_status == "Bearish" else "🟡",
                     'sent_status': sent_status, 'news_snippet': sent_msg,
-                    'stars_str': "⭐" * (3 if "HYPER" in analyst_txt else 2),
-                    'analyst_label': analyst_txt, 'analyst_color': analyst_col,
+                    'stars_str': "⭐" * (3 if "HYPER" in a_txt else 2),
+                    'analyst_label': a_txt, 'analyst_color': a_col,
                     'em_pct': em_pct, 'em_safety': (price - o['strike']) / em_val if em_val > 0 else 1.0
                 }
             except Exception: return None
 
-        # Multithreading Start
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # Multithreading
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
             futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
             for i, future in enumerate(concurrent.futures.as_completed(futures)):
                 res_data = future.result()
@@ -233,13 +233,9 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 progress_bar.progress((i + 1) / len(ticker_liste))
 
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
-        
-        if not all_results:
-            st.error("❌ Keine Treffer. Tipp: Senke 'Min. Yield' oder 'OTM Puffer' in der Sidebar!")
-        else:
-            st.rerun()
+        st.rerun()
 
-# --- ANZEIGE DER KACHELN (BÜNDIG LINKS) ---
+# --- ANZEIGE-TEIL ---
 if st.session_state.profi_scan_results:
     res_list = st.session_state.profi_scan_results
     st.subheader(f"🎯 Top-Setups nach Qualität ({len(res_list)} Treffer)")
@@ -248,10 +244,10 @@ if st.session_state.profi_scan_results:
     
     for idx, res in enumerate(res_list):
         with cols[idx % 4]:
-            # Earnings-Warner Logik
+            # Earnings-Warner Logik (Rote Umrandung)
             is_risk = False
             e_str = res.get('earn', "---")
-            if e_str and e_str != "---":
+            if e_str and "." in e_str:
                 try:
                     d, m = map(int, e_str.split('.'))
                     if 0 <= (datetime(2026, m, d) - heute_dt).days <= res.get('tage', 30): is_risk = True
@@ -261,11 +257,11 @@ if st.session_state.profi_scan_results:
             s_style = "0 10px 15px -3px rgba(239, 68, 68, 0.15)" if is_risk else "0 4px 6px -1px rgba(0, 0, 0, 0.1)"
             n_color = "#27ae60" if res.get('sent_status') == "Bullish" else "#e74c3c" if res.get('sent_status') == "Bearish" else "#f59e0b"
 
-            # DAS HTML TEMPLATE (Muss ganz links stehen!)
+            # HTML Template
             html_code = f"""
 <div style="background: white; border: {b_style}; border-radius: 16px; padding: 20px; margin-bottom: 20px; box-shadow: {s_style}; font-family: sans-serif; height: 650px; display: flex; flex-direction: column;">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-<span style="font-size: 1.4em; font-weight: 800; color: #111827;">{res.get('symbol')} <span style="color: #f59e0b; font-size: 0.8em;">{res.get('stars_str')}</span></span>
+<span style="font-size: 1.4em; font-weight: 800; color: #111827;">{res.get('symbol')} <span style="color: #f59e0b; font-size: 0.8em;">{res.get('stars_str', '⭐')}</span></span>
 <span style="font-size: 0.75em; font-weight: 700; color: #3b82f6; background: #ebf5ff; padding: 4px 10px; border-radius: 8px;">{res.get('status')}</span>
 </div>
 <div style="margin: 12px 0;">
@@ -273,8 +269,8 @@ if st.session_state.profi_scan_results:
 <div style="font-size: 2.2em; font-weight: 900; color: #111827; line-height: 1;">{res.get('y_pa', 0):.1f}%</div>
 </div>
 <div style="background: {n_color}10; border-left: 4px solid {n_color}; padding: 12px; border-radius: 8px; margin-bottom: 15px;">
-<div style="font-size: 0.75em; font-weight: 800; color: {n_color}; margin-bottom: 4px;">{res.get('sent_icon')} OPENCLAW: {res.get('sent_status', 'Neutral').upper()}</div>
-<div style="font-size: 0.7em; color: #374151; line-height: 1.4; height: 3.2em; overflow: hidden;">{res.get('news_snippet', 'Keine aktuellen News.')}</div>
+<div style="font-size: 0.75em; font-weight: 800; color: {n_color}; margin-bottom: 4px;">{res.get('sent_icon')} OPENCLAW: {res.get('sent_status', 'NEUTRAL').upper()}</div>
+<div style="font-size: 0.7em; color: #374151; line-height: 1.4; height: 3.2em; overflow: hidden;">{res.get('news_snippet', 'Warte auf News-Update...')}</div>
 </div>
 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px;">
 <div style="border-left: 3px solid #8b5cf6; padding-left: 10px;"><div style="font-size: 0.65em; color: #6b7280; font-weight: 600;">Strike</div><div style="font-size: 1em; font-weight: 700;">{res.get('strike', 0):.1f}$</div></div>
@@ -295,7 +291,7 @@ if st.session_state.profi_scan_results:
 <span style="font-weight: 800; color: {'#ef4444' if is_risk else '#6b7280'};">{'⚠️' if is_risk else '🗓️'} {e_str}</span>
 </div>
 <div style="background: {res.get('analyst_color', '#9b59b6')}15; color: {res.get('analyst_color', '#9b59b6')}; padding: 12px; border-radius: 10px; font-size: 0.75em; font-weight: 800; text-align: center; border-left: 5px solid {res.get('analyst_color', '#9b59b6')};">
-{res.get('analyst_label', 'WACHSTUM ANALYSIEREN')}
+{res.get('analyst_label', 'HYPER-GROWTH ANALYSE')}
 </div>
 </div>
 </div>
@@ -473,6 +469,7 @@ if symbol_input:
             st.error(f"Fehler bei {symbol_input}: {e}")
 
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🚀 Live'}")
+
 
 
 
