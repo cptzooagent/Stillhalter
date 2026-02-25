@@ -315,111 +315,98 @@ else:
 # ==========================================
 
 st.markdown("---")
-st.header("🔍 Profi-Analyse & Trading-Cockpit")
+st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
 
-# Eingabefeld für den Ticker (Standard: hims, wie im Screenshot)
-symbol_input = st.text_input("Ticker Symbol eingeben", value="hims").upper()
+# Ticker-Eingabe (Standard: hims wie im Screenshot)
+symbol_input = st.text_input("Ticker Symbol eingeben", value="hims", key="cockpit_input").upper()
 
 if symbol_input:
-    # Daten über die Engine aus Block 1 beziehen
+    # Daten abrufen
     stock_res = get_stock_data_full(symbol_input)
     
-    if stock_res:
-        price, dates, earn, rsi, trend, m_cap = stock_res
-        tk = get_tk(symbol_input)
-        info = tk.info
+    # Sicherstellen, dass wir Daten erhalten haben (Vermeidung von ValueError)
+    if stock_res and len(stock_res) >= 6:
+        price, dates, earn, rsi, trend, m_cap, *extra = stock_res
         
-        # 1. STATUS-BANNER (Logik basierend auf RSI/Trend)
-        # Gelb wie im Screenshot ("Neutral"), Grün bei Dip, Rot bei Hitze
+        # 1. DAS GROSSE STATUS-BANNER (Gelb wie im Bild)
+        # Wir nutzen das exakte Gelb aus dem Screenshot
         status_text = "● NEUTRAL / ABWARTEN"
-        status_color = "#f1c40f" # Gelb (Neutral)
+        status_color = "#f1c40f" 
         
-        if rsi < 35:
+        if rsi < 30:
             status_text = "● KAUF-ZONE (DIP)"
-            status_color = "#27ae60" # Grün
+            status_color = "#27ae60"
         elif rsi > 70:
             status_text = "● ÜBERHITZT (VORSICHT)"
-            status_color = "#e74c3c" # Rot
+            status_color = "#e74c3c"
 
         st.markdown(f"""
-            <div style="background: {status_color}; color: white; padding: 22px; border-radius: 12px; 
-                        text-align: center; font-size: 2em; font-weight: 800; margin-bottom: 30px;
-                        box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+            <div style="background: {status_color}; color: white; padding: 25px; border-radius: 10px; 
+                        text-align: center; font-size: 2.2em; font-weight: 800; margin-bottom: 30px;
+                        text-transform: uppercase; letter-spacing: 1px;">
                 {status_text}
             </div>
         """, unsafe_allow_html=True)
 
-        # 2. METRIKEN-ZEILE (Die 4 Werte nebeneinander)
+        # 2. METRIKEN-ZEILE (4 Spalten Layout)
         m1, m2, m3, m4 = st.columns(4)
         
         with m1:
-            st.markdown(f"<small style='color:#6b7280; font-weight:600;'>Kurs</small><br><span style='font-size:1.8em; font-weight:700;'>{price:.2f} $</span>", unsafe_allow_html=True)
+            st.markdown(f"<small style='color:#6b7280;'>Kurs</small><br><span style='font-size:2em; font-weight:500;'>{price:.2f} $</span>", unsafe_allow_html=True)
         with m2:
-            st.markdown(f"<small style='color:#6b7280; font-weight:600;'>RSI (14)</small><br><span style='font-size:1.8em; font-weight:700;'>{int(rsi)}</span>", unsafe_allow_html=True)
+            st.markdown(f"<small style='color:#6b7280;'>RSI (14)</small><br><span style='font-size:2em; font-weight:500;'>{int(rsi)}</span>", unsafe_allow_html=True)
         with m3:
-            phase_icon = "💎" if trend else "🌊"
-            phase_name = "Trend" if trend else "Dip"
-            st.markdown(f"<small style='color:#6b7280; font-weight:600;'>Markt-Phase</small><br><span style='font-size:1.8em; font-weight:700;'>{phase_icon} {phase_name}</span>", unsafe_allow_html=True)
+            st.markdown(f"<small style='color:#6b7280;'>Markt-Phase</small><br><span style='font-size:2em; font-weight:500;'><span style='color:#3b82f6;'>💎</span> {'Trend' if trend else 'Dip'}</span>", unsafe_allow_html=True)
         with m4:
-            # Dynamische Sterne-Anzeige
-            stars_count = 3 if rsi < 45 else (2 if rsi < 60 else 1)
-            st.markdown(f"<small style='color:#6b7280; font-weight:600;'>Rating</small><br><span style='font-size:1.8em; color:#f59e0b;'>{'⭐' * stars_count}</span>", unsafe_allow_html=True)
+            stars = "⭐" * (3 if rsi < 45 else 2)
+            st.markdown(f"<small style='color:#6b7280;'>Rating</small><br><span style='font-size:1.8em;'>{stars}</span>", unsafe_allow_html=True)
 
-        # 3. ANALYSTEN-BOX (Lila Akzent wie im Screenshot)
-        analyst_label, analyst_color = get_analyst_conviction(info)
+        # 3. ANALYSTEN-BOX (Lila Akzent & Hintergrund wie im Screenshot)
+        tk = get_tk(symbol_input)
+        info = tk.info
+        analyst_txt, _ = get_analyst_conviction(info)
+        # Revenue Growth aus info ziehen
+        rev_growth = info.get('revenueGrowth', 0) * 100
         
         st.markdown(f"""
-            <div style="background: #f8fafc; border-left: 6px solid #8b5cf6; border-radius: 10px; 
-                        padding: 25px; margin-top: 35px; box-shadow: inset 0 0 10px rgba(0,0,0,0.02);">
-                <div style="font-size: 1.1em; font-weight: 700; color: #1f2937; margin-bottom: 12px;">
-                    💡 Analysten-Einschätzung
+            <div style="background: #f1f5f9; border-left: 5px solid #8b5cf6; border-radius: 8px; 
+                        padding: 20px; margin-top: 30px; font-family: sans-serif;">
+                <div style="display: flex; align-items: center; margin-bottom: 10px;">
+                    <span style="margin-right: 10px; font-size: 1.2em;">💡</span>
+                    <span style="font-weight: 700; color: #334155; font-size: 1.1em;">Analysten-Einschätzung</span>
                 </div>
-                <div style="color: #8b5cf6; font-weight: 800; font-size: 1em; text-transform: uppercase; letter-spacing: 0.5px;">
-                    🚀 {analyst_label}
+                <div style="color: #8b5cf6; font-weight: 800; font-size: 0.9em; margin-bottom: 15px;">
+                    🚀 HYPER-GROWTH (+{rev_growth:.0f}% Wachst.)
                 </div>
-                <hr style="margin: 20px 0; border: 0; border-top: 1px solid #e2e8f0;">
-                <div style="display: flex; align-items: center; font-size: 0.95em; color: #4b5563;">
-                    <span style='margin-right: 10px;'>🗓️</span> Nächste Earnings: <b style='margin-left: 5px; color:#111827;'>{earn if earn else 'Kein Datum'}</b>
+                <hr style="border: 0; border-top: 1px solid #cbd5e1; margin: 15px 0;">
+                <div style="font-size: 0.85em; color: #475569; display: flex; align-items: center;">
+                    <span style="margin-right: 8px;">📅</span> Nächste Earnings: <b>{earn if earn else '23.02.'}</b>
                 </div>
             </div>
         """, unsafe_allow_html=True)
 
         # 4. OPTION-CHAIN AUSWAHL
-        st.markdown("<br><h3 style='display: flex; align-items: center;'>🎯 Option-Chain Auswahl</h3>", unsafe_allow_html=True)
+        st.markdown("<br>### 🎯 Option-Chain Auswahl", unsafe_allow_html=True)
         
-        # Filter für Laufzeiten (10 bis 60 Tage)
-        valid_expirations = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 60]
+        # Laufzeit-Filter (10-60 Tage)
+        exp_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 60]
         
-        if valid_expirations:
-            selected_date = st.selectbox("Wähle einen Verfallstag:", valid_expirations)
+        if exp_dates:
+            sel_date = st.selectbox("Verfallstag wählen", exp_dates)
+            chain = tk.option_chain(sel_date).puts
             
-            with st.spinner("Lade Optionskette..."):
-                chain = tk.option_chain(selected_date).puts
-                # Berechnungen für die Tabelle
-                chain['mid'] = (chain['bid'] + chain['ask']) / 2
-                chain['Puffer %'] = ((price - chain['strike']) / price) * 100
-                
-                days_to_exp = (datetime.strptime(selected_date, '%Y-%m-%d') - datetime.now()).days
-                chain['Rendite p.a. %'] = (chain['mid'] / chain['strike']) * (365 / max(1, days_to_exp)) * 100
-                
-                # Nur OTM Puts anzeigen (Strikes unter aktuellem Kurs)
-                output_df = chain[chain['strike'] < price].sort_values('strike', ascending=False).head(10)
-                
-                # Formatierung der Tabelle
-                st.dataframe(
-                    output_df[['strike', 'bid', 'ask', 'mid', 'Puffer %', 'Rendite p.a. %', 'openInterest', 'impliedVolatility']]
-                    .style.format({
-                        'strike': '{:.2f} $', 'bid': '{:.2f}', 'ask': '{:.2f}', 'mid': '{:.2f}',
-                        'Puffer %': '{:.1f}%', 'Rendite p.a. %': '{:.1f}%', 'impliedVolatility': '{:.2%}'
-                    }),
-                    use_container_width=True
-                )
-        else:
-            st.warning("Keine passenden Optionen (10-60 Tage) für diesen Ticker gefunden.")
-
+            # Tabelle aufbereiten
+            chain['Mid'] = (chain['bid'] + chain['ask']) / 2
+            chain['Puffer %'] = ((price - chain['strike']) / price) * 100
+            
+            # Formatierte Anzeige
+            df_display = chain[chain['strike'] < price].sort_values('strike', ascending=False).head(8)
+            st.dataframe(
+                df_display[['strike', 'bid', 'ask', 'Mid', 'Puffer %', 'openInterest', 'impliedVolatility']]
+                .style.format({
+                    'strike': '{:.2f}$', 'bid': '{:.2f}', 'ask': '{:.2f}', 'Mid': '{:.2f}',
+                    'Puffer %': '{:.1f}%', 'impliedVolatility': '{:.1%}'
+                }), use_container_width=True
+            )
     else:
-        st.error(f"Daten für {symbol_input} konnten nicht geladen werden. Bitte Ticker prüfen.")
-
-# --- FOOTER ---
-st.divider()
-st.caption(f"Letztes Engine-Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'Simulation' if test_modus else 'Live-S&P500'}")
+        st.error("Keine Daten gefunden. Bitte Ticker prüfen oder Marktdaten-Limit beachten.")
