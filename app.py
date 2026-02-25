@@ -524,12 +524,13 @@ if symbol_input:
                     </div>
                 """, unsafe_allow_html=True)
 
-                # --- 7. OPTION-CHAIN AUSWAHL ---
+                # --- 7. OPTION-CHAIN AUSWAHL (OPTIMIERT FÜR MEHR STRIKES) ---
                 st.markdown("---")
                 st.markdown("### 🎯 Option-Chain Auswahl")
                 option_mode = st.radio("Strategie wählen:", ["Put (Cash Secured)", "Call (Covered)"], horizontal=True)
                 
-                valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute_dt).days <= 45]
+                # Erweitertes Zeitfenster für mehr Auswahl (5 bis 60 Tage)
+                valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute_dt).days <= 60]
                 
                 if valid_dates:
                     target_date = st.selectbox("📅 Verfallstag wählen", valid_dates)
@@ -538,38 +539,47 @@ if symbol_input:
                     # Option Daten holen
                     opt_chain = tk.option_chain(target_date)
                     chain = opt_chain.puts if "Put" in option_mode else opt_chain.calls
-                    df_disp = chain[chain['openInterest'] > 20].copy()
+                    
+                    # Filter: Mindestens ein bisschen Open Interest für Realismus
+                    df_disp = chain[chain['openInterest'] >= 5].copy()
                     
                     if "Put" in option_mode:
-                        df_disp = df_disp[df_disp['strike'] < price].copy()
+                        # Puts: Wir wollen Strikes UNTER dem Preis, beginnend nah am Preis
+                        df_disp = df_disp[df_disp['strike'] <= price].copy()
                         df_disp['Puffer %'] = ((price - df_disp['strike']) / price) * 100
-                        sort_asc = False
+                        # Sortierung: Höchster Strike zuerst (da dieser am nächsten am Kurs liegt)
+                        df_disp = df_disp.sort_values('strike', ascending=False)
                     else:
-                        df_disp = df_disp[df_disp['strike'] > price].copy()
+                        # Calls: Wir wollen Strikes ÜBER dem Preis, beginnend nah am Preis
+                        df_disp = df_disp[df_disp['strike'] >= price].copy()
                         df_disp['Puffer %'] = ((df_disp['strike'] - price) / price) * 100
-                        sort_asc = True
+                        # Sortierung: Niedrigster Strike zuerst (da dieser am nächsten am Kurs liegt)
+                        df_disp = df_disp.sort_values('strike', ascending=True)
 
+                    # Rendite Berechnung
                     df_disp['Yield p.a. %'] = (df_disp['bid'] / df_disp['strike']) * (365 / max(1, days_to_expiry)) * 100
-                    df_disp = df_disp.sort_values('strike', ascending=sort_asc)
-
+                    
+                    # Styling Funktion (Ampel-Farben für Puffer)
                     def style_rows(row):
                         p = row['Puffer %']
-                        if p >= 10: return ['background-color: rgba(39, 174, 96, 0.1)'] * len(row)
-                        elif 5 <= p < 10: return ['background-color: rgba(241, 196, 15, 0.1)'] * len(row)
-                        return ['background-color: rgba(231, 76, 60, 0.1)'] * len(row)
+                        if p >= 10: return ['background-color: rgba(39, 174, 96, 0.1)'] * len(row) # Grün
+                        elif 5 <= p < 10: return ['background-color: rgba(241, 196, 15, 0.1)'] * len(row) # Gelb
+                        return ['background-color: rgba(231, 76, 60, 0.1)'] * len(row) # Rot
 
-                    styled_df = df_disp[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].head(15).style.apply(style_rows, axis=1).format({
+                    # Wir zeigen die ersten 20 relevanten Strikes an
+                    styled_df = df_disp[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].head(20).style.apply(style_rows, axis=1).format({
                         'strike': '{:.2f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $',
                         'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
                     })
                     
-                    st.dataframe(styled_df, use_container_width=True, height=400)
-                    st.caption("🟢 >10% Puffer | 🟡 5-10% Puffer | 🔴 <5% Puffer")
+                    st.dataframe(styled_df, use_container_width=True, height=500)
+                    st.caption("🟢 >10% Puffer (Konservativ) | 🟡 5-10% Puffer (Moderat) | 🔴 <5% Puffer (Aggressiv)")
 
     except Exception as e:
         st.error(f"Analyse-Fehler: {e}")
 
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
+
 
 
 
