@@ -310,29 +310,53 @@ else:
             st.rerun()
     st.table(pd.DataFrame(st.session_state.depot_data_cache))
 
-# --- SEKTION 3: PROFI-COCKPIT ---
-st.markdown("### 🔍 Einzelwert-Analyse")
-symbol_input = st.text_input("Ticker Symbol", value="NVDA").upper()
+# --- BLOCK 3: PROFI-ANALYSE & TRADING-COCKPIT ---
+st.markdown("---")
+st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
+
+symbol_input = st.text_input("Ticker Symbol", value="hims").lower()
 
 if symbol_input:
-    try:
+    res = get_stock_data_full(symbol_input)
+    if res:
+        price, dates, earn, rsi, trend, m_cap = res
         tk = get_tk(symbol_input)
-        fi = tk.fast_info
-        price = fi['last_price']
+        info = tk.info
         
-        res_full = get_stock_data_full(symbol_input)
-        if res_full:
-            price, dates, earn, rsi, uptrend, m_cap, pivots_res = res_full
-            
-            # Ampel-Logik
-            ampel_color = "#27ae60" if (uptrend and 35 < rsi < 65) else "#f1c40f"
-            if rsi < 30 or rsi > 70: ampel_color = "#e74c3c"
-            
-            st.markdown(f"""
-                <div style="background:{ampel_color}; color:white; padding:15px; border-radius:10px; text-align:center;">
-                    <h2 style="margin:0;">RSI: {int(rsi)} | {'STABIL' if ampel_color == "#27ae60" else 'VORSICHT'}</h2>
-                </div>
-            """, unsafe_allow_html=True)
+        # 1. Das große Status-Banner (Gelb/Neutral wie im Bild)
+        status_text = "● NEUTRAL / ABWARTEN"
+        status_color = "#f1c40f" # Gelb
+        if rsi < 35: 
+            status_text = "● KAUF-ZONE (DIP)"
+            status_color = "#27ae60" # Grün
+        elif rsi > 65:
+            status_text = "● ÜBERHITZT (WARTEN)"
+            status_color = "#e74c3c" # Rot
+
+        st.markdown(f"""
+            <div style="background: {status_color}; color: white; padding: 25px; border-radius: 12px; text-align: center; font-size: 1.8em; font-weight: 800; margin-bottom: 25px;">
+                {status_text}
+            </div>
+        """, unsafe_allow_html=True)
+
+        # 2. Die vier Metriken in einer Zeile
+        c1, c2, c3, c4 = st.columns(4)
+        c1.markdown(f"<small style='color:#6b7280;'>Kurs</small><br><span style='font-size:1.5em; font-weight:700;'>{price:.2f} $</span>", unsafe_allow_html=True)
+        c2.markdown(f"<small style='color:#6b7280;'>RSI (14)</small><br><span style='font-size:1.5em; font-weight:700;'>{int(rsi)}</span>", unsafe_allow_html=True)
+        c3.markdown(f"<small style='color:#6b7280;'>Markt-Phase</small><br><span style='font-size:1.5em; font-weight:700;'>💎 {'Trend' if trend else 'Dip'}</span>", unsafe_allow_html=True)
+        c4.markdown(f"<small style='color:#6b7280;'>Rating</small><br><span style='font-size:1.5em; color:#f59e0b;'>⭐⭐⭐</span>", unsafe_allow_html=True)
+
+        # 3. Die Analysten-Einschätzung Box (Lila Rand)
+        upside = ((info.get('targetMedianPrice', 0) / price) - 1) * 100
+        st.markdown(f"""
+            <div style="background: #f8fafc; border-left: 5px solid #8b5cf6; border-radius: 10px; padding: 20px; margin-top: 30px;">
+                <div style="font-weight: 700; color: #1f2937; margin-bottom: 10px;">💡 Analysten-Einschätzung</div>
+                <div style="color: #8b5cf6; font-weight: 800; font-size: 0.9em;">🚀 HYPER-GROWTH (+{info.get('revenueGrowth', 0)*100:.0f}% Wachst.)</div>
+                <hr style="margin: 15px 0; border: 0; border-top: 1px solid #e2e8f0;">
+                <div style="font-size: 0.85em; color: #4b5563;">📅 Nächste Earnings: <b>{earn if earn else 'n.a.'}</b></div>
+            </div>
+        """, unsafe_allow_html=True)
+
 
             # Option Chain
             st.markdown("#### 🎯 Option-Selection")
@@ -355,5 +379,6 @@ if symbol_input:
 
 st.divider()
 st.caption(f"Engine: Fast-Info Hybrid | Letztes Update: {datetime.now().strftime('%H:%M:%S')}")
+
 
 
