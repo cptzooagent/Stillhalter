@@ -317,8 +317,13 @@ else:
 st.markdown("---")
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
 
-# Ticker-Eingabe
-symbol_input = st.text_input("Ticker Symbol", value="MU", key="cockpit_input").upper()
+# Kopfzeile mit Ticker und sauberer Strategie-Wahl
+col_t, col_s = st.columns([2, 1])
+with col_t:
+    symbol_input = st.text_input("Ticker Symbol", value="MU", key="cockpit_input").upper()
+with col_s:
+    # Reduziert auf die zwei gewünschten Typen
+    strategie = st.selectbox("Strategie", ["Short Put", "Short Call"], key="strat_select")
 
 if symbol_input:
     stock_res = get_stock_data_full(symbol_input)
@@ -328,9 +333,14 @@ if symbol_input:
         price, dates, earn, rsi, trend, m_cap, pivots = stock_res
         tk = get_tk(symbol_input)
         
-        # 1. STATUS-BANNER
-        status_text = "● TOP SETUP (Sicher)" if trend and rsi < 60 else "● NEUTRAL / ABWARTEN"
-        status_color = "#27ae60" if "TOP" in status_text else "#f1c40f"
+        # 1. DYNAMISCHES STATUS-BANNER
+        # Die Logik passt sich an: Puts lieben Dips, Calls lieben Stärke
+        if strategie == "Short Put":
+            status_text = "● TOP SETUP (Put-Einstieg)" if rsi < 45 else "● NEUTRAL (Warten)"
+            status_color = "#27ae60" if rsi < 45 else "#f1c40f"
+        else:
+            status_text = "● CALL-RENTAL (Prämie sammeln)" if rsi > 55 else "● WARTEN (Zu schwach)"
+            status_color = "#3b82f6" if rsi > 55 else "#94a3b8"
 
         st.markdown(f"""
             <div style="background: {status_color}; color: white; padding: 25px; border-radius: 12px; 
@@ -347,23 +357,18 @@ if symbol_input:
         m4.markdown(f"<small style='color:#6b7280;'>Qualität</small><br><span style='font-size:1.8em;'>⭐⭐⭐</span>", unsafe_allow_html=True)
 
         # 3. PIVOT-PUNKTE (Technische Absicherung)
-        st.markdown("<br><div style='font-weight: 700; color: #1f2937;'><span style='margin-right: 10px;'>🛡️</span> Technische Absicherung (Daily & Weekly Pivots)</div>", unsafe_allow_html=True)
-        
+        st.markdown("<br><div style='font-weight: 700; color: #1f2937;'><span style='margin-right: 10px;'>🛡️</span> Technische Absicherung (Pivots)</div>", unsafe_allow_html=True)
         if pivots:
             p1, p2, p3, p4 = st.columns(4)
             p1.markdown(f"""<div style="border: 1px solid #e5e7eb; border-radius: 8px; padding: 15px; text-align: center;">
-                <small style="color: #9ca3af; font-size: 0.7em;">Pivot Punkt (P)</small><br>
-                <b style="color: #4b5563;">{pivots['P']:.2f} $</b></div>""", unsafe_allow_html=True)
+                <small style="color: #9ca3af; font-size: 0.7em;">Pivot (P)</small><br><b>{pivots['P']:.2f} $</b></div>""", unsafe_allow_html=True)
             p2.markdown(f"""<div style="border: 2px solid #10b981; border-radius: 8px; padding: 15px; text-align: center;">
-                <small style="color: #10b981; font-size: 0.7em; font-weight: 700;">Support S1</small><br>
-                <b style="color: #10b981;">{(pivots['P'] * 0.98):.2f} $</b></div>""", unsafe_allow_html=True)
+                <small style="color: #10b981; font-size: 0.7em;">Support S1</small><br><b>{(pivots['P'] * 0.98):.2f} $</b></div>""", unsafe_allow_html=True)
             p3.markdown(f"""<div style="border: 2px solid #10b981; border-radius: 8px; padding: 15px; text-align: center;">
-                <small style="color: #10b981; font-size: 0.7em; font-weight: 700;">Daily S2 (Stark)</small><br>
-                <b style="color: #10b981;">{pivots['S2']:.2f} $</b></div>""", unsafe_allow_html=True)
+                <small style="color: #10b981; font-size: 0.7em;">Daily S2</small><br><b>{pivots['S2']:.2f} $</b></div>""", unsafe_allow_html=True)
             w_s2 = pivots.get('W_S2', pivots['S2'] * 0.95)
             p4.markdown(f"""<div style="border: 2px solid #3b82f6; border-radius: 8px; padding: 15px; text-align: center;">
-                <small style="color: #3b82f6; font-size: 0.7em; font-weight: 700;">Weekly S2 (Boden)</small><br>
-                <b style="color: #3b82f6;">{w_s2:.2f} $</b></div>""", unsafe_allow_html=True)
+                <small style="color: #3b82f6; font-size: 0.7em;">Weekly Boden</small><br><b>{w_s2:.2f} $</b></div>""", unsafe_allow_html=True)
 
         # 4. FUNDAMENTALE ANALYSE (Lila Box)
         info = tk.info
@@ -372,43 +377,45 @@ if symbol_input:
             <div style="background: #f1f5f9; border-left: 5px solid #8b5cf6; border-radius: 8px; padding: 20px; margin-top: 25px; margin-bottom: 30px;">
                 <div style="font-weight: 700; color: #334155; margin-bottom: 5px;">💡 Fundamentale Analyse</div>
                 <div style="color: #8b5cf6; font-weight: 800; font-size: 0.9em;">🚀 {analyst_txt}</div>
-                <div style="font-size: 0.8em; color: #475569; margin-top: 10px;">Nächste Earnings: <b>{earn if earn else 'n.a.'}</b></div>
+                <div style="font-size: 0.8em; color: #475569; margin-top: 10px;">Next Earnings: <b>{earn if earn else 'n.a.'}</b></div>
             </div>
         """, unsafe_allow_html=True)
 
-        # 5. DIE OPTIONSTABELLE (Wieder da!)
-        st.markdown("### 🎯 Option-Chain Auswahl")
+        # 5. OPTIONSTABELLE (DYNAMISCH)
+        st.markdown(f"### 🎯 {strategie} Auswahl")
         
-        # Laufzeit wählen (Dropdown)
-        exp_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 60]
+        # Laufzeit wählen
+        exp_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 65]
         if exp_dates:
-            selected_exp = st.selectbox("Verfallstag wählen", exp_dates, key="exp_select")
-            
-            # Daten für gewählte Laufzeit laden
-            chain = tk.option_chain(selected_exp).puts
+            selected_exp = st.selectbox("Verfallstag", exp_dates)
             days_to_exp = (datetime.strptime(selected_exp, '%Y-%m-%d') - datetime.now()).days
             
-            # Berechnungen für Tabelle
+            # Chain laden (Puts für Short Put, Calls für Short Call)
+            opts = tk.option_chain(selected_exp)
+            chain = opts.puts if strategie == "Short Put" else opts.calls
+            
+            # Berechnungen
             chain['Mid'] = (chain['bid'] + chain['ask']) / 2
-            chain['Puffer %'] = ((price - chain['strike']) / price) * 100
+            chain['Abstand %'] = abs(((price - chain['strike']) / price) * 100)
             chain['Yield p.a. %'] = (chain['Mid'] / chain['strike']) * (365 / max(1, days_to_exp)) * 100
             
-            # Nur Strikes unter Kurs anzeigen
-            df_final = chain[chain['strike'] < price].sort_values('strike', ascending=False).head(10)
+            # Filterung
+            if strategie == "Short Put":
+                # OTM Puts: Strike unter Marktpreis
+                df_display = chain[chain['strike'] < price].sort_values('strike', ascending=False).head(10)
+            else:
+                # OTM Calls: Strike über Marktpreis
+                df_display = chain[chain['strike'] > price].sort_values('strike', ascending=True).head(10)
             
             # Styling & Anzeige
             st.dataframe(
-                df_final[['strike', 'bid', 'ask', 'Mid', 'Puffer %', 'Yield p.a. %', 'impliedVolatility', 'openInterest']]
+                df_display[['strike', 'bid', 'ask', 'Mid', 'Abstand %', 'Yield p.a. %', 'impliedVolatility', 'openInterest']]
                 .style.format({
                     'strike': '{:.2f}$', 'bid': '{:.2f}', 'ask': '{:.2f}', 'Mid': '{:.2f}',
-                    'Puffer %': '{:.1f}%', 'Yield p.a. %': '{:.1f}%', 'impliedVolatility': '{:.1%}'
-                }),
-                use_container_width=True
+                    'Abstand %': '{:.1f}%', 'Yield p.a. %': '{:.1f}%', 'impliedVolatility': '{:.1%}'
+                }), use_container_width=True
             )
-            
-            st.info(f"💡 Info: Für {selected_exp} ({days_to_exp} Tage Restlaufzeit) werden die besten Cash-Secured Put Strikes angezeigt.")
         else:
-            st.warning("Keine passenden Options-Laufzeiten gefunden.")
-
+            st.warning("Keine passenden Laufzeiten (10-65 Tage) verfügbar.")
     else:
-        st.error("Ticker konnte nicht geladen werden.")
+        st.error("Keine Marktdaten gefunden.")
