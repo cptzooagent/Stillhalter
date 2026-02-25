@@ -577,6 +577,7 @@ if symbol_input:
                                 if p >= 5: return ['background-color: rgba(39, 174, 96, 0.1)'] * len(row)
                             return ['background-color: rgba(231, 76, 60, 0.1)'] * len(row)
 
+                        # ... (Ende deiner Tabellen-Logik)
                         if not result_df.empty:
                             st.dataframe(
                                 result_df.style.apply(style_rows, axis=1).format({
@@ -589,4 +590,13 @@ if symbol_input:
                             st.warning("Keine passenden Strikes mit den gewählten Kriterien gefunden.")
                     else:
                         st.error("Keine Optionsdaten für dieses Datum verfügbar.")
-                        st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
+                else:
+                    st.info("Keine validen Verfallstage im Zeitraum 5-60 Tage gefunden.")
+
+    except Exception as e:
+        st.error(f"Fehler bei der Detail-Analyse: {e}")
+        st.info("Hinweis: Manche Ticker-Symbole liefern am Wochenende keine Live-Daten.")
+
+# --- FOOTER (Ganz am Ende der Datei) ---
+st.divider()
+st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Daten: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
