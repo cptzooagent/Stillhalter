@@ -224,47 +224,78 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
         st.rerun()
 
-# --- ANZEIGE DER KACHELN ---
+# --- ANZEIGE DER KACHELN (FIXED) ---
 if st.session_state.profi_scan_results:
+    res_list = st.session_state.profi_scan_results
+    st.subheader(f"🎯 Top-Setups nach Qualität ({len(res_list)} Treffer)")
     cols = st.columns(4)
-    for idx, res in enumerate(st.session_state.profi_scan_results):
+    heute_dt = datetime.now()
+    
+    for idx, res in enumerate(res_list):
         with cols[idx % 4]:
-            # News-Farbe bestimmen
-            news_color = "#27ae60" if res['sent_status'] == "Bullish" else "#e74c3c" if res['sent_status'] == "Bearish" else "#f1c40f"
+            # 1. SICHERER ZUGRIFF AUF KEYS (Verhindert KeyError aus Screenshot 90/93)
+            stars = res.get('stars_str', "⭐")
+            s_status = res.get('sent_status', "Neutral")
+            s_icon = res.get('sent_icon', "🟡")
+            s_msg = res.get('news_snippet', "Keine aktuellen News-Daten.")
             
+            # 2. FARBLOGIK FÜR NEWS
+            news_color = "#27ae60" if s_status == "Bullish" else "#e74c3c" if s_status == "Bearish" else "#f1c40f"
+            
+            # 3. EARNINGS-RISIKO-CHECK
+            is_earning_risk = False
+            earn_str = res.get('earn', "---")
+            if earn_str and earn_str != "---":
+                try:
+                    day, month = map(int, earn_str.split('.'))
+                    earn_date = datetime(2026, month, day)
+                    if 0 <= (earn_date - heute_dt).days <= res.get('tage', 30):
+                        is_earning_risk = True
+                except: pass
+
+            card_border = "3px solid #ef4444" if is_earning_risk else "1px solid #e5e7eb"
+            
+            # HTML TEMPLATE (Inklusive OpenClaw Box)
             html_code = f"""
-            <div style="background: white; border: 1px solid #e5e7eb; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif; height: 560px; position: relative;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="font-size: 1.2em; font-weight: 800; color: #111827;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{res['stars_str']}</span></span>
-                    <span style="font-size: 0.7em; font-weight: 700; color: #3b82f6; background: #3b82f610; padding: 2px 8px; border-radius: 6px;">{res['status']}</span>
-                </div>
-                
-                <div style="margin: 15px 0;">
-                    <div style="font-size: 0.65em; color: #6b7280; font-weight: 600; text-transform: uppercase;">Yield p.a.</div>
-                    <div style="font-size: 1.9em; font-weight: 900; color: #111827;">{res['y_pa']:.1f}%</div>
-                </div>
+<div style="background: white; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif; height: 580px; display: flex; flex-direction: column;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+        <span style="font-size: 1.2em; font-weight: 800; color: #111827;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{stars}</span></span>
+        <span style="font-size: 0.7em; font-weight: 700; color: #3b82f6; background: #3b82f610; padding: 2px 8px; border-radius: 6px;">{res.get('status', 'Dip')}</span>
+    </div>
 
-                <div style="background: {news_color}15; border-left: 4px solid {news_color}; padding: 8px; border-radius: 4px; margin-bottom: 15px; font-size: 0.7em;">
-                    <b style="color: {news_color};">OpenClaw {res['sent_icon']}:</b><br>
-                    <span style="color: #374151;">{res['news_snippet']}</span>
-                </div>
+    <div style="margin: 10px 0;">
+        <div style="font-size: 0.65em; color: #6b7280; font-weight: 600; text-transform: uppercase;">Yield p.a.</div>
+        <div style="font-size: 1.9em; font-weight: 900; color: #111827;">{res.get('y_pa', 0):.1f}%</div>
+    </div>
 
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
-                    <div style="border-left: 3px solid #8b5cf6; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Strike</div><div style="font-size: 0.9em; font-weight: 700;">{res['strike']:.1f}$</div></div>
-                    <div style="border-left: 3px solid #3b82f6; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Puffer</div><div style="font-size: 0.9em; font-weight: 700;">{res['puffer']:.1f}%</div></div>
-                </div>
+    <div style="background: {news_color}10; border-left: 4px solid {news_color}; padding: 10px; border-radius: 8px; margin-bottom: 12px;">
+        <div style="font-size: 0.7em; font-weight: 800; color: {news_color}; margin-bottom: 3px;">
+            {s_icon} OPENCLAW: {s_status.upper()}
+        </div>
+        <div style="font-size: 0.65em; color: #374151; line-height: 1.3; height: 40px; overflow: hidden;">
+            {s_msg[:100]}...
+        </div>
+    </div>
 
-                <div style="display: flex; justify-content: space-between; font-size: 0.7em; color: #4b5563; margin-top: auto; padding-top: 10px; border-top: 1px solid #f3f4f6;">
-                    <span>⏳ <b>{res['tage']}d</b></span>
-                    <span style="background: #f3f4f6; padding: 1px 5px; border-radius: 4px;">RSI: {int(res['rsi'])}</span>
-                    <span style="font-weight: 800; color: #6b7280;">🗓️ {res['earn']}</span>
-                </div>
-                
-                <div style="background: {res['analyst_color']}15; color: {res['analyst_color']}; padding: 8px; border-radius: 8px; font-size: 0.7em; font-weight: bold; text-align: center; margin-top: 12px; border-left: 4px solid {res['analyst_color']};">
-                    🚀 {res['analyst_label']}
-                </div>
-            </div>
-            """
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+        <div style="border-left: 3px solid #8b5cf6; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Strike</div><div style="font-size: 0.9em; font-weight: 700;">{res.get('strike', 0):.1f}$</div></div>
+        <div style="border-left: 3px solid #3b82f6; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Puffer</div><div style="font-size: 0.9em; font-weight: 700;">{res.get('puffer', 0):.1f}%</div></div>
+        <div style="border-left: 3px solid #f59e0b; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Mid</div><div style="font-size: 0.9em; font-weight: 700;">{res.get('bid', 0):.2f}$</div></div>
+        <div style="border-left: 3px solid #10b981; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Delta</div><div style="font-size: 0.9em; font-weight: 700; color: #10b981;">{res.get('delta', 0):.2f}</div></div>
+    </div>
+
+    <div style="margin-top: auto;">
+        <div style="display: flex; justify-content: space-between; font-size: 0.7em; color: #4b5563; margin-bottom: 10px;">
+            <span>⏳ <b>{res.get('tage', 0)}d</b></span>
+            <span style="background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-weight: 700;">RSI: {int(res.get('rsi', 50))}</span>
+            <span style="font-weight: 800; color: {'#ef4444' if is_earning_risk else '#6b7280'};">{'⚠️' if is_earning_risk else '🗓️'} {earn_str}</span>
+        </div>
+        <div style="background: {res.get('analyst_color', '#7f8c8d')}15; color: {res.get('analyst_color', '#7f8c8d')}; padding: 8px; border-radius: 8px; font-size: 0.7em; font-weight: bold; text-align: center; border-left: 4px solid {res.get('analyst_color', '#7f8c8d')};">
+            🚀 {res.get('analyst_label', 'Neutral')}
+        </div>
+    </div>
+</div>
+"""
             st.markdown(html_code, unsafe_allow_html=True)
             
 # --- SEKTION 2: DEPOT-MANAGER (OPTIMIERT) ---
@@ -438,4 +469,5 @@ if symbol_input:
             st.error(f"Fehler bei {symbol_input}: {e}")
 
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🚀 Live'}")
+
 
