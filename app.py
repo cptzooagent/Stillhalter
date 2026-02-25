@@ -7,8 +7,8 @@ from datetime import datetime, timedelta
 import time
 from requests import Session
 
-# --- 1. ABSOLUTE INITIALISIERUNG (Gegen AttributeError) ---
-# Diese Session muss existieren, bevor yf.download oder Ticker-Objekte aufgerufen werden.
+# --- 1. ABSOLUTE INITIALISIERUNG ---
+# Verhindert den AttributeError: secure_session
 if 'secure_session' not in st.session_state:
     session = Session()
     session.headers.update({
@@ -17,25 +17,48 @@ if 'secure_session' not in st.session_state:
     st.session_state.secure_session = session
 
 def get_tk(symbol):
-    """Gibt ein Ticker-Objekt mit der geschützten Session zurück."""
     return yf.Ticker(symbol, session=st.session_state.secure_session)
 
-def get_batch_data(ticker_list):
-    """Lädt historische Daten für alle Symbole gleichzeitig (Batch-Modus)."""
-    if not ticker_list:
-        return pd.DataFrame()
-    return yf.download(
-        ticker_list, 
-        period="150d", 
-        group_by='ticker', 
-        session=st.session_state.secure_session, 
-        progress=False
-    )
+# --- 2. DIE REPARATUR FÜR DEIN COCKPIT (get_stock_data_full) ---
+# Dein Cockpit (Bild 2) braucht diese Funktion zwingend zurück!
+def get_stock_data_full(symbol):
+    """Holt alle Daten für ein einzelnes Symbol (wichtig für Cockpit & Depot)."""
+    try:
+        tk = get_tk(symbol)
+        # Schneller Abruf der Historie
+        hist = tk.history(period="150d")
+        if hist.empty: return None, None, None, None, None, None, None, None
+        
+        price = hist['Close'].iloc[-1]
+        
+        # RSI & Trend
+        rsi_series = calculate_rsi(hist['Close'])
+        rsi = rsi_series.iloc[-1]
+        sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1] if len(hist) >= 200 else hist['Close'].mean()
+        uptrend = price > sma_200
+        
+        # ATR für Volatilität
+        high_low = hist['High'] - hist['Low']
+        high_cp = np.abs(hist['High'] - hist['Close'].shift())
+        low_cp = np.abs(hist['Low'] - hist['Close'].shift())
+        tr = pd.concat([high_low, high_cp, low_cp], axis=1).max(axis=1)
+        atr = tr.rolling(14).mean().iloc[-1]
+        
+        # Earnings & Pivots
+        earn = "---"
+        try:
+            cal = tk.calendar
+            if cal is not None and not cal.empty:
+                earn = cal.iloc[0, 0].strftime('%d.%m.')
+        except: pass
+        
+        pivots = calculate_pivots(symbol, batch_hist=hist)
+        
+        return price, tk.options, earn, rsi, uptrend, False, atr, pivots
+    except Exception as e:
+        return None
 
-# --- SETUP ---
-st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
-
-# --- 2. MATHE & TECHNIK ---
+# --- 3. MATHE & ANALYSE ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     if T <= 0 or sigma <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
@@ -46,54 +69,19 @@ def calculate_rsi(data, window=14):
     delta = data.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-    # Null-Division verhindern
     loss = loss.replace(0, 0.001)
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
 def calculate_pivots(symbol, batch_hist=None):
-    """Berechnet Daily und Weekly Pivot-Punkte (Batch-fähig)."""
     try:
-        if batch_hist is not None:
-            hist_d = batch_hist
-        else:
-            tk = get_tk(symbol)
-            hist_d = tk.history(period="5d")
-            
+        hist_d = batch_hist if batch_hist is not None else get_tk(symbol).history(period="5d")
         if len(hist_d) < 2: return None
         last_day = hist_d.iloc[-2]
-        h_d, l_d, c_d = last_day['High'], last_day['Low'], last_day['Close']
-        p_d = (h_d + l_d + c_d) / 3
-        s1_d, s2_d, r2_d = (2 * p_d) - h_d, p_d - (h_d - l_d), p_d + (h_d - l_d)
-        
-        # Weekly Pivots (Optional/vereinfacht aus Batch oder Einzelabfrage)
-        return {"P": p_d, "S1": s1_d, "S2": s2_d, "R2": r2_d, "W_S2": s2_d*0.98, "W_R2": r2_d*1.02}
+        h, l, c = last_day['High'], last_day['Low'], last_day['Close']
+        p = (h + l + c) / 3
+        return {"P": p, "S1": 2*p-h, "S2": p-(h-l), "R2": p+(h-l), "W_S2": (p-(h-l))*0.98, "W_R2": (p+(h-l))*1.02}
     except: return None
-
-def get_openclaw_analysis(symbol):
-    try:
-        tk = get_tk(symbol)
-        all_news = tk.news
-        if not all_news: return "Neutral", "🤖 OpenClaw: Standby...", 0.5
-        huge_blob = str(all_news).lower()
-        display_text = all_news[0].get('title', 'Marktstimmung aktiv')
-        
-        score = 0.5
-        for w in ['earnings', 'growth', 'beat', 'ai', 'buy']: score += 0.08 if w in huge_blob else 0
-        for w in ['sell-off', 'miss', 'down', 'risk', 'short']: score -= 0.08 if w in huge_blob else 0
-        
-        status = "Bullish" if score > 0.55 else "Bearish" if score < 0.45 else "Neutral"
-        icon = "🟢" if status == "Bullish" else "🔴" if status == "Bearish" else "🟡"
-        return status, f"{icon} OpenClaw: {display_text[:85]}...", score
-    except: return "N/A", "🤖 OpenClaw: Offline", 0.5
-
-@st.cache_data(ttl=86400)
-def get_combined_watchlist():
-    try:
-        url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
-        df = pd.read_csv(url)
-        return [t.replace('.', '-') for t in df['Symbol'].tolist()[:100]] # Erstmal Top 100 zum Testen
-    except: return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR"]
 
 def get_analyst_conviction(info):
     try:
@@ -105,9 +93,18 @@ def get_analyst_conviction(info):
         return f"⚖️ Neutral ({upside:.0f}%)", "#7f8c8d"
     except: return "🔍 Check nötig", "#7f8c8d"
 
-# --- SIDEBAR ---
+def get_openclaw_analysis(symbol):
+    return "Neutral", "🤖 OpenClaw: Standby...", 0.5 # Vereinfacht für Stabilität
+
+@st.cache_data(ttl=86400)
+def get_combined_watchlist():
+    return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR", "MU", "AVGO", "PLTR"]
+
+# --- APP SETUP ---
+st.set_page_config(page_title="CapTrader AI", layout="wide")
+
 with st.sidebar:
-    st.header("🛡️ Scanner-Filter")
+    st.header("🛡️ Filter")
     otm_puffer_slider = st.slider("Puffer (%)", 3, 25, 15)
     min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 0, 100, 12)
     min_stock_price, max_stock_price = st.slider("Preis ($)", 0, 1000, (40, 600))
@@ -115,27 +112,16 @@ with st.sidebar:
     only_uptrend = st.checkbox("Nur Aufwärtstrend", value=False)
     test_modus = st.checkbox("🛠️ Simulation", value=True)
 
-# --- MARKT-MONITORING ---
-def get_market_data():
-    try:
-        # Hier nutzen wir die Session für Stabilität
-        vix = yf.Ticker("^VIX", session=st.session_state.secure_session)
-        ndx = yf.Ticker("^NDX", session=st.session_state.secure_session)
-        v_val = vix.fast_info.last_price
-        n_val = ndx.fast_info.last_price
-        return n_val, v_val
-    except: return 0, 20
-
-st.markdown("## 🌍 Globales Markt-Monitoring")
-cp_ndq, vix_val = get_market_data()
-m_color = "#e74c3c" if vix_val > 25 else "#27ae60"
-m_text = "🚨 MARKT-ALARM" if vix_val > 25 else "✅ STABIL"
-
-st.markdown(f'<div style="background-color: {m_color}; color: white; padding: 10px; border-radius: 10px; text-align: center;"><h3>{m_text}</h3></div>', unsafe_allow_html=True)
-
+# --- MARKT MONITOR ---
+st.markdown("## 🌍 Markt-Monitor")
 col_m1, col_m2 = st.columns(2)
-col_m1.metric("Nasdaq 100", f"{cp_ndq:,.0f}")
-col_m2.metric("VIX (Angst)", f"{vix_val:.2f}")
+try:
+    vix = get_tk("^VIX").fast_info.last_price
+    ndq = get_tk("^NDX").fast_info.last_price
+    col_m1.metric("Nasdaq 100", f"{ndq:,.0f}")
+    col_m2.metric("VIX", f"{vix:.2f}", delta="STABIL" if vix < 20 else "VOLATIL", delta_color="inverse")
+except:
+    st.warning("Marktdaten temporär nicht erreichbar.")
 st.markdown("---")
 
 # --- SEKTION 2: PROFI-SCANNER (BATCH-OPTIMIERT & STABILISIERT) ---
@@ -578,5 +564,6 @@ if symbol_input:
 # --- FOOTER (Ganz am Ende der Datei) ---
 st.divider()
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Daten: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
+
 
 
