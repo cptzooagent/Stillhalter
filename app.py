@@ -589,8 +589,8 @@ if symbol_input:
                             st.warning("Keine passenden Strikes mit den gewählten Kriterien gefunden.")
                     else:
                         st.error("Keine Optionsdaten für dieses Datum verfügbar.")
-                        
-st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
+                        st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
+
 
 
 
