@@ -134,7 +134,7 @@ m_color = "#e74c3c" if vix > 25 else "#27ae60"
 st.markdown(f'<div style="background:{m_color};color:white;padding:15px;border-radius:10px;text-align:center;"><h3>{"ALARM" if vix > 25 else "STABIL"} (VIX: {vix:.2f})</h3></div>', unsafe_allow_html=True)
 st.columns(3)[0].metric("Nasdaq 100", f"{ndx_price:,.0f}", f"{dist_ndx:.1f}%")
 
-# --- SEKTION 2: PROFI-SCANNER (OPTIMIERT MIT FAST_INFO) ---
+# --- SEKTION 2: PROFI-SCANNER (DESIGN-REPLICA) ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
@@ -145,7 +145,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     p_min_cap = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
-    with st.spinner("Scanner analysiert Markt mit High-Speed Engine..."):
+    with st.spinner("Scanner analysiert Markt..."):
         ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else get_combined_watchlist()
         progress_bar = st.progress(0)
         all_results = []
@@ -153,64 +153,54 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         def check_single_stock(symbol):
             try:
                 tk = get_tk(symbol)
-                # 1. BLITZ-CHECK (fast_info)
                 fi = tk.fast_info
                 price = fi['last_price']
-                m_cap = fi['market_cap']
+                if fi['market_cap'] < p_min_cap or not (min_stock_price <= price <= max_stock_price): return None
                 
-                if m_cap < p_min_cap or not (min_stock_price <= price <= max_stock_price): 
-                    return None
-                
-                # 2. TECHNIK-CHECK (history)
                 res_full = get_stock_data_full(symbol)
                 if not res_full: return None
                 _, dates, earn, rsi, uptrend, _, pivots = res_full
-                
                 if only_uptrend and not uptrend: return None
                 
-                # 3. OPTIONEN-FILTERUNG
                 valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
                 if not valid_dates: return None
                 
                 target_date = valid_dates[0]
                 chain = tk.option_chain(target_date).puts
                 target_strike = price * (1 - p_puffer)
-                opts = chain[(chain['strike'] <= target_strike) & (chain['openInterest'] > 1)].sort_values('strike', ascending=False)
-                
+                opts = chain[(chain['strike'] <= target_strike)].sort_values('strike', ascending=False)
                 if opts.empty: return None
                 o = opts.iloc[0]
 
-                # RENDITE & RISIKO
-                fair_price = (o['bid'] + o['ask']) / 2 if o['bid'] > 0 else o['lastPrice']
-                days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
-                y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
-                
-                if y_pa > 150 or y_pa < p_min_yield: return None
-
+                # --- MATHEMATIK & SICHERHEIT ---
                 iv = o.get('impliedVolatility', 0.4)
-                exp_move_pct = (iv * np.sqrt(days_to_exp / 365)) * 100
-                current_puffer = ((price - o['strike']) / price) * 100
-                em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
-                delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv)
+                if iv is None or iv <= 0.01: iv = 0.4 
+                days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
+                T_years = max(1, days_to_exp) / 365
                 
-                # 4. LAZY LOADING FÜR ANALYSTEN (Nur wenn Trade-Kandidat!)
-                info = tk.info # Hier einmalig der langsame Call
-                analyst_txt, analyst_col = get_analyst_conviction(info)
+                delta_val = calculate_bsm_delta(price, o['strike'], T_years, iv, option_type='put')
+                em_pct = (iv * np.sqrt(T_years)) * 100
+                p_pct = ((price - o['strike']) / price) * 100
+                em_safety = p_pct / em_pct if em_pct > 0 else 0
                 
-                stars_count = 3 if "HYPER" in analyst_txt else 2 if "Stark" in analyst_txt else 1
+                fair_price = (o['bid'] + o['ask']) / 2 if o['bid'] > 0 else o['lastPrice']
+                y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
+                if y_pa < p_min_yield or y_pa > 150: return None
+
+                # Lazy Loading Analysten
+                info = tk.info 
+                anal_txt, anal_col = get_analyst_conviction(info)
 
                 return {
                     'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
-                    'puffer': current_puffer, 'bid': fair_price, 'rsi': rsi, 'earn': earn if earn else "---", 
-                    'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip", 
-                    'delta': abs(delta_val), 'sent_icon': "🟢", 
-                    'stars_str': "⭐" * stars_count,
-                    'analyst_label': analyst_txt, 'analyst_color': analyst_col, 
-                    'mkt_cap': m_cap / 1e9, 'em_pct': exp_move_pct, 'em_safety': em_safety
+                    'puffer': p_pct, 'mid': fair_price, 'rsi': rsi, 'earn': earn if earn else "---", 
+                    'tage': days_to_exp, 'status': "Trend" if uptrend else "Dip", 
+                    'delta': abs(delta_val), 'stars': "⭐" * (3 if "HYPER" in anal_txt else 2 if "Stark" in anal_txt else 1),
+                    'anal_txt': anal_txt, 'anal_col': anal_col, 'mkt_cap': fi['market_cap'] / 1e9, 
+                    'em_pct': em_pct, 'em_safety': em_safety, 'target_date': target_date
                 }
             except: return None
 
-        # PARALLELE VERARBEITUNG
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
             for i, future in enumerate(concurrent.futures.as_completed(futures)):
@@ -221,53 +211,67 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
         st.rerun()
 
-# --- ANZEIGE DER KACHELN ---
+# --- ANZEIGE DES DESIGNS (BILD-REPLICA) ---
 if st.session_state.profi_scan_results:
-    res_list = st.session_state.profi_scan_results
-    st.subheader(f"🎯 Top-Setups ({len(res_list)} Treffer)")
+    st.subheader(f"🎯 Top-Setups nach Qualität ({len(st.session_state.profi_scan_results)} Treffer)")
     cols = st.columns(4)
-    heute_dt = datetime.now()
-    
-    for idx, res in enumerate(res_list):
+    for idx, res in enumerate(st.session_state.profi_scan_results):
         with cols[idx % 4]:
-            is_earning_risk = False
-            earn_str = res.get('earn', "---")
-            if earn_str != "---":
+            # Earnings Check für Rahmenfarbe
+            is_earn = False
+            if res['earn'] != "---":
                 try:
-                    parts = earn_str.split('.')
-                    earn_date = datetime(heute_dt.year, int(parts[1]), int(parts[0]))
-                    if earn_date < heute_dt: earn_date = datetime(heute_dt.year + 1, int(parts[1]), int(parts[0]))
-                    if 0 <= (earn_date - heute_dt).days <= 14: is_earning_risk = True
+                    e_dt = datetime.strptime(res['earn'] + str(datetime.now().year), "%d.%m.%Y")
+                    if 0 <= (e_dt - datetime.now()).days <= 14: is_earn = True
                 except: pass
-
-            card_border = "2px solid #ef4444" if is_earning_risk else "1px solid #e5e7eb"
-            html_code = f"""
-            <div style="background: white; border: {card_border}; border-radius: 12px; padding: 15px; margin-bottom: 15px; height: 500px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
-                <div style="display: flex; justify-content: space-between;">
-                    <span style="font-weight: 800; font-size: 1.1em;">{res['symbol']} {res['stars_str']}</span>
-                    <span style="font-size: 0.8em; color: #6b7280;">{res['status']}</span>
+            
+            border_style = "2px solid #ef4444; box-shadow: 0 0 15px rgba(239,68,68,0.2);" if is_earn else "1px solid #e5e7eb;"
+            
+            st.markdown(f"""
+            <div style="background: white; border: {border_style} border-radius: 15px; padding: 20px; margin-bottom: 20px; font-family: 'Inter', sans-serif; color: #1f2937;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                    <span style="font-size: 1.4em; font-weight: 800;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{res['stars']}</span></span>
+                    <span style="font-size: 0.75em; font-weight: 700; color: #10b981; background: #ecfdf5; padding: 3px 10px; border-radius: 20px;">● {res['status']}</span>
                 </div>
-                <div style="margin: 15px 0; text-align: center;">
-                    <div style="font-size: 0.7em; color: #6b7280; text-transform: uppercase;">Yield p.a.</div>
-                    <div style="font-size: 2em; font-weight: 900; color: #111827;">{res['y_pa']:.1f}%</div>
+                
+                <div style="font-size: 0.7em; color: #9ca3af; font-weight: 700; text-transform: uppercase; margin-top: 10px;">Yield p.a.</div>
+                <div style="font-size: 2.4em; font-weight: 900; color: #111827; margin-bottom: 15px;">{res['y_pa']:.1f}%</div>
+                
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+                    <div style="border-left: 3px solid #8b5cf6; padding-left: 10px;">
+                        <div style="font-size: 0.65em; color: #9ca3af;">Strike</div>
+                        <div style="font-size: 1em; font-weight: 700;">{res['strike']:.1f}$</div>
+                        <div style="font-size: 0.65em; color: #9ca3af; margin-top: 5px;">Puffer</div>
+                        <div style="font-size: 1em; font-weight: 700;">{res['puffer']:.1f}%</div>
+                    </div>
+                    <div style="border-left: 3px solid #f59e0b; padding-left: 10px;">
+                        <div style="font-size: 0.65em; color: #9ca3af;">Mid</div>
+                        <div style="font-size: 1em; font-weight: 700;">{res['mid']:.2f}$</div>
+                        <div style="font-size: 0.65em; color: #9ca3af; margin-top: 5px;">Delta</div>
+                        <div style="font-size: 1em; font-weight: 700; color: #10b981;">{res['delta']:.2f}</div>
+                    </div>
                 </div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 0.85em;">
-                    <div>Strike: <b>{res['strike']:.1f}$</b></div>
-                    <div>Puffer: <b>{res['puffer']:.1f}%</b></div>
-                    <div>Delta: <b style="color: #10b981;">{res['delta']:.2f}</b></div>
-                    <div>Tage: <b>{res['tage']}d</b></div>
+                
+                <div style="background: #fffbeb; border: 1px dashed #f59e0b; border-radius: 10px; padding: 12px; font-size: 0.75em; margin-bottom: 15px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                        <span style="color: #92400e;">Stat. Erwartung (EM):</span>
+                        <span style="font-weight: 800; color: #f59e0b;">±{res['em_pct']:.1f}%</span>
+                    </div>
+                    <div style="color: #92400e;">Sicherheit: <b>{res['em_safety']:.1f}x EM</b></div>
                 </div>
-                <div style="background: #f9fafb; padding: 10px; border-radius: 8px; margin-top: 15px; font-size: 0.8em;">
-                    EM Sicherheit: <b>{res['em_safety']:.1f}x</b><br>
-                    RSI: <b>{int(res['rsi'])}</b> | Cap: <b>{res['mkt_cap']:.0f}B</b><br>
-                    Earnings: <b style="color: {'#ef4444' if is_earning_risk else '#111827'};">{res['earn']}</b>
+                
+                <div style="display: flex; justify-content: space-between; font-size: 0.7em; color: #6b7280; font-weight: 600; margin-bottom: 15px;">
+                    <span>⏳ {res['tage']}d</span>
+                    <span>RSI: {int(res['rsi'])}</span>
+                    <span>{res['mkt_cap']:.0f}B</span>
+                    <span>📅 {res['earn']}</span>
                 </div>
-                <div style="margin-top: 15px; padding: 8px; border-radius: 6px; background: {res['analyst_color']}20; color: {res['analyst_color']}; font-weight: bold; font-size: 0.75em; text-align: center;">
-                    {res['analyst_label']}
+                
+                <div style="background: {res['anal_col']}10; color: {res['anal_col']}; border: 1px solid {res['anal_col']}30; padding: 8px; border-radius: 8px; text-align: center; font-size: 0.7em; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">
+                    🚀 {res['anal_txt']}
                 </div>
             </div>
-            """
-            st.markdown(html_code, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
 
 # --- SEKTION 2: DEPOT-MANAGER (OPTIMIERT) ---
 st.markdown("---")
@@ -377,3 +381,4 @@ if symbol_input:
 
 st.divider()
 st.caption(f"Engine: Fast-Info Hybrid | Letztes Update: {datetime.now().strftime('%H:%M:%S')}")
+
