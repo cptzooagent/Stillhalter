@@ -135,21 +135,19 @@ st.markdown(f'<div style="background:{m_color};color:white;padding:15px;border-r
 st.columns(3)[0].metric("Nasdaq 100", f"{ndx_price:,.0f}", f"{dist_ndx:.1f}%")
 
 # ==========================================
-# --- BLOCK 1: PROFI-SCANNER (STABILITÄTS-UPGRADE) ---
+# --- BLOCK 1: PROFI-SCANNER (NEWS-REPAIR) ---
 # ==========================================
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
-    # Filter-Werte sicher abrufen
     p_puffer = otm_puffer_slider / 100 
     p_min_yield = min_yield_pa
     p_min_cap = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
     with st.spinner("Scanner analysiert Markt & News..."):
-        # Liste der Ticker
         ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else get_combined_watchlist()
         
         progress_bar = st.progress(0)
@@ -158,73 +156,70 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         def check_single_stock(symbol):
             try:
                 tk = get_tk(symbol)
-                # Direktes Dictionary-Get gegen KeyErrors
                 info = tk.info if tk.info else {}
                 price = info.get('currentPrice')
                 if not price: return None
                 
-                # Market Cap Check
+                # Basis-Filter
                 if info.get('marketCap', 0) < p_min_cap: return None
                 
-                # Marktdaten holen
+                # Marktdaten (Puffer/RSI/Trend)
                 stock_res = get_stock_data_full(symbol)
-                if not stock_res or not stock_res[1]: return None # Keine Datumsangaben vorhanden
+                if not stock_res or not stock_res[1]: return None
                 
+                # --- NEWS-LOGIK VERBESSERT ---
+                # Wir versuchen die News gezielt zu holen
+                s_status, s_msg, s_score = get_openclaw_analysis(symbol)
+                
+                # Falls "Keine Daten" kommt, versuchen wir ein Fallback auf yfinance news
+                if s_status == "Neutral" and "Keine" in s_msg:
+                    raw_news = tk.news
+                    if raw_news:
+                        s_msg = raw_news[0].get('title', "Marktanalyse läuft...")
+                        # Optional: Hier könnte man eine Mini-Logik einbauen, die nach "AI" scannt
+                
+                # Option-Check
                 dates = stock_res[1]
-                earn  = stock_res[2] if len(stock_res) > 2 else "---"
-                rsi   = stock_res[3] if len(stock_res) > 3 else 50
-                trend_ok = stock_res[4] if len(stock_res) > 4 else True
-                
-                # OpenClaw News (mit Fallback)
-                try:
-                    sent_status, sent_msg, _ = get_openclaw_analysis(symbol)
-                except:
-                    sent_status, sent_msg = "Neutral", "Keine News-Daten verfügbar."
-                
-                # Options-Laufzeiten filtern
                 valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 48]
                 if not valid_dates: return None
                 
-                # Beste Option finden
                 target_date = valid_dates[0]
                 chain = tk.option_chain(target_date).puts
                 target_strike = price * (1 - p_puffer)
-                opts = chain[(chain['strike'] <= target_strike) & (chain['openInterest'] >= 0)].sort_values('strike', ascending=False)
+                opts = chain[(chain['strike'] <= target_strike)].sort_values('strike', ascending=False)
                 
                 if opts.empty: return None
                 o = opts.iloc[0]
 
-                # Rendite & EM
+                # Rendite
                 fair_price = (o.get('bid', 0) + o.get('ask', 0)) / 2
-                if fair_price <= 0: return None
+                if fair_price <= 0.05: return None # Filter für zu billige Optionen
                 
                 days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
-                
-                # Wichtig: Check, ob Rendite passt
                 if y_pa < p_min_yield: return None
 
-                # Analysten-Label
+                # Wachstum & EM (Lila Box)
                 a_txt, a_col = get_analyst_conviction(info)
                 iv = o.get('impliedVolatility', 0.4)
-                em_val = 1.2 * iv * price * (days_to_exp/365)**0.5
-                em_pct = (em_val / price) * 100 if price > 0 else 0
+                em_val = 1.25 * iv * price * (days_to_exp/365)**0.5
+                em_pct = (em_val / price) * 100
 
                 return {
                     'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
                     'puffer': ((price - o['strike']) / price) * 100, 'bid': fair_price, 
-                    'rsi': rsi, 'earn': earn, 'tage': days_to_exp, 
-                    'status': "Trend" if trend_ok else "Dip", 
+                    'rsi': stock_res[3], 'earn': stock_res[2], 'tage': days_to_exp, 
+                    'status': "Trend" if stock_res[4] else "Dip", 
                     'delta': abs(o.get('delta', 0.15)), 
-                    'sent_icon': "🟢" if sent_status == "Bullish" else "🔴" if sent_status == "Bearish" else "🟡",
-                    'sent_status': sent_status, 'news_snippet': sent_msg,
-                    'stars_str': "⭐" * (3 if "HYPER" in a_txt else 2),
+                    'sent_icon': "🟢" if s_status == "Bullish" else "🔴" if s_status == "Bearish" else "🟡",
+                    'sent_status': s_status, 'news_snippet': s_msg,
+                    'stars_str': "⭐" * (3 if "HYPER" in a_txt or "Stark" in a_txt else 2),
                     'analyst_label': a_txt, 'analyst_color': a_col,
                     'em_pct': em_pct, 'em_safety': (price - o['strike']) / em_val if em_val > 0 else 1.0
                 }
-            except Exception: return None
+            except: return None
 
-        # Multithreading
+        # Multithreading (8 Worker für Speed)
         with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
             futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
             for i, future in enumerate(concurrent.futures.as_completed(futures)):
@@ -244,7 +239,11 @@ if st.session_state.profi_scan_results:
     
     for idx, res in enumerate(res_list):
         with cols[idx % 4]:
-            # Earnings-Warner Logik (Rote Umrandung)
+            # News-Farbe
+            s_status = res.get('sent_status', 'Neutral')
+            n_color = "#27ae60" if s_status == "Bullish" else "#e74c3c" if s_status == "Bearish" else "#f59e0b"
+            
+            # Earnings
             is_risk = False
             e_str = res.get('earn', "---")
             if e_str and "." in e_str:
@@ -255,43 +254,41 @@ if st.session_state.profi_scan_results:
 
             b_style = "3px solid #ef4444" if is_risk else "1px solid #e5e7eb"
             s_style = "0 10px 15px -3px rgba(239, 68, 68, 0.15)" if is_risk else "0 4px 6px -1px rgba(0, 0, 0, 0.1)"
-            n_color = "#27ae60" if res.get('sent_status') == "Bullish" else "#e74c3c" if res.get('sent_status') == "Bearish" else "#f59e0b"
 
-            # HTML Template
             html_code = f"""
 <div style="background: white; border: {b_style}; border-radius: 16px; padding: 20px; margin-bottom: 20px; box-shadow: {s_style}; font-family: sans-serif; height: 650px; display: flex; flex-direction: column;">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-<span style="font-size: 1.4em; font-weight: 800; color: #111827;">{res.get('symbol')} <span style="color: #f59e0b; font-size: 0.8em;">{res.get('stars_str', '⭐')}</span></span>
-<span style="font-size: 0.75em; font-weight: 700; color: #3b82f6; background: #ebf5ff; padding: 4px 10px; border-radius: 8px;">{res.get('status')}</span>
+<span style="font-size: 1.4em; font-weight: 800; color: #111827;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{res['stars_str']}</span></span>
+<span style="font-size: 0.75em; font-weight: 700; color: #3b82f6; background: #ebf5ff; padding: 4px 10px; border-radius: 8px;">{res['status']}</span>
 </div>
 <div style="margin: 12px 0;">
 <div style="font-size: 0.7em; color: #6b7280; font-weight: 700; text-transform: uppercase;">Yield p.a.</div>
-<div style="font-size: 2.2em; font-weight: 900; color: #111827; line-height: 1;">{res.get('y_pa', 0):.1f}%</div>
+<div style="font-size: 2.2em; font-weight: 900; color: #111827; line-height: 1;">{res['y_pa']:.1f}%</div>
 </div>
 <div style="background: {n_color}10; border-left: 4px solid {n_color}; padding: 12px; border-radius: 8px; margin-bottom: 15px;">
-<div style="font-size: 0.75em; font-weight: 800; color: {n_color}; margin-bottom: 4px;">{res.get('sent_icon')} OPENCLAW: {res.get('sent_status', 'NEUTRAL').upper()}</div>
-<div style="font-size: 0.7em; color: #374151; line-height: 1.4; height: 3.2em; overflow: hidden;">{res.get('news_snippet', 'Warte auf News-Update...')}</div>
+<div style="font-size: 0.75em; font-weight: 800; color: {n_color}; margin-bottom: 4px;">{res['sent_icon']} OPENCLAW: {s_status.upper()}</div>
+<div style="font-size: 0.7em; color: #374151; line-height: 1.4; height: 3.2em; overflow: hidden;">{res['news_snippet']}</div>
 </div>
 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px;">
-<div style="border-left: 3px solid #8b5cf6; padding-left: 10px;"><div style="font-size: 0.65em; color: #6b7280; font-weight: 600;">Strike</div><div style="font-size: 1em; font-weight: 700;">{res.get('strike', 0):.1f}$</div></div>
-<div style="border-left: 3px solid #f59e0b; padding-left: 10px;"><div style="font-size: 0.65em; color: #6b7280; font-weight: 600;">Mid</div><div style="font-size: 1em; font-weight: 700;">{res.get('bid', 0):.2f}$</div></div>
-<div style="border-left: 3px solid #3b82f6; padding-left: 10px;"><div style="font-size: 0.65em; color: #6b7280; font-weight: 600;">Puffer</div><div style="font-size: 1em; font-weight: 700;">{res.get('puffer', 0):.1f}%</div></div>
-<div style="border-left: 3px solid #10b981; padding-left: 10px;"><div style="font-size: 0.65em; color: #6b7280; font-weight: 600;">Delta</div><div style="font-size: 1em; font-weight: 700; color: #10b981;">{res.get('delta', 0):.2f}</div></div>
+<div style="border-left: 3px solid #8b5cf6; padding-left: 10px;"><div style="font-size: 0.65em; color: #6b7280; font-weight: 600;">Strike</div><div style="font-size: 1em; font-weight: 700;">{res['strike']:.1f}$</div></div>
+<div style="border-left: 3px solid #f59e0b; padding-left: 10px;"><div style="font-size: 0.65em; color: #6b7280; font-weight: 600;">Mid</div><div style="font-size: 1em; font-weight: 700;">{res['bid']:.2f}$</div></div>
+<div style="border-left: 3px solid #3b82f6; padding-left: 10px;"><div style="font-size: 0.65em; color: #6b7280; font-weight: 600;">Puffer</div><div style="font-size: 1em; font-weight: 700;">{res['puffer']:.1f}%</div></div>
+<div style="border-left: 3px solid #10b981; padding-left: 10px;"><div style="font-size: 0.65em; color: #6b7280; font-weight: 600;">Delta</div><div style="font-size: 1em; font-weight: 700; color: #10b981;">{res.get('delta', 0.15):.2f}</div></div>
 </div>
 <div style="background: #fffbeb; border: 1px dashed #f59e0b; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
 <div style="display: flex; justify-content: space-between; font-size: 0.7em; font-weight: 700;">
-<span style="color: #92400e;">Stat. Erwartung (EM):</span><span style="color: #b45309;">±{res.get('em_pct', 0):.1f}%</span>
+<span style="color: #92400e;">Stat. Erwartung (EM):</span><span style="color: #b45309;">±{res['em_pct']:.1f}%</span>
 </div>
-<div style="font-size: 0.65em; color: #b45309; margin-top: 2px;">Sicherheit: <b>{res.get('em_safety', 1):.1f}x EM</b></div>
+<div style="font-size: 0.65em; color: #b45309; margin-top: 2px;">Sicherheit: <b>{res['em_safety']:.1f}x EM</b></div>
 </div>
 <div style="margin-top: auto;">
 <div style="display: flex; justify-content: space-between; font-size: 0.75em; color: #4b5563; margin-bottom: 12px; background: #f9fafb; padding: 6px 10px; border-radius: 8px;">
-<span>⏳ <b>{res.get('tage')}d</b></span>
-<span style="font-weight: 700;">RSI: {int(res.get('rsi', 0))}</span>
+<span>⏳ <b>{res['tage']}d</b></span>
+<span style="font-weight: 700;">RSI: {int(res['rsi'])}</span>
 <span style="font-weight: 800; color: {'#ef4444' if is_risk else '#6b7280'};">{'⚠️' if is_risk else '🗓️'} {e_str}</span>
 </div>
-<div style="background: {res.get('analyst_color', '#9b59b6')}15; color: {res.get('analyst_color', '#9b59b6')}; padding: 12px; border-radius: 10px; font-size: 0.75em; font-weight: 800; text-align: center; border-left: 5px solid {res.get('analyst_color', '#9b59b6')};">
-{res.get('analyst_label', 'HYPER-GROWTH ANALYSE')}
+<div style="background: {res['analyst_color']}15; color: {res['analyst_color']}; padding: 12px; border-radius: 10px; font-size: 0.75em; font-weight: 800; text-align: center; border-left: 5px solid {res['analyst_color']};">
+{res['analyst_label']}
 </div>
 </div>
 </div>
@@ -469,6 +466,7 @@ if symbol_input:
             st.error(f"Fehler bei {symbol_input}: {e}")
 
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🚀 Live'}")
+
 
 
 
