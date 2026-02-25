@@ -135,7 +135,7 @@ st.markdown(f'<div style="background:{m_color};color:white;padding:15px;border-r
 st.columns(3)[0].metric("Nasdaq 100", f"{ndx_price:,.0f}", f"{dist_ndx:.1f}%")
 
 # ==========================================
-# --- BLOCK 1: PROFI-SCANNER (FINALE VERSION) ---
+# --- BLOCK 1: PROFI-SCANNER (REPAIR-VERSION) ---
 # ==========================================
 
 if 'profi_scan_results' not in st.session_state:
@@ -160,15 +160,23 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 
                 price = info.get('currentPrice', 0)
                 m_cap = info.get('marketCap', 0)
-                if m_cap < p_min_cap or not (min_stock_price <= price <= max_stock_price): return None
+                if m_cap < p_min_cap: return None
                 
-                res_full = get_stock_data_full(symbol)
-                if not res_full or res_full[0] is None: return None
+                # --- WICHTIGER FIX FÜR BILD 91 (UNPACKING) ---
+                stock_res = get_stock_data_full(symbol)
+                if not stock_res or stock_res[0] is None: return None
                 
-                # Entpacken (angepasst an deine get_stock_data_full)
-                _, dates, earn, rsi, uptrend, _, atr, pivots = res_full
+                # Wir weisen die Werte sicher zu, egal wie viele kommen
+                dates = stock_res[1]
+                earn = stock_res[2]
+                rsi = stock_res[3]
+                uptrend = stock_res[4]
+                atr = stock_res[6] if len(stock_res) > 6 else 0
+                
+                # OpenClaw News
                 sent_status, sent_msg, sent_score = get_openclaw_analysis(symbol)
                 
+                # Laufzeit-Check
                 valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
                 if not valid_dates: return None
                 
@@ -183,12 +191,13 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 fair_price = (o['bid'] + o['ask']) / 2
                 days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
+                
                 if y_pa < p_min_yield: return None
 
                 iv = o.get('impliedVolatility', 0.4)
                 delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv)
                 
-                # Wachstums-Label (Lila Box Daten)
+                # Wachstums-Label (Lila Box)
                 analyst_txt, analyst_col = get_analyst_conviction(info)
                 
                 # EM Berechnung
@@ -207,8 +216,12 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     'analyst_label': analyst_txt, 'analyst_color': analyst_col,
                     'em_pct': em_pct, 'em_safety': (price - o['strike']) / em_val if em_val > 0 else 1.0
                 }
-            except: return None
+            except Exception as e:
+                # Debugging im Hintergrund (kannst du später entfernen)
+                # st.write(f"Fehler bei {symbol}: {e}") 
+                return None
 
+        # Multithreading
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
             for i, future in enumerate(concurrent.futures.as_completed(futures)):
@@ -217,9 +230,13 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 progress_bar.progress((i + 1) / len(ticker_liste))
 
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
-        st.rerun()
+        
+        if not all_results:
+            st.warning("Keine Treffer gefunden. Prüfe die Filter-Einstellungen (Yield, Puffer, Market Cap).")
+        else:
+            st.rerun()
 
-# --- ANZEIGE (BÜNDIG LINKS KOPIEREN) ---
+# --- ANZEIGE-TEIL (MUSS BÜNDIG LINKS STEHEN) ---
 if st.session_state.profi_scan_results:
     res_list = st.session_state.profi_scan_results
     st.subheader(f"🎯 Top-Setups nach Qualität ({len(res_list)} Treffer)")
@@ -228,11 +245,9 @@ if st.session_state.profi_scan_results:
     
     for idx, res in enumerate(res_list):
         with cols[idx % 4]:
-            # News-Logik
             s_status = res.get('sent_status', 'Neutral')
             n_color = "#27ae60" if s_status == "Bullish" else "#e74c3c" if s_status == "Bearish" else "#f59e0b"
             
-            # Earnings-Warner (Rote Umrandung Bild 2)
             is_risk = False
             e_str = res.get('earn', "---")
             if e_str and e_str != "---":
@@ -455,6 +470,7 @@ if symbol_input:
             st.error(f"Fehler bei {symbol_input}: {e}")
 
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🚀 Live'}")
+
 
 
 
