@@ -7,8 +7,7 @@ from datetime import datetime, timedelta
 import time
 from requests import Session
 
-# --- 1. ABSOLUTE INITIALISIERUNG ---
-# Verhindert den AttributeError: secure_session
+# --- 1. ABSOLUTE INITIALISIERUNG (Gegen AttributeError) ---
 if 'secure_session' not in st.session_state:
     session = Session()
     session.headers.update({
@@ -17,53 +16,10 @@ if 'secure_session' not in st.session_state:
     st.session_state.secure_session = session
 
 def get_tk(symbol):
+    """Sicherer Ticker-Aufruf."""
     return yf.Ticker(symbol, session=st.session_state.secure_session)
 
-# --- 2. DIE REPARATUR FÜR DEIN COCKPIT (get_stock_data_full) ---
-# Dein Cockpit (Bild 2) braucht diese Funktion zwingend zurück!
-def get_stock_data_full(symbol):
-    """Holt alle Daten für ein einzelnes Symbol (wichtig für Cockpit & Depot)."""
-    try:
-        tk = get_tk(symbol)
-        # Schneller Abruf der Historie
-        hist = tk.history(period="150d")
-        if hist.empty: return None, None, None, None, None, None, None, None
-        
-        price = hist['Close'].iloc[-1]
-        
-        # RSI & Trend
-        rsi_series = calculate_rsi(hist['Close'])
-        rsi = rsi_series.iloc[-1]
-        sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1] if len(hist) >= 200 else hist['Close'].mean()
-        uptrend = price > sma_200
-        
-        # ATR für Volatilität
-        high_low = hist['High'] - hist['Low']
-        high_cp = np.abs(hist['High'] - hist['Close'].shift())
-        low_cp = np.abs(hist['Low'] - hist['Close'].shift())
-        tr = pd.concat([high_low, high_cp, low_cp], axis=1).max(axis=1)
-        atr = tr.rolling(14).mean().iloc[-1]
-        
-        # Earnings & Pivots
-        earn = "---"
-        try:
-            cal = tk.calendar
-            if cal is not None and not cal.empty:
-                earn = cal.iloc[0, 0].strftime('%d.%m.')
-        except: pass
-        
-        pivots = calculate_pivots(symbol, batch_hist=hist)
-        
-        return price, tk.options, earn, rsi, uptrend, False, atr, pivots
-    except Exception as e:
-        return None
-
-# --- 3. MATHE & ANALYSE ---
-def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
-    if T <= 0 or sigma <= 0: return 0
-    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
-
+# --- 2. HILFSFUNKTIONEN ---
 def calculate_rsi(data, window=14):
     if len(data) < window + 1: return pd.Series([50] * len(data))
     delta = data.diff()
@@ -75,13 +31,43 @@ def calculate_rsi(data, window=14):
 
 def calculate_pivots(symbol, batch_hist=None):
     try:
-        hist_d = batch_hist if batch_hist is not None else get_tk(symbol).history(period="5d")
-        if len(hist_d) < 2: return None
-        last_day = hist_d.iloc[-2]
+        hist = batch_hist if batch_hist is not None else get_tk(symbol).history(period="5d")
+        if hist.empty or len(hist) < 2: return None
+        last_day = hist.iloc[-2]
         h, l, c = last_day['High'], last_day['Low'], last_day['Close']
         p = (h + l + c) / 3
         return {"P": p, "S1": 2*p-h, "S2": p-(h-l), "R2": p+(h-l), "W_S2": (p-(h-l))*0.98, "W_R2": (p+(h-l))*1.02}
     except: return None
+
+# --- 3. DIE REPARATUR FÜR DEIN COCKPIT (Gegen NameError) ---
+def get_stock_data_full(symbol):
+    """Wird vom Cockpit und Depot-Manager benötigt."""
+    try:
+        tk = get_tk(symbol)
+        hist = tk.history(period="150d")
+        if hist.empty: return None
+        
+        price = hist['Close'].iloc[-1]
+        rsi = calculate_rsi(hist['Close']).iloc[-1]
+        sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1] if len(hist) >= 200 else hist['Close'].mean()
+        uptrend = price > sma_200
+        
+        # ATR Berechnung
+        tr = pd.concat([hist['High']-hist['Low'], np.abs(hist['High']-hist['Close'].shift()), np.abs(hist['Low']-hist['Close'].shift())], axis=1).max(axis=1)
+        atr = tr.rolling(14).mean().iloc[-1]
+        
+        # Earnings
+        earn = "---"
+        try:
+            cal = tk.calendar
+            if cal is not None and not cal.empty:
+                earn = cal.iloc[0, 0].strftime('%d.%m.')
+        except: pass
+        
+        pivots = calculate_pivots(symbol, batch_hist=hist)
+        return price, tk.options, earn, rsi, uptrend, False, atr, pivots
+    except:
+        return None
 
 def get_analyst_conviction(info):
     try:
@@ -93,16 +79,22 @@ def get_analyst_conviction(info):
         return f"⚖️ Neutral ({upside:.0f}%)", "#7f8c8d"
     except: return "🔍 Check nötig", "#7f8c8d"
 
+def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
+    if T <= 0 or sigma <= 0: return 0
+    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
+
 def get_openclaw_analysis(symbol):
-    return "Neutral", "🤖 OpenClaw: Standby...", 0.5 # Vereinfacht für Stabilität
+    return "Neutral", "🤖 Standby", 0.5
 
 @st.cache_data(ttl=86400)
 def get_combined_watchlist():
-    return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR", "MU", "AVGO", "PLTR"]
+    return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "MU", "AVGO", "PLTR", "APP", "NET", "CRWD"]
 
-# --- APP SETUP ---
+# --- APP START ---
 st.set_page_config(page_title="CapTrader AI", layout="wide")
 
+# Sidebar
 with st.sidebar:
     st.header("🛡️ Filter")
     otm_puffer_slider = st.slider("Puffer (%)", 3, 25, 15)
@@ -112,16 +104,18 @@ with st.sidebar:
     only_uptrend = st.checkbox("Nur Aufwärtstrend", value=False)
     test_modus = st.checkbox("🛠️ Simulation", value=True)
 
-# --- MARKT MONITOR ---
+# Markt-Monitor (Fix für 'NoneType' Error)
 st.markdown("## 🌍 Markt-Monitor")
 col_m1, col_m2 = st.columns(2)
 try:
-    vix = get_tk("^VIX").fast_info.last_price
-    ndq = get_tk("^NDX").fast_info.last_price
+    vix_tk = get_tk("^VIX")
+    vix = vix_tk.history(period="1d")['Close'].iloc[-1]
+    ndq_tk = get_tk("^NDX")
+    ndq = ndq_tk.history(period="1d")['Close'].iloc[-1]
     col_m1.metric("Nasdaq 100", f"{ndq:,.0f}")
-    col_m2.metric("VIX", f"{vix:.2f}", delta="STABIL" if vix < 20 else "VOLATIL", delta_color="inverse")
+    col_m2.metric("VIX (Angst)", f"{vix:.2f}", delta="STABIL" if vix < 20 else "VOLATIL", delta_color="inverse")
 except:
-    st.warning("Marktdaten temporär nicht erreichbar.")
+    st.info("Marktdaten aktuell verzögert (Wochenende/Pause).")
 st.markdown("---")
 
 # --- SEKTION 2: PROFI-SCANNER (BATCH-OPTIMIERT & STABILISIERT) ---
@@ -564,6 +558,7 @@ if symbol_input:
 # --- FOOTER (Ganz am Ende der Datei) ---
 st.divider()
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Daten: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
+
 
 
 
