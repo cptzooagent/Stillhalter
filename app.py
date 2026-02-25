@@ -224,7 +224,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
         st.rerun()
 
-# --- ANZEIGE DER KACHELN (HTML FIX) ---
+# --- ANZEIGE DER KACHELN (OPTIK BILD 2 + OPENCLAW + EARNINGS FIX) ---
 if st.session_state.profi_scan_results:
     res_list = st.session_state.profi_scan_results
     st.subheader(f"🎯 Top-Setups nach Qualität ({len(res_list)} Treffer)")
@@ -233,14 +233,14 @@ if st.session_state.profi_scan_results:
     
     for idx, res in enumerate(res_list):
         with cols[idx % 4]:
-            # Daten-Vorbereitung
+            # Daten-Extraktion mit Schutz gegen KeyErrors
             stars = res.get('stars_str', "⭐")
             s_status = res.get('sent_status', "Neutral")
             s_icon = res.get('sent_icon', "🟡")
-            s_msg = res.get('news_snippet', "Keine aktuellen News-Daten.")
-            news_color = "#27ae60" if s_status == "Bullish" else "#e74c3c" if s_status == "Bearish" else "#f1c40f"
+            s_msg = res.get('news_snippet', "Analysiere Marktstimmung...")
+            news_color = "#27ae60" if s_status == "Bullish" else "#e74c3c" if s_status == "Bearish" else "#f59e0b"
             
-            # Earnings-Logik
+            # Earnings-Warner Logik (Rote Umrandung wie Bild 2)
             is_earning_risk = False
             earn_str = res.get('earn', "---")
             if earn_str and earn_str != "---":
@@ -251,41 +251,49 @@ if st.session_state.profi_scan_results:
                         is_earning_risk = True
                 except: pass
 
+            # Styling-Variablen basierend auf Bild 2
             card_border = "3px solid #ef4444" if is_earning_risk else "1px solid #e5e7eb"
-            
-            # WICHTIG: Das f-String-Variable muss ganz links stehen!
+            card_shadow = "0 10px 15px -3px rgba(239, 68, 68, 0.2)" if is_earning_risk else "0 4px 6px -1px rgba(0, 0, 0, 0.1)"
+
+            # WICHTIG: Das HTML-Template MUSS bündig links stehen!
             html_code = f"""
-<div style="background: white; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif; height: 580px; display: flex; flex-direction: column;">
+<div style="background: white; border: {card_border}; border-radius: 16px; padding: 20px; margin-bottom: 20px; box-shadow: {card_shadow}; font-family: sans-serif; height: 600px; display: flex; flex-direction: column; transition: all 0.3s ease;">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-<span style="font-size: 1.2em; font-weight: 800; color: #111827;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{stars}</span></span>
-<span style="font-size: 0.7em; font-weight: 700; color: #3b82f6; background: #3b82f610; padding: 2px 8px; border-radius: 6px;">{res.get('status', 'Trend')}</span>
+<span style="font-size: 1.4em; font-weight: 800; color: #111827;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{stars}</span></span>
+<span style="font-size: 0.75em; font-weight: 700; color: #3b82f6; background: #ebf5ff; padding: 4px 10px; border-radius: 8px;">{res.get('status', 'Trend')}</span>
 </div>
-<div style="margin: 10px 0;">
-<div style="font-size: 0.65em; color: #6b7280; font-weight: 600; text-transform: uppercase;">Yield p.a.</div>
-<div style="font-size: 1.9em; font-weight: 900; color: #111827;">{res.get('y_pa', 0):.1f}%</div>
+<div style="margin: 12px 0;">
+<div style="font-size: 0.7em; color: #6b7280; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;">Yield p.a.</div>
+<div style="font-size: 2.2em; font-weight: 900; color: #111827; line-height: 1;">{res.get('y_pa', 0):.1f}%</div>
 </div>
-<div style="background: {news_color}10; border-left: 4px solid {news_color}; padding: 10px; border-radius: 8px; margin-bottom: 12px;">
-<div style="font-size: 0.7em; font-weight: 800; color: {news_color}; margin-bottom: 3px;">
-{s_icon} OPENCLAW: {s_status.upper()}
+<div style="background: {news_color}10; border-left: 4px solid {news_color}; padding: 12px; border-radius: 8px; margin-bottom: 15px;">
+<div style="font-size: 0.75em; font-weight: 800; color: {news_color}; margin-bottom: 4px; display: flex; align-items: center;">
+<span style="margin-right: 6px;">{s_icon}</span> OPENCLAW: {s_status.upper()}
 </div>
-<div style="font-size: 0.65em; color: #374151; line-height: 1.3; height: 40px; overflow: hidden;">
-{s_msg}
+<div style="font-size: 0.7em; color: #374151; line-height: 1.4; height: 3.2em; overflow: hidden; font-weight: 500;">
+{s_msg[:120]}
 </div>
 </div>
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
-<div style="border-left: 3px solid #8b5cf6; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Strike</div><div style="font-size: 0.9em; font-weight: 700;">{res.get('strike', 0):.1f}$</div></div>
-<div style="border-left: 3px solid #3b82f6; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Puffer</div><div style="font-size: 0.9em; font-weight: 700;">{res.get('puffer', 0):.1f}%</div></div>
-<div style="border-left: 3px solid #f59e0b; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Mid</div><div style="font-size: 0.9em; font-weight: 700;">{res.get('bid', 0):.2f}$</div></div>
-<div style="border-left: 3px solid #10b981; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Delta</div><div style="font-size: 0.9em; font-weight: 700; color: #10b981;">{res.get('delta', 0):.2f}</div></div>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 15px;">
+<div style="border-left: 3px solid #8b5cf6; padding-left: 10px;"><div style="font-size: 0.65em; color: #6b7280; font-weight: 600;">Strike</div><div style="font-size: 1em; font-weight: 700;">{res.get('strike', 0):.1f}$</div></div>
+<div style="border-left: 3px solid #f59e0b; padding-left: 10px;"><div style="font-size: 0.65em; color: #6b7280; font-weight: 600;">Mid-Preis</div><div style="font-size: 1em; font-weight: 700;">{res.get('bid', 0):.2f}$</div></div>
+<div style="border-left: 3px solid #3b82f6; padding-left: 10px;"><div style="font-size: 0.65em; color: #6b7280; font-weight: 600;">Puffer</div><div style="font-size: 1em; font-weight: 700;">{res.get('puffer', 0):.1f}%</div></div>
+<div style="border-left: 3px solid #10b981; padding-left: 10px;"><div style="font-size: 0.65em; color: #6b7280; font-weight: 600;">Delta</div><div style="font-size: 1em; font-weight: 700; color: #10b981;">{res.get('delta', 0):.2f}</div></div>
+</div>
+<div style="background: #fffbeb; border: 1px dashed #f59e0b; padding: 10px; border-radius: 8px; margin-bottom: 15px;">
+<div style="display: flex; justify-content: space-between; font-size: 0.7em; font-weight: 700;">
+<span style="color: #92400e;">Stat. Erwartung (EM):</span><span style="color: #b45309;">±{res.get('em_pct', 0):.1f}%</span>
+</div>
+<div style="font-size: 0.65em; color: #b45309; margin-top: 2px;">Sicherheit: <b>{res.get('em_safety', 1):.1f}x EM</b></div>
 </div>
 <div style="margin-top: auto;">
-<div style="display: flex; justify-content: space-between; font-size: 0.7em; color: #4b5563; margin-bottom: 10px;">
+<div style="display: flex; justify-content: space-between; font-size: 0.75em; color: #4b5563; margin-bottom: 12px; background: #f9fafb; padding: 6px 10px; border-radius: 8px;">
 <span>⏳ <b>{res.get('tage', 0)}d</b></span>
-<span style="background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font-weight: 700;">RSI: {int(res.get('rsi', 50))}</span>
+<span style="font-weight: 700;">RSI: {int(res.get('rsi', 50))}</span>
 <span style="font-weight: 800; color: {'#ef4444' if is_earning_risk else '#6b7280'};">{'⚠️' if is_earning_risk else '🗓️'} {earn_str}</span>
 </div>
-<div style="background: {res.get('analyst_color', '#7f8c8d')}15; color: {res.get('analyst_color', '#7f8c8d')}; padding: 8px; border-radius: 8px; font-size: 0.7em; font-weight: bold; text-align: center; border-left: 4px solid {res.get('analyst_color', '#7f8c8d')};">
-🚀 {res.get('analyst_label', 'Neutral')}
+<div style="background: {res.get('analyst_color', '#7f8c8d')}15; color: {res.get('analyst_color', '#7f8c8d')}; padding: 10px; border-radius: 10px; font-size: 0.75em; font-weight: 800; text-align: center; border-left: 5px solid {res.get('analyst_color', '#7f8c8d')}; text-transform: uppercase; letter-spacing: 0.5px;">
+🚀 {res.get('analyst_label', 'Check nötig')}
 </div>
 </div>
 </div>
@@ -463,6 +471,7 @@ if symbol_input:
             st.error(f"Fehler bei {symbol_input}: {e}")
 
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🚀 Live'}")
+
 
 
 
