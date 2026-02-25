@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 import time
 from requests import Session
 
-# --- 1. ABSOLUTE INITIALISIERUNG (Gegen AttributeError) ---
+# --- 1. ABSOLUTE INITIALISIERUNG (Fix für Bild 66) ---
 if 'secure_session' not in st.session_state:
     session = Session()
     session.headers.update({
@@ -16,10 +16,43 @@ if 'secure_session' not in st.session_state:
     st.session_state.secure_session = session
 
 def get_tk(symbol):
-    """Sicherer Ticker-Aufruf."""
+    """Sicherer Ticker-Aufruf mit Session."""
     return yf.Ticker(symbol, session=st.session_state.secure_session)
 
-# --- 2. HILFSFUNKTIONEN ---
+# --- 2. REPARATUR FÜR DAS COCKPIT (Fix für Bild 68 & 69) ---
+def get_stock_data_full(symbol):
+    """Wird vom Cockpit und Depot-Manager benötigt. Fängt None-Fehler ab."""
+    try:
+        tk = get_tk(symbol)
+        hist = tk.history(period="150d")
+        if hist.empty: return None
+        
+        price = hist['Close'].iloc[-1]
+        rsi = calculate_rsi(hist['Close']).iloc[-1]
+        sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1] if len(hist) >= 200 else hist['Close'].mean()
+        uptrend = price > sma_200
+        
+        # ATR Berechnung
+        tr = pd.concat([hist['High']-hist['Low'], 
+                        np.abs(hist['High']-hist['Close'].shift()), 
+                        np.abs(hist['Low']-hist['Close'].shift())], axis=1).max(axis=1)
+        atr = tr.rolling(14).mean().iloc[-1]
+        
+        # Earnings
+        earn = "---"
+        try:
+            cal = tk.calendar
+            if cal is not None and not cal.empty:
+                earn = cal.iloc[0, 0].strftime('%d.%m.')
+        except: pass
+        
+        pivots = calculate_pivots(symbol, batch_hist=hist)
+        # Rückgabe-Struktur wie vom Cockpit erwartet
+        return price, tk.options, earn, rsi, uptrend, False, atr, pivots
+    except:
+        return None
+
+# --- 3. HILFSFUNKTIONEN ---
 def calculate_rsi(data, window=14):
     if len(data) < window + 1: return pd.Series([50] * len(data))
     delta = data.diff()
@@ -38,36 +71,6 @@ def calculate_pivots(symbol, batch_hist=None):
         p = (h + l + c) / 3
         return {"P": p, "S1": 2*p-h, "S2": p-(h-l), "R2": p+(h-l), "W_S2": (p-(h-l))*0.98, "W_R2": (p+(h-l))*1.02}
     except: return None
-
-# --- 3. DIE REPARATUR FÜR DEIN COCKPIT (Gegen NameError) ---
-def get_stock_data_full(symbol):
-    """Wird vom Cockpit und Depot-Manager benötigt."""
-    try:
-        tk = get_tk(symbol)
-        hist = tk.history(period="150d")
-        if hist.empty: return None
-        
-        price = hist['Close'].iloc[-1]
-        rsi = calculate_rsi(hist['Close']).iloc[-1]
-        sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1] if len(hist) >= 200 else hist['Close'].mean()
-        uptrend = price > sma_200
-        
-        # ATR Berechnung
-        tr = pd.concat([hist['High']-hist['Low'], np.abs(hist['High']-hist['Close'].shift()), np.abs(hist['Low']-hist['Close'].shift())], axis=1).max(axis=1)
-        atr = tr.rolling(14).mean().iloc[-1]
-        
-        # Earnings
-        earn = "---"
-        try:
-            cal = tk.calendar
-            if cal is not None and not cal.empty:
-                earn = cal.iloc[0, 0].strftime('%d.%m.')
-        except: pass
-        
-        pivots = calculate_pivots(symbol, batch_hist=hist)
-        return price, tk.options, earn, rsi, uptrend, False, atr, pivots
-    except:
-        return None
 
 def get_analyst_conviction(info):
     try:
@@ -91,10 +94,9 @@ def get_openclaw_analysis(symbol):
 def get_combined_watchlist():
     return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "MU", "AVGO", "PLTR", "APP", "NET", "CRWD"]
 
-# --- APP START ---
+# --- 4. APP START & MARKT MONITOR ---
 st.set_page_config(page_title="CapTrader AI", layout="wide")
 
-# Sidebar
 with st.sidebar:
     st.header("🛡️ Filter")
     otm_puffer_slider = st.slider("Puffer (%)", 3, 25, 15)
@@ -104,14 +106,14 @@ with st.sidebar:
     only_uptrend = st.checkbox("Nur Aufwärtstrend", value=False)
     test_modus = st.checkbox("🛠️ Simulation", value=True)
 
-# Markt-Monitor (Fix für 'NoneType' Error)
 st.markdown("## 🌍 Markt-Monitor")
 col_m1, col_m2 = st.columns(2)
 try:
-    vix_tk = get_tk("^VIX")
-    vix = vix_tk.history(period="1d")['Close'].iloc[-1]
-    ndq_tk = get_tk("^NDX")
-    ndq = ndq_tk.history(period="1d")['Close'].iloc[-1]
+    # Sicherer Abruf für Bild 70 (NoneType Fix)
+    vix_data = get_tk("^VIX").history(period="1d")
+    vix = vix_data['Close'].iloc[-1] if not vix_data.empty else 20.0
+    ndq_data = get_tk("^NDX").history(period="1d")
+    ndq = ndq_data['Close'].iloc[-1] if not ndq_data.empty else 0.0
     col_m1.metric("Nasdaq 100", f"{ndq:,.0f}")
     col_m2.metric("VIX (Angst)", f"{vix:.2f}", delta="STABIL" if vix < 20 else "VOLATIL", delta_color="inverse")
 except:
@@ -558,6 +560,7 @@ if symbol_input:
 # --- FOOTER (Ganz am Ende der Datei) ---
 st.divider()
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Daten: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
+
 
 
 
