@@ -590,18 +590,3 @@ if symbol_input:
                     else:
                         st.error("Keine Optionsdaten für dieses Datum verfügbar.")
                         st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live'}")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
