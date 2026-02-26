@@ -9,6 +9,21 @@ from scipy.stats import norm
 from datetime import datetime, timedelta
 import concurrent.futures
 
+# --- HILFSFUNKTIONEN (Müssen GANZ OBEN stehen) ---
+
+def get_stars_logic(analyst_label, uptrend):
+    """Berechnet die Sterne-Bewertung basierend auf Analysten und Trend."""
+    s_val = 1.0
+    if "HYPER" in analyst_label: 
+        s_val = 3.0
+    elif "Stark" in analyst_label: 
+        s_val = 2.0
+        
+    if uptrend: 
+        s_val += 1.0
+        
+    return s_val, "⭐" * int(s_val)
+
 # --- SETUP & STYLING ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
@@ -422,6 +437,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | © 2026 CapTrader AI")
+
 
 
 
