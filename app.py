@@ -3,6 +3,7 @@ import pandas as pd
 import yfinance as yf
 import numpy as np
 import requests
+import random
 from scipy.stats import norm
 from datetime import datetime, timedelta
 import concurrent.futures
@@ -10,27 +11,43 @@ import concurrent.futures
 # --- SETUP & STYLING ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
-# --- 1. DER SICHERHEITS-CACHE (PUNKT 1) ---
-@st.cache_data(ttl=3600)  # Daten werden 1 Stunde lang im Speicher gehalten
-def get_batch_data_cached(tickers):
-    """Holt Marktdaten für alle Ticker in einem Rutsch und schützt vor Sperren."""
+# --- SIDEBAR (Zuerst für Demo-Modus Schalter) ---
+with st.sidebar:
+    st.header("⚙️ System-Einstellungen")
+    demo_mode = st.toggle("🛠️ Demo-Modus (API Bypass)", value=False, help="Aktivieren, wenn Yahoo Finance dich gesperrt hat.")
+    
+    st.markdown("---")
+    st.header("🛡️ Scanner-Filter")
+    otm_puffer_slider = st.slider("OTM Puffer (%)", 5, 25, 12)
+    min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 5, 100, 12)
+    min_stock_price, max_stock_price = st.slider("Preis ($)", 0, 1000, (40, 600))
+    min_mkt_cap = st.slider("Market Cap (Mrd. $)", 1, 1000, 15)
+    only_uptrend = st.checkbox("Nur SMA 200 Uptrend", value=False)
+    test_modus = st.checkbox("🔍 Kleiner Scan (12 Ticker)", value=False)
+
+# --- 1. DER SICHERHEITS-CACHE (MIT DEMO-LOGIK) ---
+@st.cache_data(ttl=3600)
+def get_batch_data_cached(tickers, is_demo=False):
+    if is_demo:
+        # Erzeuge synthetische Daten für den Demo-Modus
+        st.warning("🚧 Demo-Modus aktiv: Zeige generierte Testdaten.")
+        dates = pd.date_range(end=datetime.now(), periods=250)
+        demo_df = pd.DataFrame(index=dates)
+        
+        if len(tickers) > 1:
+            multi_index = pd.MultiIndex.from_product([tickers, ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']])
+            data = pd.DataFrame(np.random.randn(250, len(tickers)*6) * 10 + 150, index=dates, columns=multi_index)
+            return data
+        return pd.DataFrame(np.random.randn(250, 6) * 10 + 150, index=dates, columns=['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume'])
+
     try:
-        if not tickers: return pd.DataFrame()
-        # auto_adjust=True ist wichtig für korrekte Renditeberechnungen
         data = yf.download(tickers, period="250d", group_by='ticker', auto_adjust=True, progress=False)
         return data
     except Exception as e:
-        st.error(f"⚠️ Yahoo-Download fehlgeschlagen (Sperre aktiv?): {e}")
+        st.error(f"⚠️ Yahoo-Fehler: {e}")
         return pd.DataFrame()
 
-# --- 2. TECHNISCHE MATHEMATIK (VEKTORISIERT) ---
-def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
-    try:
-        if T <= 0 or sigma <= 0 or S <= 0: return 0
-        d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-        return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
-    except: return 0
-
+# --- 2. TECHNISCHE MATHEMATIK ---
 def calculate_rsi_vectorized(series, window=14):
     if series.empty or len(series) < window: return pd.Series([50] * len(series))
     delta = series.diff()
@@ -39,214 +56,168 @@ def calculate_rsi_vectorized(series, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs)).fillna(50)
 
-def get_pivot_points(hist_df):
-    try:
-        if hist_df is None or len(hist_df) < 2: return None
-        last_day = hist_df.iloc[-2]
-        h, l, c = last_day['High'], last_day['Low'], last_day['Close']
-        p = (h + l + c) / 3
-        return {"P": p, "S1": (2 * p) - h, "S2": p - (h - l), "R2": p + (h - l)}
-    except: return None
-
-# --- 3. ANALYSE-HELPER ---
-def get_analyst_conviction(info):
-    try:
-        cur = info.get('currentPrice', info.get('lastPrice', 1))
-        tar = info.get('targetMedianPrice', 0)
-        upside = ((tar / cur) - 1) * 100 if tar > 0 else 0
-        rev = info.get('revenueGrowth', 0) * 100
-        if rev > 30: return f"🚀 HYPER-GROWTH (+{rev:.0f}%)", "#9b59b6"
-        if upside > 15: return f"✅ Stark (Ziel: +{upside:.0f}%)", "#27ae60"
-        return "⚖️ Neutral", "#7f8c8d"
-    except: return "🔍 Check", "#7f8c8d"
-
-def get_openclaw_analysis(symbol):
-    try:
-        tk = yf.Ticker(symbol)
-        news = tk.news
-        if not news: return "Neutral", "🤖 Keine News.", 0.5
-        score = 0.5
-        txt = str(news[:3]).lower()
-        bull = ['buy', 'beat', 'growth', 'upgrade', 'ai']
-        bear = ['sell', 'miss', 'short', 'risk', 'warning']
-        for w in bull: score += 0.05 if w in txt else 0
-        for w in bear: score -= 0.05 if w in txt else 0
-        status = "Bullish" if score > 0.52 else "Bearish" if score < 0.48 else "Neutral"
-        return status, f"🤖 KI: {news[0]['title'][:70]}...", score
-    except: return "N/A", "🤖 Offline", 0.5
-
-# --- 4. MARKT-AMPEL LOGIK ---
-def get_market_context():
+def get_market_context(is_demo=False):
+    if is_demo:
+        return {"cp": 16540, "rsi": 45, "dist": -1.2, "vix": 18.5, "btc": 92000, "fg": 65}
+    
     res = {"cp": 0, "rsi": 50, "dist": 0, "vix": 20, "btc": 0, "fg": 50}
     try:
-        # Hier nutzen wir ebenfalls einen Batch für die 3 wichtigsten Indikatoren
         data = yf.download(["^NDX", "^VIX", "BTC-USD"], period="60d", interval="1d", progress=False)
         if not data.empty:
             if '^NDX' in data['Close']:
                 c = data['Close']['^NDX'].dropna()
-                if not c.empty:
-                    res["cp"] = c.iloc[-1]
-                    sma20 = c.rolling(window=20).mean().iloc[-1]
-                    res["dist"] = ((res["cp"] - sma20) / sma20) * 100
-                    res["rsi"] = calculate_rsi_vectorized(c).iloc[-1]
-            if '^VIX' in data['Close']:
-                v = data['Close']['^VIX'].dropna()
-                if not v.empty: res["vix"] = v.iloc[-1]
-            if 'BTC-USD' in data['Close']:
-                b = data['Close']['BTC-USD'].dropna()
-                if not b.empty: res["btc"] = b.iloc[-1]
-        
-        f_req = requests.get("https://api.alternative.me/fng/", timeout=3)
-        res["fg"] = int(f_req.json()['data'][0]['value'])
+                res["cp"] = c.iloc[-1]
+                res["dist"] = ((res["cp"] - c.rolling(20).mean().iloc[-1]) / c.rolling(20).mean().iloc[-1]) * 100
+                res["rsi"] = calculate_rsi_vectorized(c).iloc[-1]
+            res["vix"] = data['Close']['^VIX'].iloc[-1] if '^VIX' in data['Close'] else 20
+            res["btc"] = data['Close']['BTC-USD'].iloc[-1] if 'BTC-USD' in data['Close'] else 0
+        res["fg"] = int(requests.get("https://api.alternative.me/fng/").json()['data'][0]['value'])
     except: pass
     return res
 
-# --- 5. SIDEBAR ---
-with st.sidebar:
-    st.header("🛡️ Scanner-Filter")
-    otm_puffer_slider = st.slider("OTM Puffer (%)", 5, 25, 12)
-    min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 5, 100, 12)
-    min_stock_price, max_stock_price = st.slider("Preis ($)", 0, 1000, (40, 600))
-    min_mkt_cap = st.slider("Market Cap (Mrd. $)", 1, 1000, 15)
-    only_uptrend = st.checkbox("Nur SMA 200 Uptrend", value=False)
-    test_modus = st.checkbox("🛠️ Test-Modus", value=False)
+# --- 3. ANALYSE-HELPER (MIT DEMO-FALLBACK) ---
+def get_analyst_conviction(info, is_demo=False):
+    if is_demo: return "✅ Stark (Ziel: +18%)", "#27ae60"
+    try:
+        cur = info.get('currentPrice', info.get('lastPrice', 1))
+        tar = info.get('targetMedianPrice', 0)
+        upside = ((tar / cur) - 1) * 100 if tar > 0 else 0
+        if info.get('revenueGrowth', 0) > 0.3: return "🚀 HYPER-GROWTH", "#9b59b6"
+        if upside > 15: return f"✅ Stark (Ziel: +{upside:.0f}%)", "#27ae60"
+        return "⚖️ Neutral", "#7f8c8d"
+    except: return "🔍 Check", "#7f8c8d"
 
-# --- 6. VISUALISIERUNG MARKT-AMPEL ---
+# --- 4. VISUALISIERUNG MARKT-AMPEL ---
 st.markdown("## 🌍 Globales Markt-Monitoring")
-m = get_market_context()
+m = get_market_context(is_demo=demo_mode)
 
+# Ampel-Logik
 ampel_color = "#27ae60"
 ampel_text = "MARKT STABIL"
-ampel_advice = "Puts auf starke Aktien möglich."
-
-if m["dist"] < -2 or m["vix"] > 24:
-    ampel_color, ampel_text = "#e74c3c", "🚨 MARKT-ALARM: SCHWÄCHE"
-    ampel_advice = "Vorsicht bei neuen Positionen. Volatilität steigt."
-elif m["rsi"] > 70:
-    ampel_color, ampel_text = "#f39c12", "⚠️ ÜBERHITZT (RSI HOCH)"
-    ampel_advice = "Korrekturgefahr. Gewinne sichern."
+if m["dist"] < -2 or m["vix"] > 24: ampel_color, ampel_text = "#e74c3c", "🚨 MARKT-ALARM"
+elif m["rsi"] > 70: ampel_color, ampel_text = "#f39c12", "⚠️ ÜBERHITZT"
 
 st.markdown(f"""
     <div style="background-color: {ampel_color}; color: white; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 25px;">
-        <h2 style="margin:0;">{ampel_text}</h2>
-        <p style="margin:0; font-size: 1.1em; opacity: 0.9;">{ampel_advice}</p>
+        <h2 style="margin:0;">{ampel_text} {'(DEMO)' if demo_mode else ''}</h2>
     </div>
 """, unsafe_allow_html=True)
 
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Nasdaq 100", f"{m['cp']:,.0f}" if m['cp'] > 0 else "---", f"{m['dist']:.1f}% vs SMA20")
-c2.metric("Bitcoin", f"{m['btc']:,.0f} $" if m['btc'] > 0 else "---")
-c3.metric("VIX (Angst)", f"{m['vix']:.2f}" if m['vix'] > 0 else "---", delta="HOCH" if m['vix'] > 22 else "OK", delta_color="inverse")
-c4.metric("Nasdaq RSI", f"{int(m['rsi'])}", delta="HEISS" if m['rsi'] > 70 else None, delta_color="inverse")
-
+c1.metric("Nasdaq 100", f"{m['cp']:,.0f}", f"{m['dist']:.1f}%")
+c2.metric("Bitcoin", f"{m['btc']:,.0f} $")
+c3.metric("VIX (Angst)", f"{m['vix']:.2f}")
+c4.metric("Nasdaq RSI", f"{int(m['rsi'])}")
 st.markdown("---")
 
-# --- BLOCK 2: PROFI-SCANNER (REPARIERT & STABILISIERT) ---
-import concurrent.futures  # UNVERZICHTBAR: Behebt den NameError
+# --- BLOCK 2: PROFI-SCANNER (MIT DEMO-FUNKTION) ---
+import concurrent.futures
+import time
+
+# Hilfsfunktion für Sterne (wird im Loop und im Demo-Modus genutzt)
+def get_stars_logic(analyst_label, uptrend):
+    s_val = 1.0
+    if "HYPER" in analyst_label: s_val = 3.0
+    elif "Stark" in analyst_label: s_val = 2.0
+    if uptrend: s_val += 1.0
+    return s_val, "⭐" * int(s_val)
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
-# Hilfsfunktion für die Sterne-Logik im Scanner
-def get_stars(info, uptrend):
-    analyst_txt, _ = get_analyst_conviction(info)
-    s_val = 1.0
-    if "HYPER" in analyst_txt: s_val = 3.0
-    elif "Stark" in analyst_txt: s_val = 2.0
-    if uptrend: s_val += 1.0
-    return s_val, "⭐" * int(s_val)
-
 if st.button("🚀 Profi-Scan starten", key="run_pro_scan", use_container_width=True):
-    p_puffer = otm_puffer_slider / 100 
-    p_min_yield = min_yield_pa
-    p_min_cap = min_mkt_cap * 1_000_000_000
-    heute = datetime.now()
+    all_results = []
     
-    with st.spinner("Scanne Markt mit reduzierter Last (3 Worker)..."):
-        # Ticker-Liste bestimmen
-        ticker_liste = ["APP", "AVGO", "NET", "CRWD", "NVDA", "HOOD", "TSLA", "PLTR", "COIN", "MSTR", "MU", "LRCX"] if test_modus else get_combined_watchlist()
-        
-        # 1. BATCH DOWNLOAD (Basis-Daten ziehen)
-        # Wir ziehen 250 Tage um SMA200 sicher berechnen zu können
-        batch_data = yf.download(ticker_liste, period="250d", group_by='ticker', auto_adjust=True, progress=False)
-        
-        status_text = st.empty()
-        progress_bar = st.progress(0)
-        all_results = []
+    # --- PFAD A: DEMO-MODUS (Zufalls-Setups generieren) ---
+    if demo_mode:
+        with st.spinner("Generiere Demo-Setups für das UI-Testing..."):
+            time.sleep(1) # Simuliert Rechenzeit
+            demo_tickers = ["NVDA", "TSLA", "AAPL", "AMD", "MSFT", "MU", "PLTR", "AMZN", "META", "GOOGL", "NFLX", "COIN"]
+            for s in demo_tickers:
+                # Zufällige Werte für das Testing erzeugen
+                y_pa = random.uniform(12.5, 38.0)
+                puffer = random.uniform(8.0, 18.0)
+                price = random.uniform(50, 800)
+                uptrend = random.choice([True, False])
+                label, color = ("🚀 HYPER-GROWTH", "#9b59b6") if random.random() > 0.7 else ("✅ Stark (Ziel: +18%)", "#27ae60")
+                s_val, s_str = get_stars_logic(label, uptrend)
+                
+                all_results.append({
+                    'symbol': s, 'price': price, 'y_pa': y_pa, 'strike': price * (1 - puffer/100),
+                    'puffer': puffer, 'bid': random.uniform(1.5, 8.0), 'rsi': random.randint(30, 65),
+                    'tage': 32, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
+                    'stars_val': s_val, 'stars_str': s_str, 'analyst_label': label,
+                    'analyst_color': color, 'mkt_cap': random.uniform(50, 2000)
+                })
+            st.session_state.profi_scan_results = all_results
+            st.success("Demo-Scan abgeschlossen!")
 
-        def check_single_stock(symbol):
-            try:
-                # Daten-Extraktion aus Batch
-                hist = batch_data[symbol] if len(ticker_liste) > 1 else batch_data
-                if hist.empty or len(hist) < 20: return None
-                
-                price = hist['Close'].iloc[-1]
-                
-                # Filter 1: Preis & Trend
-                if not (min_stock_price <= price <= max_stock_price): return None
-                sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1]
-                uptrend = price > sma_200
-                if only_uptrend and not uptrend: return None
-                
-                # Filter 2: Market Cap (via fast_info für Speed)
-                tk = yf.Ticker(symbol)
-                if tk.fast_info['marketCap'] < p_min_cap: return None
-                
-                # Filter 3: Options-Check
-                dates = tk.options
-                # Wir suchen expirations zwischen 15 und 45 Tagen
-                valid_dates = [d for d in dates if 15 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
-                if not valid_dates: return None
-                
-                target_date = valid_dates[0]
-                chain = tk.option_chain(target_date).puts
-                target_strike = price * (1 - p_puffer)
-                
-                # Besten Strike finden (knapp unter Ziel)
-                opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
-                if opts.empty: return None
-                
-                o = opts.iloc[0]
-                days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
-                
-                # Rendite & Sicherheit
-                fair_price = (o['bid'] + o['ask']) / 2 if o['bid'] > 0 else o['lastPrice']
-                y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
-                
-                if y_pa >= p_min_yield:
-                    # Qualitätssicherung (Sterne)
-                    info = tk.info
-                    s_val, s_str = get_stars(info, uptrend)
-                    analyst_txt, analyst_col = get_analyst_conviction(info)
-                    
-                    # Sentiment & RSI
-                    rsi = calculate_rsi_vectorized(hist['Close']).iloc[-1]
-                    
-                    return {
-                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
-                        'puffer': ((price - o['strike']) / price) * 100, 'bid': fair_price, 
-                        'rsi': rsi, 'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                        'stars_val': s_val, 'stars_str': s_str, 'analyst_label': analyst_txt, 
-                        'analyst_color': analyst_col, 'mkt_cap': tk.fast_info['marketCap'] / 1e9
-                    }
-            except: return None
+    # --- PFAD B: ECHT-MODUS (Yahoo API Abfrage) ---
+    else:
+        p_puffer = otm_puffer_slider / 100 
+        p_min_yield = min_yield_pa
+        p_min_cap = min_mkt_cap * 1_000_000_000
+        
+        # Nutzt die Cache-Funktion aus Block 1
+        ticker_liste = ["NVDA", "TSLA", "AMD", "MU", "AAPL", "MSFT"] if test_modus else get_combined_watchlist()
+        
+        with st.spinner(f"Scanne {len(ticker_liste)} Ticker (Batch Mode)..."):
+            batch_data = get_batch_data_cached(ticker_liste, is_demo=False)
+            
+            if not batch_data.empty:
+                def check_stock(symbol):
+                    try:
+                        # Extraktion aus Batch
+                        hist = batch_data[symbol] if len(ticker_liste) > 1 else batch_data
+                        if hist.empty or len(hist) < 50: return None
+                        
+                        price = hist['Close'].iloc[-1]
+                        sma200 = hist['Close'].rolling(200).mean().iloc[-1]
+                        uptrend = price > sma200
+                        
+                        if only_uptrend and not uptrend: return None
+                        if not (min_stock_price <= price <= max_stock_price): return None
+                        
+                        tk = yf.Ticker(symbol)
+                        if tk.fast_info['marketCap'] < p_min_cap: return None
+                        
+                        # Options-Check
+                        opt_dates = tk.options
+                        valid = [d for d in opt_dates if 15 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 45]
+                        if not valid: return None
+                        
+                        chain = tk.option_chain(valid[0]).puts
+                        target_strike = price * (1 - p_puffer)
+                        opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
+                        
+                        if not opts.empty:
+                            o = opts.iloc[0]
+                            days = (datetime.strptime(valid[0], '%Y-%m-%d') - datetime.now()).days
+                            y_pa = (o['bid'] / o['strike']) * (365 / days) * 100
+                            
+                            if y_pa >= p_min_yield:
+                                info = tk.info
+                                label, color = get_analyst_conviction(info)
+                                s_val, s_str = get_stars_logic(label, uptrend)
+                                
+                                return {
+                                    'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'],
+                                    'puffer': ((price - o['strike']) / price) * 100, 'bid': o['bid'],
+                                    'rsi': calculate_rsi_vectorized(hist['Close']).iloc[-1],
+                                    'tage': days, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
+                                    'stars_val': s_val, 'stars_str': s_str, 'analyst_label': label,
+                                    'analyst_color': color, 'mkt_cap': tk.fast_info['marketCap'] / 1e9
+                                }
+                    except: return None
+                    return None
 
-        # 2. MULTITHREADING MIT MAX_WORKERS=3 (Sicher gegen Yahoo-Sperre)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
-            for i, future in enumerate(concurrent.futures.as_completed(futures)):
-                res = future.result()
-                if res: all_results.append(res)
-                progress_bar.progress((i + 1) / len(ticker_liste))
-        
-        status_text.empty()
-        progress_bar.empty()
-        
-        if all_results:
-            st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['stars_val'], reverse=True)
-            st.success(f"Scan fertig: {len(all_results)} Qualitäts-Setups gefunden!")
-        else:
-            st.warning("Keine Treffer. Versuche den OTM-Puffer oder Market-Cap Filter zu senken.")
+                with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                    futures = [executor.submit(check_stock, s) for s in ticker_liste]
+                    for f in concurrent.futures.as_completed(futures):
+                        res = f.result()
+                        if res: all_results.append(res)
+                
+                st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['stars_val'], reverse=True)
             
 # --- DISPLAY LOGIK (UNVERÄNDERTES DESIGN) ---
 if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
@@ -517,6 +488,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | © 2026 CapTrader AI")
+
 
 
 
