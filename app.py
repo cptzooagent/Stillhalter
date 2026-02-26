@@ -180,14 +180,46 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             # 1. Prüfen, ob wir im Test-Modus sind
             if test_modus:
                 import random
-                # Wir simulieren eine perfekte Aktie, um das UI zu testen
+                from datetime import datetime, timedelta
+                
+                # Erzeugt individuelle Werte pro Aktie für einen echten Test-Eindruck
+                price = random.uniform(50, 500)
+                yield_pa = random.uniform(8, 25)
+                puffer = random.uniform(5, 20)
+                strike = price * (1 - (puffer/100))
+                rsi = random.randint(25, 75)
+                
+                # Simulation von Earnings-Risiko: 
+                # Jede 3. Aktie bekommt ein Datum in der nahen Zukunft (für den roten Rahmen)
+                if random.random() > 0.66:
+                    # Alarm: In 2 bis 6 Tagen (triggert deinen neuen roten Rahmen)
+                    earn_dt = datetime.now() + timedelta(days=random.randint(2, 6))
+                else:
+                    # Sicher: In 20 bis 60 Tagen
+                    earn_dt = datetime.now() + timedelta(days=random.randint(20, 60))
+                
+                earn_str = earn_dt.strftime("%d.%m.%Y")
+                
                 return {
-                    'symbol': symbol, 'price': 150.0, 'y_pa': 18.5, 'strike': 135.0, 
-                    'puffer': 10.0, 'bid': 1.20, 'rsi': 45, 'earn': "2026-05-15", 
-                    'tage': 22, 'status': "🛠️ Simulation", 
-                    'delta': -0.15, 'stars_val': 3.0, 'stars_str': "⭐⭐⭐", 
-                    'analyst_label': "Strong Buy (Sim)", 'analyst_color': "#27ae60", 
-                    'mkt_cap': 150.5, 'em_pct': 5.5, 'em_safety': 1.8
+                    'symbol': symbol, 
+                    'price': price, 
+                    'y_pa': yield_pa, 
+                    'strike': strike, 
+                    'puffer': puffer, 
+                    'bid': random.uniform(0.5, 5.0), 
+                    'rsi': rsi, 
+                    'earn': earn_str, 
+                    'tage': random.choice([14, 21, 28, 45]), 
+                    'status': random.choice(["Trend ✅", "Rebound 🔄", "Seitwärts ↔️"]), 
+                    'delta': random.uniform(-0.10, -0.40), 
+                    'stars_val': random.uniform(1, 5), 
+                    'stars_str': "⭐" * random.randint(1, 5), 
+                    'sent_icon': random.choice(["🟢", "🟡", "🔵"]),
+                    'analyst_label': random.choice(["Strong Buy (Sim)", "Buy (Sim)", "Hold (Sim)"]), 
+                    'analyst_color': random.choice(["#10b981", "#3b82f6", "#f59e0b"]), 
+                    'mkt_cap': random.uniform(5, 500), 
+                    'em_pct': random.uniform(3, 8), 
+                    'em_safety': random.uniform(0.5, 2.5)
                 }
             try:
                 # Kein künstliches Sleep mehr nötig bei fast_info!
@@ -590,6 +622,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
