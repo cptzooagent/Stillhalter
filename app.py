@@ -46,7 +46,7 @@ def calculate_rsi(data, window=14):
 def calculate_pivots(symbol):
     """Berechnet Daily und Weekly Pivot-Punkte (inkl. R2 für CC-Ziele)."""
     try:
-        tk = yf.Ticker(symbol)
+        tk = yf.Ticker(symbol, session=secure_session)
         hist_d = tk.history(period="5d") 
         if len(hist_d) < 2: return None
         last_day = hist_d.iloc[-2]
@@ -71,7 +71,7 @@ def calculate_pivots(symbol):
 
 def get_openclaw_analysis(symbol):
     try:
-        tk = yf.Ticker(symbol)
+        tk = yf.Ticker(symbol, session=secure_session)
         all_news = tk.news
         if not all_news or len(all_news) == 0:
             return "Neutral", "🤖 OpenClaw: Yahoo liefert aktuell keine Daten.", 0.5
@@ -118,7 +118,7 @@ def get_finviz_sentiment(symbol):
 
 def get_stock_data_full(symbol):
     try:
-        tk = yf.Ticker(symbol)
+        tk = yf.Ticker(symbol, session=secure_session)
         hist = tk.history(period="150d") 
         if hist.empty: return None, [], "", 50, True, False, 0, None
         price = hist['Close'].iloc[-1] 
@@ -239,7 +239,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         def check_single_stock(symbol):
             try:
                 # Kein künstliches Sleep mehr nötig bei fast_info!
-                tk = yf.Ticker(symbol)
+                tk = yf.Ticker(symbol, session=secure_session)
                 f_info = tk.fast_info
         
                 price = f_info.last_price
@@ -412,7 +412,7 @@ if st.session_state.depot_data_cache is None:
             depot_list = []
             for symbol, data in my_assets.items():
                 try:
-                    tk = yf.Ticker(symbol)
+                    tk = yf.Ticker(symbol, session=secure_session)
                     f_info = tk.fast_info
                     price = f_info.last_price
     
@@ -631,5 +631,6 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
