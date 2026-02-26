@@ -24,34 +24,34 @@ def get_stars_logic(analyst_label, uptrend):
         
     return s_val, "⭐" * int(s_val)
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=86400) # 24 Stunden Cache
 def get_combined_watchlist():
     """
-    Lädt die S&P 500 Ticker von Wikipedia und kombiniert sie 
-    mit den Symbolen aus dem User-Depot.
+    Lädt die S&P 500 Ticker von einer stabilen GitHub-Quelle statt Wikipedia.
     """
     try:
-        # 1. S&P 500 Ticker von Wikipedia laden
-        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-        tables = pd.read_html(url)
-        sp500_df = tables[0]
-        watchlist = sp500_df['Symbol'].tolist()
+        # Stabile Quelle: S&P 500 Constituents von DataHub/GitHub
+        url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
+        df = pd.read_csv(url)
         
-        # Yahoo Finance Korrektur: Punkte durch Bindestriche ersetzen (z.B. BRK.B -> BRK-B)
-        watchlist = [t.replace('.', '-') for t in watchlist]
+        # Ticker bereinigen (Punkte durch Bindestriche für Yahoo ersetzen)
+        watchlist = df['Symbol'].str.replace('.', '-', regex=False).tolist()
+        
     except Exception as e:
-        # Fallback, falls Wikipedia nicht erreichbar ist
-        watchlist = ["AAPL", "MSFT", "NVDA", "TSLA", "AMD", "AMZN", "META", "GOOGL"]
-        st.warning(f"S&P 500 konnte nicht geladen werden, nutze Standard-Watchlist. ({e})")
+        # Falls die URL mal down sein sollte: Absoluter Notfall-Fallback (Top 10)
+        watchlist = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "BRK-B", "UNH", "JPM"]
+        st.warning(f"S&P 500 konnte nicht geladen werden, nutze Notfall-Liste. ({e})")
     
-    # 2. Depotwerte hinzufügen
+    # Depotwerte aus dem Session State hinzufügen, falls vorhanden
     if 'depot_df' in st.session_state and not st.session_state['depot_df'].empty:
-        # Wir nehmen an, deine Depot-Spalte heißt 'Symbol'
-        depot_symbols = st.session_state['depot_df']['Symbol'].dropna().unique().tolist()
-        # Kombinieren und Duplikate entfernen
-        combined = list(set(watchlist + depot_symbols))
-        return combined
-    
+        try:
+            # Wir nehmen an, deine Spalte im Depot heißt 'Symbol'
+            depot_symbols = st.session_state['depot_df']['Symbol'].dropna().unique().tolist()
+            # Zusammenführen und Duplikate entfernen
+            watchlist = list(set(watchlist + depot_symbols))
+        except:
+            pass
+            
     return watchlist
 
 # --- SETUP & STYLING ---
@@ -551,6 +551,7 @@ if symbol_input:
         )
     else:
         st.info(f"Lade echte {opt_type} Kette von Yahoo Finance...")
+
 
 
 
