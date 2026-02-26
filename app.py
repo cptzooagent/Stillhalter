@@ -350,7 +350,7 @@ if st.session_state.profi_scan_results:
 """
             st.markdown(html_code, unsafe_allow_html=True)
                     
-# --- SEKTION 2: DEPOT-MANAGER (UNABHÄNGIG VON SIDEBAR) ---
+# --- SEKTION 2: DEPOT-MANAGER (ROBUST & DIREKT) ---
 st.markdown("---")
 st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
@@ -358,10 +358,8 @@ if 'depot_data_cache' not in st.session_state:
     st.session_state.depot_data_cache = None
 
 if st.session_state.depot_data_cache is None:
-    st.info("📦 Die Depot-Analyse ist aktuell pausiert. Klicke auf Start, um deine Bestände zu prüfen.")
-    if st.button("🚀 Depot jetzt analysieren (Inkl. Pivot-Check)", use_container_width=True):
-        with st.spinner("Rufe Depot-Daten ab und berechne Pivot-Punkte..."):
-            # Deine festen Depotwerte
+    if st.button("🚀 Depot jetzt analysieren (Direkt-Abruf)", use_container_width=True):
+        with st.spinner("Berechne technische Daten für Depotwerte..."):
             my_assets = {
                 "LRCX": [100, 210], "MU": [100, 390], "AFRM": [100, 76.00], "ELF": [100, 109.00], "ETSY": [100, 67.00],
                 "GTLB": [100, 41.00], "HIMS": [100, 36.00], "HOOD": [100, 120.00], 
@@ -373,79 +371,65 @@ if st.session_state.depot_data_cache is None:
             for symbol, data in my_assets.items():
                 try:
                     tk = yf.Ticker(symbol, session=secure_session)
-                    # Schneller Preisabruf
-                    price = tk.fast_info.last_price
+                    # 1. Kursdaten
+                    hist = tk.history(period="250d")
+                    if hist.empty: continue
                     
-                    # SICHERER ABRUF: Falls get_stock_data_full scheitert, nutzen wir Fallbacks
-                    try:
-                        res = get_stock_data_full(symbol)
-                        price_full, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
-                    except:
-                        # Fallback falls die Funktion get_stock_data_full fehlt oder crasht
-                        rsi, uptrend, pivots = 50, False, {}
-                        earn = "N/A"
+                    price = hist['Close'].iloc[-1]
+                    
+                    # 2. RSI Berechnung (direkt hier)
+                    delta = hist['Close'].diff()
+                    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                    rs = gain / loss
+                    rsi_val = 100 - (100 / (1 + rs.iloc[-1]))
+                    
+                    # 3. Pivot Punkte (Daily)
+                    high_d = hist['High'].iloc[-2]
+                    low_d = hist['Low'].iloc[-2]
+                    close_d = hist['Close'].iloc[-2]
+                    pp = (high_d + low_d + close_d) / 3
+                    s2_d = pp - (high_d - low_d)
+                    r2_d = pp + (high_d - low_d)
+                    
+                    # 4. SMA 200 Trend
+                    sma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
+                    uptrend = price > sma200
 
+                    # Performance & Stars
                     qty, entry = data[0], data[1]
                     perf_pct = ((price - entry) / entry) * 100
+                    stars = "⭐" * (2 if uptrend else 1)
+                    if rsi_val < 35: stars += "⭐"
 
-                    # KI-Check (get_openclaw_analysis muss existieren)
-                    try:
-                        ki_status, _, _ = get_openclaw_analysis(symbol)
-                        ki_icon = "🟢" if ki_status == "Bullish" else "🔴" if ki_status == "Bearish" else "🟡"
-                    except:
-                        ki_status, ki_icon = "N/A", "⚪"
-    
-                    # Sterne-Logik (Trend + RSI)
-                    stars = 1
-                    if uptrend: stars += 1
-                    if rsi < 40: stars += 1
-                    
-                    # PIVOT DATEN EXTRAHIEREN
-                    s2_d = pivots.get('S2') if pivots else None
-                    s2_w = pivots.get('W_S2') if pivots else None
-                    r2_d = pivots.get('R2') if pivots else None
-                    
-                    # REPARATUR LOGIK
-                    put_action = "⏳ Warten"
-                    if rsi < 35 or (s2_d and price <= s2_d * 1.02): put_action = "🟢 JETZT (S2/RSI)"
-                    if s2_w and price <= s2_w * 1.01: put_action = "🔥 EXTREM (Weekly S2)"
-                    
-                    call_action = "⏳ Warten"
-                    if rsi > 55 and r2_d and price >= r2_d * 0.98: call_action = "🟢 JETZT (R2/RSI)"
+                    # Reparatur-Logik
+                    put_action = "🟢 JETZT (S2)" if price <= s2_d * 1.02 else "⏳ Warten"
+                    call_action = "🟢 JETZT (R2)" if price >= r2_d * 0.98 else "⏳ Warten"
 
                     depot_list.append({
-                        "Ticker": f"{symbol} {'⭐'*stars}",
+                        "Ticker": f"{symbol} {stars}",
                         "Einstand": f"{entry:.2f} $",
                         "Aktuell": f"{price:.2f} $",
                         "P/L %": f"{perf_pct:+.1f}%",
-                        "KI-Check": f"{ki_icon} {ki_status}",
-                        "RSI": int(rsi),
+                        "RSI": int(rsi_val),
                         "Short Put (Repair)": put_action,
                         "Covered Call": call_action,
-                        "S2 Daily": f"{s2_d:.2f} $" if s2_d else "---",
-                        "S2 Weekly": f"{s2_w:.2f} $" if s2_w else "---",
-                        "Earnings": earn
+                        "S2 Daily": f"{s2_d:.2f} $",
+                        "R2 Daily": f"{r2_d:.2f} $",
+                        "Trend": "🛡️" if uptrend else "⚠️"
                     })
                 except Exception as e:
-                    st.warning(f"Konnte {symbol} nicht laden: {e}")
                     continue
             
             st.session_state.depot_data_cache = depot_list
             st.rerun()
 
 else:
-    # Anzeige-Bereich
-    col_header, col_btn = st.columns([3, 1])
-    with col_header:
-        st.subheader(f"Gelistete Bestände: {len(st.session_state.depot_data_cache)} Assets")
-    with col_btn:
-        if st.button("🔄 Daten aktualisieren"):
-            st.session_state.depot_data_cache = None
-            st.rerun()
-
-    # Tabelle anzeigen
-    df_display = pd.DataFrame(st.session_state.depot_data_cache)
-    st.dataframe(df_display, use_container_width=True, hide_index=True)
+    # Anzeige der Tabelle
+    st.table(pd.DataFrame(st.session_state.depot_data_cache))
+    if st.button("🔄 Daten zurücksetzen"):
+        st.session_state.depot_data_cache = None
+        st.rerun()
                     
 # --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
@@ -599,6 +583,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
