@@ -152,86 +152,127 @@ with r1c4: st.metric("Nasdaq RSI", f"{int(rsi_ndq)}", delta="HEISS" if rsi_ndq >
 
 st.markdown("---")
 
-# --- SEKTION 1: PROFI-SCANNER
+# --- SEKTION 1: PROFI-SCANNER (OPTIMIERTE VERSION) ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
-if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
+if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_width=True):
     p_puffer = otm_puffer_slider / 100 
     p_min_yield = min_yield_pa
     p_min_cap = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
-    with st.spinner("Markt-Scanner analysiert Ticker..."):
+    with st.spinner("Markt-Scanner analysiert Ticker via High-Speed Batch..."):
+        # Ticker-Liste bestimmen
         ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else get_combined_watchlist()
+        
+        # 1. SCHRITT: BATCH DOWNLOAD (Ein Request für alle Kurse)
+        batch_data = yf.download(ticker_liste, period="250d", group_by='ticker', auto_adjust=True, progress=False)
+        
         status_text = st.empty()
         progress_bar = st.progress(0)
         all_results = []
 
         def check_single_stock(symbol):
             try:
-                time.sleep(0.4) 
-                tk = yf.Ticker(symbol)
-                info = tk.info
-                if not info or 'currentPrice' not in info: return None
-                m_cap = info.get('marketCap', 0)
-                price = info.get('currentPrice', 0)
-                if m_cap < p_min_cap or not (min_stock_price <= price <= max_stock_price): return None
-                res = get_stock_data_full(symbol)
-                if res is None or res[0] is None: return None
-                _, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+                # Daten aus Batch extrahieren (Null Request-Kosten)
+                if len(ticker_liste) > 1:
+                    hist = batch_data[symbol]
+                else:
+                    hist = batch_data
+                
+                if hist.empty: return None
+                
+                # Basis-Metriken berechnen
+                price = hist['Close'].iloc[-1]
+                
+                # Filter 1: Preis-Spanne
+                if not (min_stock_price <= price <= max_stock_price): return None
+                
+                # Filter 2: SMA 200 Trend
+                sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1]
+                uptrend = price > sma_200
                 if only_uptrend and not uptrend: return None
-                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 30]
+                
+                # Filter 3: Marktkapitalisierung & Analysten (Via fast_info = schnell)
+                tk = yf.Ticker(symbol)
+                f_info = tk.fast_info
+                m_cap = f_info['marketCap']
+                if m_cap < p_min_cap: return None
+                
+                # RSI & ATR berechnen
+                rsi_series = calculate_rsi_vectorized(hist['Close'])
+                rsi = rsi_series.iloc[-1]
+                atr = (hist['High'] - hist['Low']).rolling(window=14).mean().iloc[-1]
+                
+                # OPTIONS-CHECK (Nur für gefilterte Ticker -> schont Quote)
+                dates = tk.options
+                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
                 if not valid_dates: return None
+                
                 target_date = valid_dates[0]
                 chain = tk.option_chain(target_date).puts
                 target_strike = price * (1 - p_puffer)
+                
                 opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
                 if opts.empty: return None
+                
                 o = opts.iloc[0]
                 days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 
-                # --- NEU: EXPECTED MOVE BERECHNUNG ---
-                iv = o.get('impliedVolatility', 0)
-                if iv == 0: iv = 0.4 # Fallback
-                # Formel: Preis * IV * Wurzel(Tage/365)
-                exp_move_abs = price * (iv * np.sqrt(days_to_exp / 365))
-                exp_move_pct = (exp_move_abs / price) * 100
+                # Expected Move Berechnung
+                iv = o.get('impliedVolatility', 0.4)
+                if iv == 0: iv = 0.4
+                exp_move_pct = (iv * np.sqrt(days_to_exp / 365)) * 100
                 current_puffer = ((price - o['strike']) / price) * 100
-                # Sicherheitsfaktor: Wie oft passt der Expected Move in meinen Puffer?
                 em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
                 
-                bid, ask = o['bid'], o['ask']
-                fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o['lastPrice']
-                delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv, option_type='put')
-                sent_icon, _ = get_finviz_sentiment(symbol)
+                # Rendite & Delta
+                fair_price = (o['bid'] + o['ask']) / 2 if (o['bid'] > 0) else o['lastPrice']
                 y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
                 
                 if y_pa >= p_min_yield:
+                    # Zusatzdaten laden (News & Analysten)
+                    # Hier nutzen wir tk.info vorsichtig, da wir schon 90% der Ticker ausgefiltert haben
+                    info = tk.info 
                     analyst_txt, analyst_col = get_analyst_conviction(info)
+                    sent_icon, _ = get_finviz_sentiment(symbol)
+                    
+                    # Earnings Date extrahieren
+                    earn = ""
+                    try:
+                        cal = tk.calendar
+                        if cal is not None and 'Earnings Date' in cal:
+                            earn = cal['Earnings Date'][0].strftime('%d.%m.')
+                    except: pass
+
+                    # Qualitäts-Score
                     s_val = 0.0
                     if "HYPER" in analyst_txt: s_val = 3.0
                     elif "Stark" in analyst_txt: s_val = 2.0
                     if rsi < 35: s_val += 0.5
                     if uptrend: s_val += 0.5
+
                     return {
                         'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
                         'puffer': current_puffer, 'bid': fair_price, 'rsi': rsi, 'earn': earn if earn else "---", 
-                        'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip", 'delta': delta_val,
+                        'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip", 'delta': o.get('delta', -0.15),
                         'sent_icon': sent_icon, 'stars_val': s_val, 'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️",
                         'analyst_label': analyst_txt, 'analyst_color': analyst_col, 'mkt_cap': m_cap / 1e9,
-                        'em_pct': exp_move_pct, 'em_safety': em_safety # NEUE WERTE
+                        'em_pct': exp_move_pct, 'em_safety': em_safety
                     }
             except: return None
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # Multithreading für die verbleibenden Ticker (Options-Daten ziehen)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
             futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
             for i, future in enumerate(concurrent.futures.as_completed(futures)):
                 res_data = future.result()
                 if res_data: all_results.append(res_data)
                 progress_bar.progress((i + 1) / len(ticker_liste))
                 if i % 5 == 0: status_text.text(f"Checke {i}/{len(ticker_liste)} Ticker...")
+
         status_text.empty(); progress_bar.empty()
         if all_results:
             st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (float(x.get('stars_val', 0)), float(x.get('y_pa', 0))), reverse=True)
@@ -240,11 +281,14 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             st.session_state.profi_scan_results = []
             st.warning("Keine Treffer gefunden.")
 
+# --- DISPLAY LOGIK (UNVERÄNDERTES DESIGN) ---
 if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
     st.subheader(f"🎯 Top-Setups nach Qualität ({len(all_results)} Treffer)")
     cols = st.columns(4)
     heute_dt = datetime.now()
+    aktuelles_jahr = heute_dt.year
+
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
             earn_str = res.get('earn', "---"); status_txt = res.get('status', "Trend")
@@ -253,19 +297,19 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
             a_label = res.get('analyst_label', "Keine Analyse"); a_color = res.get('analyst_color', "#8b5cf6")
             mkt_cap = res.get('mkt_cap', 0); rsi_val = int(res.get('rsi', 50))
             rsi_style = "color: #ef4444; font-weight: 900;" if rsi_val >= 70 else "color: #10b981; font-weight: 700;" if rsi_val <= 35 else "color: #4b5563; font-weight: 700;"
-            delta_val = abs(res.get('delta', 0))
+            delta_val = abs(res.get('delta', 0.15))
             delta_col = "#10b981" if delta_val < 0.20 else "#f59e0b" if delta_val < 0.30 else "#ef4444"
             
-            # --- NEU: EM FARBE ---
             em_safety = res.get('em_safety', 1.0)
             em_col = "#10b981" if em_safety >= 1.5 else "#f59e0b" if em_safety >= 1.0 else "#ef4444"
             
             is_earning_risk = False
             if earn_str and earn_str != "---":
                 try:
-                    earn_date = datetime.strptime(f"{earn_str}2026", "%d.%m.%Y")
+                    earn_date = datetime.strptime(f"{earn_str}{aktuelles_jahr}", "%d.%m.%Y")
                     if 0 <= (earn_date - heute_dt).days <= res.get('tage', 14): is_earning_risk = True
                 except: pass
+            
             card_border, card_shadow, card_bg = ("4px solid #ef4444", "0 8px 16px rgba(239, 68, 68, 0.25)", "#fffcfc") if is_earning_risk else ("1px solid #e5e7eb", "0 4px 6px -1px rgba(0,0,0,0.05)", "#ffffff")
 
             html_code = f"""
@@ -601,4 +645,5 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
