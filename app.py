@@ -177,6 +177,18 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         all_results = []
 
         def check_single_stock(symbol):
+            # 1. Prüfen, ob wir im Test-Modus sind
+            if test_modus:
+                import random
+                # Wir simulieren eine perfekte Aktie, um das UI zu testen
+                return {
+                    'symbol': symbol, 'price': 150.0, 'y_pa': 18.5, 'strike': 135.0, 
+                    'puffer': 10.0, 'bid': 1.20, 'rsi': 45, 'earn': "2026-05-15", 
+                    'tage': 22, 'status': "🛠️ Simulation", 
+                    'delta': -0.15, 'stars_val': 3.0, 'stars_str': "⭐⭐⭐", 
+                    'analyst_label': "Strong Buy (Sim)", 'analyst_color': "#27ae60", 
+                    'mkt_cap': 150.5, 'em_pct': 5.5, 'em_safety': 1.8
+                }
             try:
                 # Kein künstliches Sleep mehr nötig bei fast_info!
                 tk = yf.Ticker(symbol, session=secure_session)
@@ -571,6 +583,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
