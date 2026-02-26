@@ -159,20 +159,18 @@ with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_
 
 st.markdown("---")
 
-# --- SEKTION: PROFI-SCANNER LOGIK (VOR DER ANZEIGE) ---
+# --- SEKTION: PROFI-SCANNER LOGIK (MIT ECHTEN OPTIONSDATEN) ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
-    with st.spinner("Analysiere Trends und Fundamentaldaten..."):
-        # --- 4. TICKER-LISTE BESTIMMEN ---
-        # Wir nutzen die Liste, die du oben in der Sidebar bereits definiert hast!
-        # Falls der Test-Modus aktiv ist, nutzen wir die festen Demo-Ticker.
+    with st.spinner("Rufe echte Markt- und Optionsdaten ab..."):
+        # --- 1. TICKER-LISTE BESTIMMEN ---
+        # Nutzt 'test_modus' (sim_checkbox) und 'ticker_liste' aus deiner Sidebar
         if test_modus:
             ticker_liste_to_scan = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"]
         else:
-            # Hier greifen wir auf die 'ticker_liste' zu, die du in der Sidebar (Zeile 60) erstellt hast
             ticker_liste_to_scan = ticker_liste 
 
         all_results = []
@@ -183,22 +181,20 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             from datetime import datetime, timedelta
             
             try:
-                # --- 1. DATEN-ABFRAGE (SIMULATION vs. ECHT) ---
+                # --- 2. DATEN-ABFRAGE (SIMULATION vs. ECHT) ---
                 if test_modus:
                     cp = random.uniform(80, 600)
                     rev_growth = random.uniform(-10, 95)
-                    # Zufällige SMA-Verhältnisse für den Test
                     above_sma200 = random.choice([True, True, False])
                     below_sma50 = random.choice([True, False])
                     rsi_val = random.randint(25, 75)
-                    # Options-Sim
                     puffer_val = random.uniform(7, 18)
                     yield_pa = random.uniform(10, 60)
                     strike_price, bid, delta_val = cp*(1-puffer_val/100), random.uniform(0.5, 5.0), random.uniform(-0.1, -0.4)
                     earn_str = (datetime.now() + timedelta(days=random.randint(2, 60))).strftime("%d.%m.%Y")
                     mkt_cap = random.uniform(10, 1500)
                 else:
-                    # ECHT-DATEN via yfinance
+                    # --- ECHTE DATEN VIA YFINANCE & SECURE_SESSION ---
                     tk = yf.Ticker(symbol, session=secure_session)
                     inf = tk.info
                     fast = tk.fast_info
@@ -206,22 +202,17 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     rev_growth = inf.get('revenueGrowth', 0) * 100
                     mkt_cap = inf.get('marketCap', 0) / 1e9
                     
-                    # Nächste Earnings formatieren
+                    # Nächste Earnings
                     earn_ts = inf.get('nextEarningsDate')
-                    if earn_ts:
-                        earn_str = datetime.fromtimestamp(earn_ts).strftime("%d.%m.%Y")
-                    else:
-                        earn_str = "---"
+                    earn_str = datetime.fromtimestamp(earn_ts).strftime("%d.%m.%Y") if earn_ts else "---"
 
-                    # SMA & RSI BERECHNUNG
+                    # SMA & RSI Berechnung
                     hist = tk.history(period="250d")
                     if len(hist) >= 200:
                         sma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
                         sma50 = hist['Close'].rolling(window=50).mean().iloc[-1]
                         above_sma200 = cp > sma200
                         below_sma50 = cp < sma50
-                        
-                        # RSI 14
                         delta = hist['Close'].diff()
                         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
                         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
@@ -230,29 +221,44 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     else:
                         above_sma200, below_sma50, rsi_val = False, False, 50
 
-                    # Hier Platz für deine echte Options-Chain Abfrage
-                    puffer_val, yield_pa, strike_price, bid, delta_val = 10.0, 15.0, cp*0.9, 1.0, -0.15
+                    # --- ECHTE OPTIONS-ABFRAGE ---
+                    try:
+                        expirations = tk.options
+                        if expirations:
+                            # Wir nehmen die Optionen mit ca. 30 Tagen Laufzeit
+                            opt = tk.option_chain(expirations[0])
+                            puts = opt.puts
+                            # Ziel-Strike basierend auf deinem Sidebar-Puffer (puffer_sid)
+                            target_strike = cp * (1 - (otm_puffer_slider / 100))
+                            idx = (puts['strike'] - target_strike).abs().idxmin()
+                            m_put = puts.loc[idx]
+                            
+                            strike_price = m_put['strike']
+                            bid = m_put['bid'] if m_put['bid'] > 0 else m_put['lastPrice']
+                            delta_val = m_put.get('delta', -0.15)
+                            puffer_val = ((cp - strike_price) / cp) * 100
+                            yield_pa = (bid / strike_price) * (365 / 30) * 100
+                        else:
+                            puffer_val, yield_pa, strike_price, bid, delta_val = 10.0, 0.0, cp*0.9, 0.0, 0.0
+                    except:
+                        puffer_val, yield_pa, strike_price, bid, delta_val = 10.0, 0.0, cp*0.9, 0.0, 0.0
 
-                # --- 2. TREND-LOGIK (Shield 🛡️ vs. Diamond 💎) ---
+                # --- 3. STATUS & SCORING ---
                 if above_sma200 and not below_sma50:
-                    t_status, t_icon, t_col = "Trend", "🛡️", "#10b981" # Grün
+                    t_status, t_icon, t_col = "Trend", "🛡️", "#10b981"
                 elif above_sma200 and below_sma50:
-                    t_status, t_icon, t_col = "Dip", "💎", "#3b82f6"   # Blau
+                    t_status, t_icon, t_col = "Dip", "💎", "#3b82f6"
                 else:
-                    t_status, t_icon, t_col = "Abwärts", "⚠️", "#ef4444" # Rot
+                    t_status, t_icon, t_col = "Abwärts", "⚠️", "#ef4444"
 
-                # --- 3. STERNE-SCORING (Basierend auf Wachstum) ---
                 if rev_growth >= 40:
                     g_label, g_bg, g_text, s_val = f"🚀 HYPER (+{rev_growth:.0f}%)", "#f3e8ff", "#8b5cf6", 5
                 elif rev_growth >= 20:
                     g_label, g_bg, g_text, s_val = f"💪 STARK (+{rev_growth:.0f}%)", "#dcfce7", "#10b981", 4
-                elif rev_growth >= 10:
-                    g_label, g_bg, g_text, s_val = f"📈 SOLIDE (+{rev_growth:.0f}%)", "#e0f2fe", "#0ea5e9", 3
                 else:
                     g_label, g_bg, g_text, s_val = "⚪ NEUTRAL", "#f3f4f6", "#6b7280", 2
 
-                # Statistische Sicherheit (EM)
-                em_pct = random.uniform(7, 14) if test_modus else 10.0
+                em_pct = 10.0 # Vereinfachung für Echt-Scan oder EM-Modell einfügen
                 em_safety = puffer_val / em_pct if em_pct > 0 else 1.0
 
                 return {
@@ -267,18 +273,16 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 return None
 
         # --- 4. FILTERUNG & SORTIERUNG ---
-        for s in ticker_liste:
+        for s in ticker_liste_to_scan:
             res = check_single_stock(s)
             if res:
-                # Nutzt deine Sidebar-Variable 'only_uptrend'
+                # Filtert nach deiner Checkbox 'trend_sid'
                 if only_uptrend:
                     if res['trend_status'] == "Trend":
                         all_results.append(res)
                 else:
-                    # Zeigt Trends UND Dips
                     all_results.append(res)
         
-        # Sortierung: Qualität (Sterne) zuerst, dann Rendite
         st.session_state.profi_scan_results = sorted(
             all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True
         )
@@ -586,6 +590,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
