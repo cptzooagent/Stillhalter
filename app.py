@@ -6,6 +6,25 @@ from scipy.stats import norm
 from datetime import datetime, timedelta
 import concurrent.futures
 import time
+from curl_cffi.requests import Session as FastSession
+
+# Wir bauen einen Adapter, der curl_cffi nutzt
+class CurlCffiSession(FastSession):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "*/*",
+            "Accept-Language": "en-US,en;q=0.9",
+        })
+
+    def request(self, method, url, *args, **kwargs):
+        # Impersonate Chrome (das ist der magische Teil)
+        kwargs.setdefault("impersonate", "chrome120")
+        return super().request(method, url, *args, **kwargs)
+
+# Diese Session nutzen wir jetzt global
+secure_session = CurlCffiSession()
 
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
@@ -612,4 +631,5 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
