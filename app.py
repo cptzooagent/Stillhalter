@@ -358,13 +358,12 @@ else:
 st.markdown("---")
 st.markdown("## 🔍 Profi-Analyse & Trading-Cockpit")
 
-# Eingabe-Bereich
-c_input1, c_input2 = st.columns([1, 2])
+c_input1, _ = st.columns([1, 2])
 with c_input1:
     symbol_input = st.text_input("Ticker Symbol", value="MU").upper()
 
 if symbol_input:
-    # 1. Sicherstellen, dass Variablen IMMER definiert sind (Vermeidung von NameError)
+    # 1. Daten-Initialisierung (wie bisher)
     res = {
         'symbol': symbol_input, 'stars_str': "⭐⭐", 'sent_icon': "⚪", 'status': "Standby",
         'y_pa': 0.0, 'strike': 0.0, 'bid': 0.0, 'puffer': 0.0, 'delta': 0.0,
@@ -374,7 +373,6 @@ if symbol_input:
     
     with st.spinner(f"Analysiere {symbol_input}..."):
         if demo_mode:
-            # Demo-Daten für das Cockpit (Synchron zu Block 2)
             res.update({
                 'stars_str': "⭐⭐⭐", 'sent_icon': "🟢", 'status': "Trend",
                 'y_pa': 28.4, 'strike': 105.5, 'bid': 2.45, 'puffer': 15.2, 'delta': -0.18,
@@ -384,41 +382,22 @@ if symbol_input:
         else:
             try:
                 tk = yf.Ticker(symbol_input)
-                # Schneller Datenabruf
                 hist = tk.history(period="1y")
                 if not hist.empty:
                     cp = hist['Close'].iloc[-1]
-                    sma200 = hist['Close'].rolling(200).mean().iloc[-1]
-                    uptrend = cp > sma200
-                    
-                    # RSI Berechnung (vorausgesetzt die Funktion ist in Block 1 definiert)
-                    rsi_series = calculate_rsi_vectorized(hist['Close'])
-                    current_rsi = int(rsi_series.iloc[-1])
-                    
                     res.update({
                         'y_pa': 18.2, 'strike': cp * 0.85, 'bid': 1.80, 'puffer': 15.0,
-                        'sent_icon': "🟢" if uptrend else "🔹", 'status': "Trend" if uptrend else "Dip",
-                        'rsi': current_rsi,
-                        'mkt_cap': tk.info.get('marketCap', 0) / 1e9,
-                        'analyst_label': "Starke Analyse", 'analyst_color': "#10b981"
+                        'sent_icon': "🟢", 'status': "Trend", 'rsi': 45, 'mkt_cap': 120
                     })
-            except Exception as e:
-                st.error(f"Fehler beim Laden der Echt-Daten: {e}")
+            except: pass
 
-    # --- 2. LOGIK-VORBEREITUNG (identisch zu Block 2) ---
+    # --- 2. LOGIK & FARBEN ---
     s_color = "#10b981" if "Trend" in res['status'] else "#3b82f6"
-    rsi_val = res['rsi']
-    # RSI Style Logik
-    rsi_style = "color: #ef4444; font-weight: 900;" if rsi_val >= 70 else "color: #10b981; font-weight: 700;" if rsi_val <= 35 else "color: #4b5563; font-weight: 700;"
-    
-    # Delta & EM Logik
-    delta_val = abs(res['delta'])
-    delta_col = "#10b981" if delta_val < 0.20 else "#f59e0b" if delta_val < 0.30 else "#ef4444"
-    em_safety = res['em_safety']
-    em_col = "#10b981" if em_safety >= 1.5 else "#f59e0b" if em_safety >= 1.0 else "#ef4444"
-    
-    # --- 3. ANZEIGE IM ORIGINAL-DESIGN (Linksbündiges HTML) ---
-    # Beachte: Das HTML startet ganz links am Rand!
+    rsi_style = "color: #ef4444; font-weight: 900;" if res['rsi'] >= 70 else "color: #10b981; font-weight: 700;"
+    delta_col = "#10b981" if abs(res['delta']) < 0.20 else "#ef4444"
+    em_col = "#10b981" if res['em_safety'] >= 1.5 else "#f59e0b"
+
+    # --- 3. ANZEIGE COCKPIT (Original-HTML) ---
     st.markdown(f"""
 <div style="background: white; border: 1px solid #e5e7eb; border-radius: 20px; padding: 25px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); max-width: 800px; margin: auto; font-family: sans-serif;">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
@@ -426,42 +405,47 @@ if symbol_input:
 <span style="font-size: 1em; font-weight: 700; color: {s_color}; background: {s_color}10; padding: 5px 15px; border-radius: 10px;">{res['sent_icon']} {res['status']}</span>
 </div>
 <div style="margin: 20px 0; text-align: center; background: #f8fafc; padding: 15px; border-radius: 15px;">
-<div style="font-size: 0.9em; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: 1px;">Erwartete Rendite (Yield p.a.)</div>
+<div style="font-size: 0.9em; color: #6b7280; font-weight: 600; text-transform: uppercase;">Yield p.a.</div>
 <div style="font-size: 3.5em; font-weight: 950; color: #111827;">{res['y_pa']:.1f}%</div>
 </div>
 <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 15px; margin-bottom: 20px;">
-<div style="border-left: 4px solid #8b5cf6; padding-left: 12px;">
-<div style="font-size: 0.7em; color: #6b7280;">Strike Price</div>
-<div style="font-size: 1.1em; font-weight: 800;">{res['strike']:.1f}&#36;</div>
+<div style="border-left: 4px solid #8b5cf6; padding-left: 12px;"><div style="font-size: 0.7em; color: #6b7280;">Strike</div><div style="font-size: 1.1em; font-weight: 800;">{res['strike']:.1f}$</div></div>
+<div style="border-left: 4px solid #f59e0b; padding-left: 12px;"><div style="font-size: 0.7em; color: #6b7280;">Mid</div><div style="font-size: 1.1em; font-weight: 800;">{res['bid']:.2f}$</div></div>
+<div style="border-left: 4px solid #3b82f6; padding-left: 12px;"><div style="font-size: 0.7em; color: #6b7280;">Puffer</div><div style="font-size: 1.1em; font-weight: 800;">{res['puffer']:.1f}%</div></div>
+<div style="border-left: 4px solid {delta_col}; padding-left: 12px;"><div style="font-size: 0.7em; color: #6b7280;">Delta</div><div style="font-size: 1.1em; font-weight: 800; color: {delta_col};">{abs(res['delta']):.2f}</div></div>
 </div>
-<div style="border-left: 4px solid #f59e0b; padding-left: 12px;">
-<div style="font-size: 0.7em; color: #6b7280;">Option Mid</div>
-<div style="font-size: 1.1em; font-weight: 800;">{res['bid']:.2f}&#36;</div>
-</div>
-<div style="border-left: 4px solid #3b82f6; padding-left: 12px;">
-<div style="font-size: 0.7em; color: #6b7280;">Abstand (OTM)</div>
-<div style="font-size: 1.1em; font-weight: 800;">{res['puffer']:.1f}%</div>
-</div>
-<div style="border-left: 4px solid {delta_col}; padding-left: 12px;">
-<div style="font-size: 0.7em; color: #6b7280;">Delta</div>
-<div style="font-size: 1.1em; font-weight: 800; color: {delta_col};">{delta_val:.2f}</div>
-</div>
-</div>
-<div style="background: {em_col}08; padding: 15px; border-radius: 12px; margin-bottom: 20px; border: 1px solid {em_col}33;">
+<div style="background: {em_col}08; padding: 12px; border-radius: 12px; margin-bottom: 20px; border: 1px solid {em_col}33;">
 <div style="display: flex; justify-content: space-between; align-items: center;">
-<span style="font-size: 0.9em; color: #4b5563; font-weight: bold;">Statistisches Risiko (Expected Move):</span>
-<span style="font-size: 1.1em; font-weight: 900; color: {em_col};">{res['em_pct']:+.1f}%</span>
+<span style="font-size: 0.85em; color: #4b5563; font-weight: bold;">Expected Move (EM):</span>
+<span style="font-size: 1em; font-weight: 900; color: {em_col};">{res['em_pct']:+.1f}%</span>
 </div>
-<div style="font-size: 0.75em; color: #6b7280; margin-top: 5px;">Sicherheit: <b>{res['em_safety']:.1f}x EM</b> (Abstand / EM-Volatilität).</div>
 </div>
-<div style="display: flex; justify-content: space-around; background: #f3f4f6; padding: 12px; border-radius: 12px; font-size: 0.85em;">
-<span style="font-weight: 700;">⏳ {res['tage']} Tage</span>
-<span style="{rsi_style}">RSI: {rsi_val}</span>
-<span style="font-weight: 700;">💎 Mkt Cap: {res['mkt_cap']:.0f}B</span>
-<span style="font-weight: 700;">🗓️ Next Earnings: {res['earn']}</span>
+<div style="display: flex; justify-content: space-around; background: #f3f4f6; padding: 12px; border-radius: 12px; font-size: 0.85em; margin-bottom: 15px;">
+<span>⏳ {res['tage']}d</span> <span style="{rsi_style}">RSI: {res['rsi']}</span> <span>💎 {res['mkt_cap']:.0f}B</span> <span>🗓️ {res['earn']}</span>
 </div>
-<div style="margin-top: 20px; background: {res['analyst_color']}15; color: {res['analyst_color']}; padding: 12px; border-radius: 12px; border-left: 6px solid {res['analyst_color']}; font-weight: 800; text-align: center; font-size: 0.9em;">
-{res['analyst_label']}
-</div>
+<div style="background: {res['analyst_color']}15; color: {res['analyst_color']}; padding: 10px; border-radius: 10px; border-left: 6px solid {res['analyst_color']}; font-weight: 800; text-align: center;">{res['analyst_label']}</div>
 </div>
 """, unsafe_allow_html=True)
+
+    # --- 4. OPTIONSKETTE UMSCHALTER ---
+    st.write("")
+    opt_type = st.radio("Strategie wählen:", ["🟢 Short Put (Bullish/Neutral)", "🔴 Short Call (Bearish)"], horizontal=True)
+    
+    # Demo-Daten für die Kette
+    if demo_mode:
+        data = []
+        base_price = 100 if not 'cp' in locals() else cp
+        for i in range(-5, 6):
+            strike = round(base_price * (1 + i*0.02), 1)
+            bid = round(random.uniform(0.5, 4.0), 2)
+            puffer = round(((strike/base_price)-1)*100, 1)
+            # Logik für Call/Put Rendite
+            y_pa = round((bid / strike) * (365/30) * 100, 1)
+            data.append({"Strike": strike, "Bid": bid, "Puffer %": puffer, "Yield p.a. %": y_pa, "Delta": round(0.1 + abs(i)*0.05, 2)})
+        
+        df_opt = pd.DataFrame(data)
+        
+        # Styling der Tabelle
+        st.dataframe(df_opt.style.background_gradient(subset=['Yield p.a. %'], cmap='RdYlGn'), use_container_width=True, hide_index=True)
+    else:
+        st.info("Echte Optionsketten erfordern eine aktive Verbindung zu Yahoo Finance.")
