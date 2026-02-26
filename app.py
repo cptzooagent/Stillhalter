@@ -209,7 +209,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 elif above_sma200 and below_sma50:
                     t_status, t_icon, t_col = "Dip", "💎", "#3b82f6"   # Diamant
                 else:
-                    t_status, t_icon, t_col = "Abwärtstrend", "⚠️", "#ef4444"
+                    t_status, t_icon, t_col = "Vorsicht", "⚠️", "#ef4444"
 
                 # --- GROWTH & STERNE (Fundamentale Bewertung) ---
                 if rev_growth >= 40:
@@ -554,6 +554,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
