@@ -166,8 +166,15 @@ if 'profi_scan_results' not in st.session_state:
 
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     with st.spinner("Analysiere Trends und Fundamentaldaten..."):
-        # Ticker-Liste bestimmen
-        ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else get_combined_watchlist()
+        # --- 4. TICKER-LISTE BESTIMMEN ---
+        # Wir nutzen die Liste, die du oben in der Sidebar bereits definiert hast!
+        # Falls der Test-Modus aktiv ist, nutzen wir die festen Demo-Ticker.
+        if test_modus:
+            ticker_liste_to_scan = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"]
+        else:
+            # Hier greifen wir auf die 'ticker_liste' zu, die du in der Sidebar (Zeile 60) erstellt hast
+            ticker_liste_to_scan = ticker_liste 
+
         all_results = []
 
         def check_single_stock(symbol):
@@ -579,6 +586,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
