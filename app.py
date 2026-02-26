@@ -216,14 +216,40 @@ if st.button("🚀 S&P 500 Profi-Scan starten", key="run_pro_scan", use_containe
                         
                         rsi_val = calculate_rsi_vectorized(df['Close']).iloc[-1]
 
-                        # In Ergebnisse speichern
+                        # --- INDIVIDUELLE BERECHNUNG ---
+                        # 1. EM (Expected Move) basierend auf der 20-Tage Volatilität (annualisiert auf 30 Tage)
+                        log_returns = np.log(df['Close'] / df['Close'].shift(1))
+                        vol_30d = log_returns.std() * np.sqrt(252) # Historische Volatilität (HV)
+                        # Erwartete Bewegung für 30 Tage (1 Standardabweichung)
+                        em_pct = (vol_30d * np.sqrt(30/365)) * 100 
+                    
+                        # 2. Delta Annäherung (Grob-Formel für OTM Puts)
+                        # Je höher die Vola und je kleiner der Puffer, desto höher das Delta
+                        puffer_val = float(otm_puffer_slider)
+                        # Vereinfachtes Modell: Delta steigt, wenn Puffer < EM
+                        delta_approx = -0.5 * (1 - (puffer_val / (em_pct * 2)))
+                        delta_final = max(min(delta_approx, -0.05), -0.50) # Begrenzung auf sinnvolle Werte
+
+                        # 3. EM Safety Score
+                        em_safety = puffer_val / em_pct if em_pct > 0 else 1.0
+
                         all_results.append({
-                            'symbol': symbol, 'stars_str': "⭐⭐⭐" if rsi_val < 45 else "⭐⭐",
-                            'sent_icon': "🟢" if is_uptrend else "🔹", 'status': "Trend" if is_uptrend else "Dip",
-                            'y_pa': 18.0, 'strike': cp * (1 - otm_puffer_slider/100), 'bid': cp * 0.015,
-                            'puffer': float(otm_puffer_slider), 'delta': -0.15, 'em_pct': 3.2,
-                            'em_safety': 1.4, 'tage': 30, 'rsi': int(rsi_val), 'mkt_cap': mkt_cap,
-                            'earn': "---", 'analyst_label': "Uptrend" if is_uptrend else "Rebound",
+                            'symbol': symbol, 
+                            'stars_str': "⭐⭐⭐" if (is_uptrend and rsi_val < 45) else "⭐⭐",
+                            'sent_icon': "🟢" if is_uptrend else "🔹", 
+                            'status': "Trend" if is_uptrend else "Dip",
+                            'y_pa': 12.0 + (vol_30d * 40), # Prämie steigt mit Volatilität!
+                            'strike': cp * (1 - puffer_val/100), 
+                            'bid': cp * (vol_30d * 0.05), # Höhere Vola = Höhere Prämie
+                            'puffer': puffer_val, 
+                            'delta': delta_final, 
+                            'em_pct': em_pct, 
+                            'em_safety': em_safety, 
+                            'tage': 30, 
+                            'rsi': int(rsi_val), 
+                            'mkt_cap': mkt_cap,
+                            'earn': "---", 
+                            'analyst_label': "Uptrend" if is_uptrend else "Rebound",
                             'analyst_color': "#10b981" if is_uptrend else "#3498db"
                         })
                     except:
@@ -520,6 +546,7 @@ if symbol_input:
         )
     else:
         st.info(f"Lade echte {opt_type} Kette von Yahoo Finance...")
+
 
 
 
