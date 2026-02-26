@@ -205,11 +205,11 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     # Platzhalter für deine Options-Logik
                     puffer_val, yield_pa, strike_price, bid, delta_val, rsi_val = 10.0, 18.0, cp*0.9, 1.5, -0.15, 50
 
-                # --- 2. TREND-LOGIK (SMA BASIERT) ---
+                # --- SMA TREND LOGIK UPDATE ---
                 if above_sma200 and not below_sma50:
-                    t_status, t_icon, t_col = "Aufwärtstrend", "📈", "#10b981"
+                    t_status, t_icon, t_col = "Trend", "🛡️", "#10b981"  # Schutzschild für Trend
                 elif above_sma200 and below_sma50:
-                    t_status, t_icon, t_col = "Dip im Trend", "📉", "#3b82f6"
+                    t_status, t_icon, t_col = "Dip", "💎", "#3b82f6"    # Diamant für Dip
                 else:
                     t_status, t_icon, t_col = "Abwärtstrend", "⚠️", "#ef4444"
 
@@ -582,6 +582,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
