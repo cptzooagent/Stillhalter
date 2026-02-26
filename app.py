@@ -63,6 +63,9 @@ with st.sidebar:
     ticker_input = st.text_area("Ticker-Liste", value=default_tickers)
     ticker_liste = [s.strip().upper() for s in ticker_input.split(",") if s.strip()]
 
+@st.cache_data(ttl=1800) # Speichert das Ergebnis für 30 Minuten (1800 Sek)
+def get_market_data():
+
 # --- 2. MARKT-DATEN FUNKTIONEN ---
 
 def get_market_data():
@@ -571,6 +574,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
