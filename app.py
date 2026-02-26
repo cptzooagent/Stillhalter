@@ -159,15 +159,14 @@ with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_
 
 st.markdown("---")
 
-# --- SEKTION: PROFI-SCANNER LOGIK (MIT ECHTEN OPTIONSDATEN) ---
+# --- SEKTION: PROFI-SCANNER LOGIK (STABIL & LAUFZEIT-OPTIMIERT) ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
-    with st.spinner("Rufe echte Markt- und Optionsdaten ab..."):
-        # --- 1. TICKER-LISTE BESTIMMEN ---
-        # Nutzt 'test_modus' (sim_checkbox) und 'ticker_liste' aus deiner Sidebar
+    with st.spinner("Analysiere Optionen im Fenster 9-25 Tage..."):
+        # 1. TICKER-LISTE BESTIMMEN
         if test_modus:
             ticker_liste_to_scan = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"]
         else:
@@ -178,134 +177,116 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         def check_single_stock(symbol):
             import random
             import pandas as pd
-            from datetime import datetime, timedelta
+            from datetime import datetime
             
             try:
-                # --- 2. DATEN-ABFRAGE (SIMULATION vs. ECHT) ---
-                if test_modus:
-                    cp = random.uniform(80, 600)
-                    rev_growth = random.uniform(-10, 95)
-                    above_sma200 = random.choice([True, True, False])
-                    below_sma50 = random.choice([True, False])
-                    rsi_val = random.randint(25, 75)
-                    puffer_val = random.uniform(7, 18)
-                    yield_pa = random.uniform(10, 60)
-                    strike_price, bid, delta_val = cp*(1-puffer_val/100), random.uniform(0.5, 5.0), random.uniform(-0.1, -0.4)
-                    earn_str = (datetime.now() + timedelta(days=random.randint(2, 60))).strftime("%d.%m.%Y")
-                    mkt_cap = random.uniform(10, 1500)
-                else:
-                    # --- ECHTE DATEN VIA YFINANCE & SECURE_SESSION ---
-                    tk = yf.Ticker(symbol, session=secure_session)
-                    inf = tk.info
-                    fast = tk.fast_info
-                    cp = fast.last_price
-                    rev_growth = inf.get('revenueGrowth', 0) * 100
-                    mkt_cap = inf.get('marketCap', 0) / 1e9
+                # --- A. BASIS-DATEN ---
+                tk = yf.Ticker(symbol, session=secure_session)
+                fast = tk.fast_info
+                cp = fast.last_price
+                
+                # Initialisierung der Fallback-Werte (verhindert Abbruch)
+                days_display = 20
+                bid = 0.0
+                strike_price = cp * 0.9
+                yield_pa = 0.0
+                puffer_val = otm_puffer_slider # Nutzt deinen Slider-Wert
+                rsi_val = 50
+                uptrend = False
+                
+                # --- B. OPTIONS-SUCHE (9-25 TAGE +- 2) ---
+                exp_dates = tk.options
+                if exp_dates:
+                    today = datetime.now().date()
+                    best_date = None
+                    # Dein Fenster: 9-2=7 bis 25+2=27
+                    for d_str in exp_dates:
+                        d_obj = datetime.strptime(d_str, '%Y-%m-%d').date()
+                        diff = (d_obj - today).days
+                        if 7 <= diff <= 27:
+                            best_date = d_str
+                            days_display = diff
+                            break
                     
-                    # Nächste Earnings
-                    earn_ts = inf.get('nextEarningsDate')
-                    earn_str = datetime.fromtimestamp(earn_ts).strftime("%d.%m.%Y") if earn_ts else "---"
+                    # Fallback falls kein Datum im Fenster
+                    if not best_date:
+                        best_date = exp_dates[0]
+                        days_display = max((datetime.strptime(best_date, '%Y-%m-%d').date() - today).days, 1)
 
-                    # SMA & RSI Berechnung
-                    hist = tk.history(period="250d")
-                    if len(hist) >= 200:
-                        sma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
-                        sma50 = hist['Close'].rolling(window=50).mean().iloc[-1]
-                        above_sma200 = cp > sma200
-                        below_sma50 = cp < sma50
-                        delta = hist['Close'].diff()
-                        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-                        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-                        rs = gain / loss
-                        rsi_val = int(100 - (100 / (1 + rs.iloc[-1])))
-                    else:
-                        above_sma200, below_sma50, rsi_val = False, False, 50
+                    # Optionsdaten laden
+                    opt = tk.option_chain(best_date)
+                    puts = opt.puts
+                    
+                    if not puts.empty:
+                        target_strike = cp * (1 - (otm_puffer_slider / 100))
+                        idx = (puts['strike'] - target_strike).abs().idxmin()
+                        m_put = puts.loc[idx]
+                        
+                        strike_price = m_put['strike']
+                        # Bid-Logik (Marktpreis oder letzter Preis)
+                        bid = m_put['bid'] if m_put['bid'] > 0.05 else m_put['lastPrice']
+                        bid = max(bid, 0.01)
+                        
+                        puffer_val = ((cp - strike_price) / cp) * 100
+                        yield_pa = (bid / strike_price) * (365 / days_display) * 100
 
-                    # --- OPTIMIERTE OPTIONS-SUCHE (ZIEL: 9-25 TAGE) ---
-                    try:
-                        exp_dates = tk.options
-                        if exp_dates:
-                            today = datetime.now().date()
-                            best_date = None
-                            target_days_min = 9 - 2  # Untergrenze mit Puffer
-                            target_days_max = 25 + 2 # Obergrenze mit Puffer
-                            
-                            # Wir suchen das erste Datum, das in unser Fenster passt
-                            for date_str in exp_dates:
-                                exp_dt = datetime.strptime(date_str, '%Y-%m-%d').date()
-                                days_to_exp = (exp_dt - today).days
-                                
-                                if target_days_min <= days_to_exp <= target_days_max:
-                                    best_date = date_str
-                                    days_display = days_to_exp
-                                    break # Erstes passendes Datum gefunden
-                            
-                            # Fallback: Falls nichts im Fenster ist, nimm das nächste verfügbare
-                            if not best_date:
-                                best_date = exp_dates[0]
-                                days_display = (datetime.strptime(best_date, '%Y-%m-%d').date() - today).days
+                # --- C. TECHNISCHE INDIKATOREN ---
+                hist = tk.history(period="250d")
+                if not hist.empty and len(hist) >= 200:
+                    # SMA 200 Trend
+                    sma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
+                    sma50 = hist['Close'].rolling(window=50).mean().iloc[-1]
+                    uptrend = cp > sma200
+                    below_sma50 = cp < sma50
+                    
+                    # RSI 14
+                    delta = hist['Close'].diff()
+                    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                    rs = gain / loss
+                    rsi_val = int(100 - (100 / (1 + rs.iloc[-1])))
 
-                            opt = tk.option_chain(best_date)
-                            puts = opt.puts
-                            
-                            # Strike-Findung basierend auf deinem Slider
-                            target_strike = cp * (1 - (otm_puffer_slider / 100))
-                            idx = (puts['strike'] - target_strike).abs().idxmin()
-                            m_put = puts.loc[idx]
-                            
-                            strike_price = m_put['strike']
-                            
-                            # Preis-Ermittlung (Bid oder LastPrice als Fallback)
-                            bid = m_put['bid'] if m_put['bid'] > 0.05 else m_put['lastPrice']
-                            bid = max(bid, 0.01) # Sicherheit gegen 0.0
-                            
-                            puffer_val = ((cp - strike_price) / cp) * 100
-                            yield_pa = (bid / strike_price) * (365 / days_display) * 100
-                        else:
-                            puffer_val, yield_pa, strike_price, bid, days_display = 10.0, 0.0, cp*0.9, 0.0, 30
-                    except:
-                        puffer_val, yield_pa, strike_price, bid, days_display = 10.0, 0.0, cp*0.9, 0.0, 30
+                # --- D. FUNDAMENTAL-DATEN & STATUS ---
+                inf = tk.info
+                rev_growth = inf.get('revenueGrowth', 0) * 100
+                mkt_cap = inf.get('marketCap', 0) / 1e9
+                earn_ts = inf.get('nextEarningsDate')
+                earn_str = datetime.fromtimestamp(earn_ts).strftime("%d.%m.%Y") if earn_ts else "---"
 
-                # --- 3. STATUS & SCORING ---
-                if above_sma200 and not below_sma50:
+                # Trend-Status Logik
+                if uptrend and cp >= sma50:
                     t_status, t_icon, t_col = "Trend", "🛡️", "#10b981"
-                elif above_sma200 and below_sma50:
+                elif uptrend and cp < sma50:
                     t_status, t_icon, t_col = "Dip", "💎", "#3b82f6"
                 else:
                     t_status, t_icon, t_col = "Abwärts", "⚠️", "#ef4444"
 
-                if rev_growth >= 40:
-                    g_label, g_bg, g_text, s_val = f"🚀 HYPER (+{rev_growth:.0f}%)", "#f3e8ff", "#8b5cf6", 5
-                elif rev_growth >= 20:
-                    g_label, g_bg, g_text, s_val = f"💪 STARK (+{rev_growth:.0f}%)", "#dcfce7", "#10b981", 4
-                else:
-                    g_label, g_bg, g_text, s_val = "⚪ NEUTRAL", "#f3f4f6", "#6b7280", 2
-
-                em_pct = 10.0 # Vereinfachung für Echt-Scan oder EM-Modell einfügen
-                em_safety = puffer_val / em_pct if em_pct > 0 else 1.0
+                # Sterne-Scoring
+                s_val = 5 if rev_growth >= 40 else 4 if rev_growth >= 20 else 3 if rev_growth >= 10 else 2
 
                 return {
                     'symbol': symbol, 'price': cp, 'y_pa': yield_pa, 'strike': strike_price,
-                    'puffer': puffer_val, 'bid': bid, 'delta': delta_val, 'rsi': rsi_val,
-                    'earn': earn_str, 'tage': 30, 'stars_val': s_val, 'stars_str': "⭐" * s_val,
+                    'puffer': puffer_val, 'bid': bid, 'delta': 0.15, 'rsi': rsi_val,
+                    'earn': earn_str, 'tage': days_display, 'stars_val': s_val, 'stars_str': "⭐" * s_val,
                     'trend_status': t_status, 'trend_icon': t_icon, 'trend_color': t_col,
-                    'growth_label': g_label, 'growth_color': g_bg, 'growth_text_color': g_text,
-                    'em_pct': em_pct, 'em_safety': em_safety, 'mkt_cap': mkt_cap
+                    'growth_label': f"Wachstum: {rev_growth:.0f}%", 'mkt_cap': mkt_cap
                 }
             except Exception as e:
+                # Verhindert den kompletten Abbruch, überspringt nur den fehlerhaften Ticker
                 return None
 
-        # --- 4. FILTERUNG & SORTIERUNG ---
+        # --- 4. EXECUTION ---
         for s in ticker_liste_to_scan:
             res = check_single_stock(s)
             if res:
-                # Filtert nach deiner Checkbox 'trend_sid'
+                # Filter: Nur Aufwärtstrend (falls in Sidebar gewählt)
                 if only_uptrend:
-                    if res['trend_status'] == "Trend":
+                    if res['trend_status'] in ["Trend", "Dip"]:
                         all_results.append(res)
                 else:
                     all_results.append(res)
         
+        # Sortierung nach Qualität und Rendite
         st.session_state.profi_scan_results = sorted(
             all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True
         )
@@ -606,6 +587,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
