@@ -159,13 +159,14 @@ with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_
 
 st.markdown("---")
 
-# --- SEKTION 1: PROFI-SCANNER ---
+# --- SEKTION 1: PROFI-SCANNER LOGIK ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     with st.spinner("Markt-Scanner analysiert Ticker..."):
+        # Ticker-Auswahl (Simulation vs. Echt)
         ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else get_combined_watchlist()
         all_results = []
 
@@ -176,20 +177,25 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             # --- 1. DATEN-LOGIK (SIMULATION ODER ECHT) ---
             if test_modus:
                 cp = random.uniform(80, 600)
-                puffer_val = random.uniform(7, 18)
+                puffer_val = random.uniform(5, 20)
                 strike_price = cp * (1 - (puffer_val / 100))
-                yield_pa = random.uniform(12, 65)
-                bid = random.uniform(0.80, 6.50)
-                delta_val = random.uniform(-0.08, -0.40)
-                rsi_val = random.randint(28, 78)
-                rev_growth = random.uniform(-15, 95)
-                mkt_cap = random.uniform(5, 800)
-                tage_rest = random.choice([10, 14, 21, 28, 45])
-                if random.random() > 0.7:
-                    earn_dt = datetime.now() + timedelta(days=random.randint(1, 7))
+                yield_pa = random.uniform(5, 75)  # Breitere Spanne für Test
+                bid = random.uniform(0.50, 8.50)
+                delta_val = random.uniform(-0.05, -0.45)
+                rsi_val = random.randint(20, 85)
+                rev_growth = random.uniform(-20, 110)
+                mkt_cap = random.uniform(2, 900)
+                tage_rest = random.choice([7, 14, 28, 45])
+                
+                # Earnings-Simulation
+                if random.random() > 0.75:
+                    earn_dt = datetime.now() + timedelta(days=random.randint(1, 6))
                 else:
-                    earn_dt = datetime.now() + timedelta(days=random.randint(20, 70))
+                    earn_dt = datetime.now() + timedelta(days=random.randint(15, 80))
                 earn_str = earn_dt.strftime("%d.%m.%Y")
+                
+                # Sterne-Simulation (1 bis 5 für Sortier-Test)
+                stars_count = random.randint(1, 5)
             else:
                 try:
                     tk = yf.Ticker(symbol, session=secure_session)
@@ -200,10 +206,12 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     mkt_cap = fast.market_cap / 1e9
                     earn_str = inf.get('nextEarningsDate', "---")
                     tage_rest = 30 
-                    strike_price, puffer_val, yield_pa, bid, delta_val, rsi_val = cp*0.9, 10.0, 18.0, 1.25, -0.15, 50
+                    # Hier deine Options-Logik einfügen
+                    strike_price, puffer_val, yield_pa, bid, delta_val, rsi_val = cp*0.9, 10.0, 15.0, 1.10, -0.15, 50
+                    stars_count = 3 # Standard
                 except: return None
 
-            # --- 2. LABEL-LOGIK ---
+            # --- 2. GROWTH-LABEL LOGIK ---
             if rev_growth >= 40:
                 g_label, g_bg, g_text = f"🚀 HYPER-GROWTH (+{rev_growth:.0f}% Wachst.)", "#f3e8ff", "#8b5cf6"
             elif rev_growth >= 15:
@@ -211,14 +219,18 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             else:
                 g_label, g_bg, g_text = "⚪ NEUTRAL", "#f3f4f6", "#6b7280"
 
-            em_pct = random.uniform(7, 14) if test_modus else 10.0
+            # --- 3. EM & SICHERHEIT ---
+            em_pct = random.uniform(6, 16) if test_modus else 10.0
             em_safety = puffer_val / em_pct if em_pct > 0 else 1.0
 
             return {
                 'symbol': symbol, 'price': cp, 'y_pa': yield_pa, 'strike': strike_price,
                 'puffer': puffer_val, 'bid': bid, 'delta': delta_val, 'rsi': rsi_val,
                 'earn': earn_str, 'tage': tage_rest, 'mkt_cap': mkt_cap,
-                'stars_str': "⭐⭐⭐" if yield_pa > 20 else "⭐⭐", 'status': "Trend", 'sent_icon': "🔵",
+                'stars_val': stars_count, # Numerischer Wert für Sortierung
+                'stars_str': "⭐" * stars_count, 
+                'status': "Trend" if rsi_val < 70 else "Overbought", 
+                'sent_icon': "🟢" if rsi_val < 50 else "🟡",
                 'growth_label': g_label, 'growth_color': g_bg, 'growth_text_color': g_text,
                 'em_pct': em_pct, 'em_safety': em_safety
             }
@@ -228,7 +240,14 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             res = check_single_stock(s)
             if res: all_results.append(res)
         
-        st.session_state.profi_scan_results = all_results
+        # --- 4. SORTIERUNG (VON STARK NACH SCHWACH) ---
+        # 1. Kriterium: Sterne (stars_val) absteigend
+        # 2. Kriterium: Rendite (y_pa) absteigend
+        st.session_state.profi_scan_results = sorted(
+            all_results, 
+            key=lambda x: (x['stars_val'], x['y_pa']), 
+            reverse=True
+        )
 
 # --- 3. ANZEIGE-LOGIK (DIE KACHELN) ---
 if st.session_state.profi_scan_results:
@@ -546,3 +565,4 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
