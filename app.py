@@ -148,22 +148,33 @@ c4.metric("Nasdaq RSI", f"{int(rsi_ndq)}", delta="HEISS" if rsi_ndq > 70 else "K
 
 st.markdown("---")
 
-# --- SEKTION 1: PROFI-SCANNER (OPTIMIERTE VERSION) ---
+# --- BLOCK 2: PROFI-SCANNER (REPARIERT & STABILISIERT) ---
+import concurrent.futures  # UNVERZICHTBAR: Behebt den NameError
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
-if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_width=True):
+# Hilfsfunktion für die Sterne-Logik im Scanner
+def get_stars(info, uptrend):
+    analyst_txt, _ = get_analyst_conviction(info)
+    s_val = 1.0
+    if "HYPER" in analyst_txt: s_val = 3.0
+    elif "Stark" in analyst_txt: s_val = 2.0
+    if uptrend: s_val += 1.0
+    return s_val, "⭐" * int(s_val)
+
+if st.button("🚀 Profi-Scan starten", key="run_pro_scan", use_container_width=True):
     p_puffer = otm_puffer_slider / 100 
     p_min_yield = min_yield_pa
     p_min_cap = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
-    with st.spinner("Markt-Scanner analysiert Ticker via High-Speed Batch..."):
+    with st.spinner("Scanne Markt mit reduzierter Last (3 Worker)..."):
         # Ticker-Liste bestimmen
-        ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else get_combined_watchlist()
+        ticker_liste = ["APP", "AVGO", "NET", "CRWD", "NVDA", "HOOD", "TSLA", "PLTR", "COIN", "MSTR", "MU", "LRCX"] if test_modus else get_combined_watchlist()
         
-        # 1. SCHRITT: BATCH DOWNLOAD (Ein Request für alle Kurse)
+        # 1. BATCH DOWNLOAD (Basis-Daten ziehen)
+        # Wir ziehen 250 Tage um SMA200 sicher berechnen zu können
         batch_data = yf.download(ticker_liste, period="250d", group_by='ticker', auto_adjust=True, progress=False)
         
         status_text = st.empty()
@@ -172,111 +183,78 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_widt
 
         def check_single_stock(symbol):
             try:
-                # Daten aus Batch extrahieren (Null Request-Kosten)
-                if len(ticker_liste) > 1:
-                    hist = batch_data[symbol]
-                else:
-                    hist = batch_data
+                # Daten-Extraktion aus Batch
+                hist = batch_data[symbol] if len(ticker_liste) > 1 else batch_data
+                if hist.empty or len(hist) < 20: return None
                 
-                if hist.empty: return None
-                
-                # Basis-Metriken berechnen
                 price = hist['Close'].iloc[-1]
                 
-                # Filter 1: Preis-Spanne
+                # Filter 1: Preis & Trend
                 if not (min_stock_price <= price <= max_stock_price): return None
-                
-                # Filter 2: SMA 200 Trend
                 sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1]
                 uptrend = price > sma_200
                 if only_uptrend and not uptrend: return None
                 
-                # Filter 3: Marktkapitalisierung & Analysten (Via fast_info = schnell)
+                # Filter 2: Market Cap (via fast_info für Speed)
                 tk = yf.Ticker(symbol)
-                f_info = tk.fast_info
-                m_cap = f_info['marketCap']
-                if m_cap < p_min_cap: return None
+                if tk.fast_info['marketCap'] < p_min_cap: return None
                 
-                # RSI & ATR berechnen
-                rsi_series = calculate_rsi_vectorized(hist['Close'])
-                rsi = rsi_series.iloc[-1]
-                atr = (hist['High'] - hist['Low']).rolling(window=14).mean().iloc[-1]
-                
-                # OPTIONS-CHECK (Nur für gefilterte Ticker -> schont Quote)
+                # Filter 3: Options-Check
                 dates = tk.options
-                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
+                # Wir suchen expirations zwischen 15 und 45 Tagen
+                valid_dates = [d for d in dates if 15 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
                 if not valid_dates: return None
                 
                 target_date = valid_dates[0]
                 chain = tk.option_chain(target_date).puts
                 target_strike = price * (1 - p_puffer)
                 
+                # Besten Strike finden (knapp unter Ziel)
                 opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
                 if opts.empty: return None
                 
                 o = opts.iloc[0]
                 days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 
-                # Expected Move Berechnung
-                iv = o.get('impliedVolatility', 0.4)
-                if iv == 0: iv = 0.4
-                exp_move_pct = (iv * np.sqrt(days_to_exp / 365)) * 100
-                current_puffer = ((price - o['strike']) / price) * 100
-                em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
-                
-                # Rendite & Delta
-                fair_price = (o['bid'] + o['ask']) / 2 if (o['bid'] > 0) else o['lastPrice']
+                # Rendite & Sicherheit
+                fair_price = (o['bid'] + o['ask']) / 2 if o['bid'] > 0 else o['lastPrice']
                 y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
                 
                 if y_pa >= p_min_yield:
-                    # Zusatzdaten laden (News & Analysten)
-                    # Hier nutzen wir tk.info vorsichtig, da wir schon 90% der Ticker ausgefiltert haben
-                    info = tk.info 
+                    # Qualitätssicherung (Sterne)
+                    info = tk.info
+                    s_val, s_str = get_stars(info, uptrend)
                     analyst_txt, analyst_col = get_analyst_conviction(info)
-                    sent_icon, _ = get_finviz_sentiment(symbol)
                     
-                    # Earnings Date extrahieren
-                    earn = ""
-                    try:
-                        cal = tk.calendar
-                        if cal is not None and 'Earnings Date' in cal:
-                            earn = cal['Earnings Date'][0].strftime('%d.%m.')
-                    except: pass
-
-                    # Qualitäts-Score
-                    s_val = 0.0
-                    if "HYPER" in analyst_txt: s_val = 3.0
-                    elif "Stark" in analyst_txt: s_val = 2.0
-                    if rsi < 35: s_val += 0.5
-                    if uptrend: s_val += 0.5
-
+                    # Sentiment & RSI
+                    rsi = calculate_rsi_vectorized(hist['Close']).iloc[-1]
+                    
                     return {
                         'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
-                        'puffer': current_puffer, 'bid': fair_price, 'rsi': rsi, 'earn': earn if earn else "---", 
-                        'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip", 'delta': o.get('delta', -0.15),
-                        'sent_icon': sent_icon, 'stars_val': s_val, 'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️",
-                        'analyst_label': analyst_txt, 'analyst_color': analyst_col, 'mkt_cap': m_cap / 1e9,
-                        'em_pct': exp_move_pct, 'em_safety': em_safety
+                        'puffer': ((price - o['strike']) / price) * 100, 'bid': fair_price, 
+                        'rsi': rsi, 'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
+                        'stars_val': s_val, 'stars_str': s_str, 'analyst_label': analyst_txt, 
+                        'analyst_color': analyst_col, 'mkt_cap': tk.fast_info['marketCap'] / 1e9
                     }
             except: return None
 
-        # Multithreading für die verbleibenden Ticker (Options-Daten ziehen)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+        # 2. MULTITHREADING MIT MAX_WORKERS=3 (Sicher gegen Yahoo-Sperre)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
             for i, future in enumerate(concurrent.futures.as_completed(futures)):
-                res_data = future.result()
-                if res_data: all_results.append(res_data)
+                res = future.result()
+                if res: all_results.append(res)
                 progress_bar.progress((i + 1) / len(ticker_liste))
-                if i % 5 == 0: status_text.text(f"Checke {i}/{len(ticker_liste)} Ticker...")
-
-        status_text.empty(); progress_bar.empty()
+        
+        status_text.empty()
+        progress_bar.empty()
+        
         if all_results:
-            st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (float(x.get('stars_val', 0)), float(x.get('y_pa', 0))), reverse=True)
-            st.success(f"Scan abgeschlossen: {len(all_results)} Treffer gefunden!")
+            st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['stars_val'], reverse=True)
+            st.success(f"Scan fertig: {len(all_results)} Qualitäts-Setups gefunden!")
         else:
-            st.session_state.profi_scan_results = []
-            st.warning("Keine Treffer gefunden.")
-
+            st.warning("Keine Treffer. Versuche den OTM-Puffer oder Market-Cap Filter zu senken.")
+            
 # --- DISPLAY LOGIK (UNVERÄNDERTES DESIGN) ---
 if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
@@ -546,4 +524,5 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | © 2026 CapTrader AI")
+
 
