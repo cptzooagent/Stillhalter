@@ -57,7 +57,7 @@ def get_combined_watchlist():
 # --- SETUP & STYLING ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
-# --- SIDEBAR (Zuerst für Demo-Modus Schalter) ---
+# --- SIDEBAR (Angepasst) ---
 with st.sidebar:
     st.header("⚙️ System-Einstellungen")
     demo_mode = st.toggle("🛠️ Demo-Modus (API Bypass)", value=True, help="Aktivieren, wenn Yahoo Finance dich gesperrt hat.")
@@ -69,7 +69,8 @@ with st.sidebar:
     min_stock_price, max_stock_price = st.slider("Preis ($)", 0, 1000, (40, 600))
     min_mkt_cap = st.slider("Market Cap (Mrd. $)", 1, 1000, 15)
     only_uptrend = st.checkbox("Nur SMA 200 Uptrend", value=False)
-    test_modus = st.checkbox("🔍 Kleiner Scan (12 Ticker)", value=False)
+    # WICHTIG: Hier den Key 'test_modus_key' hinzugefügt
+    test_modus = st.checkbox("🔍 Kleiner Scan (12 Ticker)", value=False, key='test_modus_key')
 
 # --- 1. DER SICHERHEITS-CACHE (MIT DEMO-LOGIK) ---
 @st.cache_data(ttl=3600)
@@ -156,100 +157,78 @@ c3.metric("VIX (Angst)", f"{m['vix']:.2f}")
 c4.metric("Nasdaq RSI", f"{int(m['rsi'])}")
 st.markdown("---")
 
-# --- BLOCK 2: PROFI-SCANNER (FAST_INFO & TREND-LOGIK) ---
+# --- BLOCK 2: PROFI-SCANNER (KOMPLETT-VERSION) ---
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
 if st.button("🚀 Profi-Scan starten", key="run_pro_scan", use_container_width=True):
     all_results = []
     
-    # --- PFAD A: DEMO-MODUS (API BYPASS) ---
+    # PFAD A: DEMO-MODUS
     if demo_mode:
         with st.spinner("Generiere Demo-Setups..."):
-            time.sleep(1) 
-            demo_tickers = ["NVDA", "TSLA", "AAPL", "AMD", "MSFT", "MU", "PLTR", "AMZN", "META", "COIN", "MSTR", "NFLX"]
+            time.sleep(0.5)
+            demo_tickers = ["NVDA", "TSLA", "AAPL", "AMD", "MSFT", "MU", "PLTR", "AMZN", "META", "COIN"]
             for s in demo_tickers:
-                # Logik: Wenn Filter aktiv, erzwingen wir Uptrend für die Demo
-                is_uptrend = True if only_uptrend else random.choice([True, False])
-                price = random.uniform(100, 950)
-                
+                price = random.uniform(100, 800)
+                is_up = True if only_uptrend else random.choice([True, False])
                 all_results.append({
-                    'symbol': s,
-                    'stars_str': "⭐⭐" + ("⭐" if random.random() > 0.5 else ""),
-                    'sent_icon': "🟢" if is_uptrend else "🔹",
-                    'status': "Trend" if is_uptrend else "Dip",
-                    'y_pa': random.uniform(15.0, 38.0),
-                    'strike': price * 0.85,
-                    'bid': random.uniform(1.5, 5.0),
-                    'puffer': random.uniform(10, 22),
-                    'delta': random.uniform(-0.10, -0.35),
-                    'em_pct': random.uniform(2.5, 4.5),
-                    'em_safety': random.uniform(0.8, 2.1),
-                    'tage': 32,
-                    'rsi': random.randint(30, 75),
-                    'mkt_cap': random.uniform(50, 2500),
-                    'earn': random.choice(["15.03.", "22.04.", "---"]),
-                    'analyst_label': "Stark",
-                    'analyst_color': "#10b981"
+                    'symbol': s, 'stars_str': "⭐⭐⭐", 'sent_icon': "🟢" if is_up else "🔹",
+                    'status': "Trend" if is_up else "Dip", 'y_pa': random.uniform(15, 35),
+                    'strike': price * 0.85, 'bid': random.uniform(1.2, 4.5), 'puffer': 15.0,
+                    'delta': -0.18, 'em_pct': 3.5, 'em_safety': 1.4, 'tage': 30,
+                    'rsi': random.randint(30, 65), 'mkt_cap': random.uniform(100, 2000),
+                    'earn': "15.03.", 'analyst_label': "Stark", 'analyst_color': "#10b981"
                 })
             st.session_state.profi_scan_results = all_results
 
-    # --- PFAD B: ECHT-MODUS (S&P 500 FAST-SCAN) ---
+    # PFAD B: ECHT-MODUS (S&P 500 FAST-SCAN)
     else:
-        # Ticker-Liste bestimmen
         ticker_liste = get_combined_watchlist()
-        if st.sidebar.get('kleiner_scan_aktiv', True):
-            ticker_liste = ticker_liste[:12] # Begrenzung für Stabilität
+        
+        # SICHERER ZUGRIFF auf den Sidebar-Status
+        is_small_scan = st.session_state.get('test_modus_key', False)
+        if is_small_scan:
+            ticker_liste = ticker_liste[:12]
 
         with st.spinner(f"Scanne {len(ticker_liste)} Ticker via fast_info..."):
             for symbol in ticker_liste:
                 try:
                     tk = yf.Ticker(symbol)
-                    
-                    # Schneller Zugriff auf Basisdaten ohne Netzwerk-Lag
                     fi = tk.fast_info
                     cp = fi.last_price
-                    mkt_cap = fi.market_cap / 1e9
                     
-                    # Historie für SMA und RSI (1 Jahr reicht völlig)
-                    hist = tk.history(period="1y")
-                    if hist.empty or len(hist) < 200:
+                    # Filter: Preis-Range aus Slider
+                    if not (min_stock_price <= cp <= max_stock_price):
                         continue
                         
-                    # SMA 200 Berechnung
+                    mkt_cap = fi.market_cap / 1e9
+                    # Filter: Market Cap aus Slider
+                    if mkt_cap < min_mkt_cap:
+                        continue
+                    
+                    hist = tk.history(period="1y")
+                    if hist.empty: continue
+                    
                     sma200 = hist['Close'].rolling(200).mean().iloc[-1]
                     is_uptrend = cp > sma200
                     
-                    # FILTER: Nur SMA 200 Uptrend (Sidebar Variable prüfen)
+                    # Filter: Nur SMA 200 Uptrend
                     if only_uptrend and not is_uptrend:
                         continue
                     
-                    # RSI Berechnung (via Funktion aus Block 1)
                     rsi_val = calculate_rsi_vectorized(hist['Close']).iloc[-1]
 
-                    # Setup-Daten generieren (Simulation der Optionswerte für den Massenscan)
                     all_results.append({
-                        'symbol': symbol,
-                        'stars_str': "⭐⭐⭐" if (is_uptrend and rsi_val < 45) else "⭐⭐",
-                        'sent_icon': "🟢" if is_uptrend else "🔹",
-                        'status': "Trend" if is_uptrend else "Dip",
-                        'y_pa': 18.5, # Dummy-Rendite für Scanner-Übersicht
-                        'strike': cp * 0.85,
-                        'bid': cp * 0.015,
-                        'puffer': 15.0,
-                        'delta': -0.15,
-                        'em_pct': 3.2,
-                        'em_safety': 1.4,
-                        'tage': 30,
-                        'rsi': int(rsi_val),
-                        'mkt_cap': mkt_cap,
-                        'earn': "---",
-                        'analyst_label': "Uptrend" if is_uptrend else "Rebound",
-                        'analyst_color': "#10b981" if is_uptrend else "#3498db"
+                        'symbol': symbol, 'stars_str': "⭐⭐⭐" if rsi_val < 45 else "⭐⭐",
+                        'sent_icon': "🟢" if is_uptrend else "🔹", 'status': "Trend" if is_uptrend else "Dip",
+                        'y_pa': 18.0, 'strike': cp * (1 - otm_puffer_slider/100), 'bid': cp * 0.015,
+                        'puffer': float(otm_puffer_slider), 'delta': -0.15, 'em_pct': 3.2,
+                        'em_safety': 1.4, 'tage': 30, 'rsi': int(rsi_val), 'mkt_cap': mkt_cap,
+                        'earn': "---", 'analyst_label': "Echt-Daten", 'analyst_color': "#10b981"
                     })
-                except Exception:
-                    continue # Bei Fehler Ticker einfach überspringen
-            
+                except:
+                    continue
             st.session_state.profi_scan_results = all_results
             
 # --- DISPLAY: DEIN ORIGINAL HTML DESIGN (LINKSBÜNDIG) ---
@@ -538,5 +517,6 @@ if symbol_input:
         )
     else:
         st.info(f"Lade echte {opt_type} Kette von Yahoo Finance...")
+
 
 
