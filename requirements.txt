@@ -6,3 +6,4 @@ scipy
 fear-and-greed
 requests
 curl_cffi
+lxml
