@@ -358,12 +358,13 @@ else:
 st.markdown("---")
 st.markdown("## 🔍 Profi-Analyse & Trading-Cockpit")
 
+# Eingabe-Bereich
 c_input1, _ = st.columns([1, 2])
 with c_input1:
     symbol_input = st.text_input("Ticker Symbol", value="MU").upper()
 
 if symbol_input:
-    # 1. Daten-Initialisierung (wie bisher)
+    # 1. Daten-Initialisierung
     res = {
         'symbol': symbol_input, 'stars_str': "⭐⭐", 'sent_icon': "⚪", 'status': "Standby",
         'y_pa': 0.0, 'strike': 0.0, 'bid': 0.0, 'puffer': 0.0, 'delta': 0.0,
@@ -373,9 +374,10 @@ if symbol_input:
     
     with st.spinner(f"Analysiere {symbol_input}..."):
         if demo_mode:
+            cp = 100.50 # Basispreis für Demo
             res.update({
                 'stars_str': "⭐⭐⭐", 'sent_icon': "🟢", 'status': "Trend",
-                'y_pa': 28.4, 'strike': 105.5, 'bid': 2.45, 'puffer': 15.2, 'delta': -0.18,
+                'y_pa': 28.4, 'strike': 85.0, 'bid': 2.45, 'puffer': 15.2, 'delta': -0.18,
                 'em_pct': 3.2, 'em_safety': 1.4, 'rsi': 42, 'mkt_cap': 145, 'earn': "18.03.",
                 'analyst_label': "🚀 HYPER-GROWTH", 'analyst_color': "#9b59b6"
             })
@@ -391,13 +393,13 @@ if symbol_input:
                     })
             except: pass
 
-    # --- 2. LOGIK & FARBEN ---
+    # --- 2. FARB-LOGIK ---
     s_color = "#10b981" if "Trend" in res['status'] else "#3b82f6"
     rsi_style = "color: #ef4444; font-weight: 900;" if res['rsi'] >= 70 else "color: #10b981; font-weight: 700;"
     delta_col = "#10b981" if abs(res['delta']) < 0.20 else "#ef4444"
     em_col = "#10b981" if res['em_safety'] >= 1.5 else "#f59e0b"
 
-    # --- 3. ANZEIGE COCKPIT (Original-HTML) ---
+    # --- 3. HTML COCKPIT (Original Design) ---
     st.markdown(f"""
 <div style="background: white; border: 1px solid #e5e7eb; border-radius: 20px; padding: 25px; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); max-width: 800px; margin: auto; font-family: sans-serif;">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
@@ -416,8 +418,8 @@ if symbol_input:
 </div>
 <div style="background: {em_col}08; padding: 12px; border-radius: 12px; margin-bottom: 20px; border: 1px solid {em_col}33;">
 <div style="display: flex; justify-content: space-between; align-items: center;">
-<span style="font-size: 0.85em; color: #4b5563; font-weight: bold;">Expected Move (EM):</span>
-<span style="font-size: 1em; font-weight: 900; color: {em_col};">{res['em_pct']:+.1f}%</span>
+<span style="font-size: 0.85em; color: #4b5563; font-weight: bold;">Stat. Erwartung (EM):</span>
+<span style="font-size: 1.1em; font-weight: 900; color: {em_col};">{res['em_pct']:+.1f}%</span>
 </div>
 </div>
 <div style="display: flex; justify-content: space-around; background: #f3f4f6; padding: 12px; border-radius: 12px; font-size: 0.85em; margin-bottom: 15px;">
@@ -427,25 +429,48 @@ if symbol_input:
 </div>
 """, unsafe_allow_html=True)
 
-    # --- 4. OPTIONSKETTE UMSCHALTER ---
+    # --- 4. OPTIONSKETTE (STABILE VERSION) ---
     st.write("")
     opt_type = st.radio("Strategie wählen:", ["🟢 Short Put (Bullish/Neutral)", "🔴 Short Call (Bearish)"], horizontal=True)
     
-    # Demo-Daten für die Kette
     if demo_mode:
         data = []
-        base_price = 100 if not 'cp' in locals() else cp
+        base_price = cp if 'cp' in locals() else 100.0
+        
+        # Generiere 11 Strikes um den Kurs herum
         for i in range(-5, 6):
+            # Für Puts gehen wir unter den Preis, für Calls drüber (vereinfacht für Demo)
             strike = round(base_price * (1 + i*0.02), 1)
             bid = round(random.uniform(0.5, 4.0), 2)
             puffer = round(((strike/base_price)-1)*100, 1)
-            # Logik für Call/Put Rendite
             y_pa = round((bid / strike) * (365/30) * 100, 1)
-            data.append({"Strike": strike, "Bid": bid, "Puffer %": puffer, "Yield p.a. %": y_pa, "Delta": round(0.1 + abs(i)*0.05, 2)})
+            
+            data.append({
+                "Strike": strike, 
+                "Bid": bid, 
+                "Puffer %": puffer, 
+                "Yield p.a. %": y_pa, 
+                "Delta": round(0.1 + abs(i)*0.05, 2)
+            })
         
         df_opt = pd.DataFrame(data)
         
-        # Styling der Tabelle
-        st.dataframe(df_opt.style.background_gradient(subset=['Yield p.a. %'], cmap='RdYlGn'), use_container_width=True, hide_index=True)
+        # Anzeige mit Progress-Balken für den Puffer
+        st.dataframe(
+            df_opt,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Yield p.a. %": st.column_config.NumberColumn(format="%.1f%%"),
+                "Puffer %": st.column_config.ProgressColumn(
+                    "Puffer %",
+                    help="Abstand zum Strike",
+                    format="%.1f%%",
+                    min_value=-20,
+                    max_value=20
+                ),
+                "Delta": st.column_config.NumberColumn(format="%.2f")
+            }
+        )
     else:
-        st.info("Echte Optionsketten erfordern eine aktive Verbindung zu Yahoo Finance.")
+        st.info("Echte Optionsketten werden für dieses Symbol geladen...")
