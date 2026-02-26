@@ -239,7 +239,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             res = check_single_stock(s)
             if res:
                 # FILTER: Nur Trend anzeigen, wenn Checkbox in Sidebar aktiv
-                if nur_aufwaertstrend: # Name deiner Sidebar-Checkbox
+                if Nur Aufwärtstrend (SMA 200): # Name deiner Sidebar-Checkbox
                     if res['trend_status'] == "Trend":
                         all_results.append(res)
                 else:
@@ -552,6 +552,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
