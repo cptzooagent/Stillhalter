@@ -218,61 +218,61 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         all_results = []
 
         def check_single_stock(symbol):
-    try:
-        # Kein künstliches Sleep mehr nötig bei fast_info!
-        tk = yf.Ticker(symbol)
-        f_info = tk.fast_info
+            try:
+                # Kein künstliches Sleep mehr nötig bei fast_info!
+                tk = yf.Ticker(symbol)
+                f_info = tk.fast_info
         
-        price = f_info.last_price
-        m_cap = f_info.market_cap
+                price = f_info.last_price
+                m_cap = f_info.market_cap
         
-        # Filter auf Basis der schnellen Daten
-        if m_cap < p_min_cap or not (min_stock_price <= price <= max_stock_price): 
-            return None
+                # Filter auf Basis der schnellen Daten
+                if m_cap < p_min_cap or not (min_stock_price <= price <= max_stock_price): 
+                    return None
             
-        res = get_stock_data_full(symbol)
-        if res is None or res[0] is None: return None
-        _, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+                res = get_stock_data_full(symbol)
+                if res is None or res[0] is None: return None
+                _, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
         
-        if only_uptrend and not uptrend: return None
+                if only_uptrend and not uptrend: return None
         
-        # Options-Daten ziehen (bleibt bei yf.Ticker, da nicht in fast_info)
-        valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 30]
-        if not valid_dates: return None
-        target_date = valid_dates[0]
-        chain = tk.option_chain(target_date).puts
-        target_strike = price * (1 - p_puffer)
-        opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
-        if opts.empty: return None
-        o = opts.iloc[0]
+                # Options-Daten ziehen (bleibt bei yf.Ticker, da nicht in fast_info)
+                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 30]
+                if not valid_dates: return None
+                target_date = valid_dates[0]
+                chain = tk.option_chain(target_date).puts
+                target_strike = price * (1 - p_puffer)
+                opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
+                if opts.empty: return None
+                o = opts.iloc[0]
         
-        # Expected Move & Delta
-        days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
-        iv = o.get('impliedVolatility', 0.4)
-        exp_move_pct = (price * iv * np.sqrt(days_to_exp / 365) / price) * 100
-        current_puffer = ((price - o['strike']) / price) * 100
-        em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
+                # Expected Move & Delta
+                days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
+                iv = o.get('impliedVolatility', 0.4)
+                exp_move_pct = (price * iv * np.sqrt(days_to_exp / 365) / price) * 100
+                current_puffer = ((price - o['strike']) / price) * 100
+                em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
         
-        # Analysten-Daten (Selektiver Abruf nur bei Treffern!)
-        try:
-            full_info = tk.info # Nur hier wird tk.info kurz genutzt
-            analyst_txt, analyst_col = get_analyst_conviction(full_info)
-        except:
-            analyst_txt, analyst_col = "🔍 Check nötig", "#7f8c8d"
+                # Analysten-Daten (Selektiver Abruf nur bei Treffern!)
+                try:
+                    full_info = tk.info # Nur hier wird tk.info kurz genutzt
+                    analyst_txt, analyst_col = get_analyst_conviction(full_info)
+                except:
+                    analyst_txt, analyst_col = "🔍 Check nötig", "#7f8c8d"
 
-        y_pa = ((o['bid'] + o['ask'])/2 / o['strike']) * (365 / max(1, days_to_exp)) * 100
+                y_pa = ((o['bid'] + o['ask'])/2 / o['strike']) * (365 / max(1, days_to_exp)) * 100
         
-        if y_pa >= p_min_yield:
-            return {
-                'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
-                'puffer': current_puffer, 'bid': (o['bid'] + o['ask'])/2, 'rsi': rsi, 'earn': earn, 
-                'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip", 
-                'delta': calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv),
-                'stars_val': 2.0, 'stars_str': "⭐", 'analyst_label': analyst_txt, 
-                'analyst_color': analyst_col, 'mkt_cap': m_cap / 1e9,
-                'em_pct': exp_move_pct, 'em_safety': em_safety
-            }
-    except: return None
+                if y_pa >= p_min_yield:
+                    return {
+                        'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
+                        'puffer': current_puffer, 'bid': (o['bid'] + o['ask'])/2, 'rsi': rsi, 'earn': earn, 
+                        'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip", 
+                        'delta': calculate_bsm_delta(price, o['strike'], days_to_exp/365, iv),
+                        'stars_val': 2.0, 'stars_str': "⭐", 'analyst_label': analyst_txt, 
+                        'analyst_color': analyst_col, 'mkt_cap': m_cap / 1e9,
+                        'em_pct': exp_move_pct, 'em_safety': em_safety
+                    }
+            except: return None
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
@@ -612,3 +612,4 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
