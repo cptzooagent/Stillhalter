@@ -30,7 +30,7 @@ st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 # --- SIDEBAR (Zuerst für Demo-Modus Schalter) ---
 with st.sidebar:
     st.header("⚙️ System-Einstellungen")
-    demo_mode = st.toggle("🛠️ Demo-Modus (API Bypass)", value=False, help="Aktivieren, wenn Yahoo Finance dich gesperrt hat.")
+    demo_mode = st.toggle("🛠️ Demo-Modus (API Bypass)", value=True, help="Aktivieren, wenn Yahoo Finance dich gesperrt hat.")
     
     st.markdown("---")
     st.header("🛡️ Scanner-Filter")
@@ -485,3 +485,4 @@ if symbol_input:
         )
     else:
         st.info(f"Lade echte {opt_type} Kette von Yahoo Finance...")
+
