@@ -234,15 +234,17 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 }
             except: return None
 
-        # Ausführung & Filterung
+        # --- Ausführung & Filterung ---
         for s in ticker_liste:
             res = check_single_stock(s)
             if res:
-                # FILTER: Nur Trend anzeigen, wenn Checkbox in Sidebar aktiv
-                if Nur Aufwärtstrend: # Name deiner Sidebar-Checkbox
+                # Hier nutzen wir jetzt deine Variable aus der Sidebar:
+                if only_uptrend: 
+                    # Nur hinzufügen, wenn es ein Trend (🛡️) ist
                     if res['trend_status'] == "Trend":
                         all_results.append(res)
                 else:
+                    # Falls Checkbox aus: Alle hinzufügen (Trends 🛡️ & Dips 💎)
                     all_results.append(res)
         
         # Sortierung (Sterne absteigend, dann Rendite)
@@ -552,6 +554,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
