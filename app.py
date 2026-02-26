@@ -159,61 +159,84 @@ with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_
 
 st.markdown("---")
 
-# --- KOMPLETTER PROFI-SCANNER BLOCK ---
+# --- SEKTION: PROFI-SCANNER LOGIK (VOR DER ANZEIGE) ---
 
-# 1. Initialisierung des Session States
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
-# 2. Der Scan-Button und die Logik
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
-    with st.spinner("Markt-Scanner analysiert Ticker auf Trends & Wachstum..."):
-        # Ticker-Liste (Simulation vs. Echt)
+    with st.spinner("Analysiere Trends und Fundamentaldaten..."):
+        # Ticker-Liste bestimmen
         ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else get_combined_watchlist()
         all_results = []
 
         def check_single_stock(symbol):
             import random
+            import pandas as pd
             from datetime import datetime, timedelta
             
             try:
-                # --- DATEN-ABFRAGE ---
+                # --- 1. DATEN-ABFRAGE (SIMULATION vs. ECHT) ---
                 if test_modus:
                     cp = random.uniform(80, 600)
-                    rev_growth = random.uniform(-10, 90)
-                    rsi_val = random.randint(25, 75)
+                    rev_growth = random.uniform(-10, 95)
+                    # Zufällige SMA-Verhältnisse für den Test
                     above_sma200 = random.choice([True, True, False])
                     below_sma50 = random.choice([True, False])
+                    rsi_val = random.randint(25, 75)
+                    # Options-Sim
                     puffer_val = random.uniform(7, 18)
                     yield_pa = random.uniform(10, 60)
                     strike_price, bid, delta_val = cp*(1-puffer_val/100), random.uniform(0.5, 5.0), random.uniform(-0.1, -0.4)
                     earn_str = (datetime.now() + timedelta(days=random.randint(2, 60))).strftime("%d.%m.%Y")
+                    mkt_cap = random.uniform(10, 1500)
                 else:
+                    # ECHT-DATEN via yfinance
                     tk = yf.Ticker(symbol, session=secure_session)
                     inf = tk.info
                     fast = tk.fast_info
                     cp = fast.last_price
                     rev_growth = inf.get('revenueGrowth', 0) * 100
-                    earn_str = inf.get('nextEarningsDate', "---")
+                    mkt_cap = inf.get('marketCap', 0) / 1e9
+                    
+                    # Nächste Earnings formatieren
+                    earn_ts = inf.get('nextEarningsDate')
+                    if earn_ts:
+                        earn_str = datetime.fromtimestamp(earn_ts).strftime("%d.%m.%Y")
+                    else:
+                        earn_str = "---"
+
+                    # SMA & RSI BERECHNUNG
                     hist = tk.history(period="250d")
-                    sma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
-                    sma50 = hist['Close'].rolling(window=50).mean().iloc[-1]
-                    above_sma200 = cp > sma200
-                    below_sma50 = cp < sma50
-                    # Hier deine Options-Logik ergänzen
-                    puffer_val, yield_pa, strike_price, bid, delta_val, rsi_val = 10.0, 18.0, cp*0.9, 1.5, -0.15, 50
+                    if len(hist) >= 200:
+                        sma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
+                        sma50 = hist['Close'].rolling(window=50).mean().iloc[-1]
+                        above_sma200 = cp > sma200
+                        below_sma50 = cp < sma50
+                        
+                        # RSI 14
+                        delta = hist['Close'].diff()
+                        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                        rs = gain / loss
+                        rsi_val = int(100 - (100 / (1 + rs.iloc[-1])))
+                    else:
+                        above_sma200, below_sma50, rsi_val = False, False, 50
 
-                # --- SMA TREND LOGIK (Shield & Diamond) ---
+                    # Hier Platz für deine echte Options-Chain Abfrage
+                    puffer_val, yield_pa, strike_price, bid, delta_val = 10.0, 15.0, cp*0.9, 1.0, -0.15
+
+                # --- 2. TREND-LOGIK (Shield 🛡️ vs. Diamond 💎) ---
                 if above_sma200 and not below_sma50:
-                    t_status, t_icon, t_col = "Trend", "🛡️", "#10b981" # Schutzschild
+                    t_status, t_icon, t_col = "Trend", "🛡️", "#10b981" # Grün
                 elif above_sma200 and below_sma50:
-                    t_status, t_icon, t_col = "Dip", "💎", "#3b82f6"   # Diamant
+                    t_status, t_icon, t_col = "Dip", "💎", "#3b82f6"   # Blau
                 else:
-                    t_status, t_icon, t_col = "Vorsicht", "⚠️", "#ef4444"
+                    t_status, t_icon, t_col = "Abwärts", "⚠️", "#ef4444" # Rot
 
-                # --- GROWTH & STERNE (Fundamentale Bewertung) ---
+                # --- 3. STERNE-SCORING (Basierend auf Wachstum) ---
                 if rev_growth >= 40:
-                    g_label, g_bg, g_text, s_val = f"🚀 HYPER-GROWTH (+{rev_growth:.0f}%)", "#f3e8ff", "#8b5cf6", 5
+                    g_label, g_bg, g_text, s_val = f"🚀 HYPER (+{rev_growth:.0f}%)", "#f3e8ff", "#8b5cf6", 5
                 elif rev_growth >= 20:
                     g_label, g_bg, g_text, s_val = f"💪 STARK (+{rev_growth:.0f}%)", "#dcfce7", "#10b981", 4
                 elif rev_growth >= 10:
@@ -221,6 +244,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 else:
                     g_label, g_bg, g_text, s_val = "⚪ NEUTRAL", "#f3f4f6", "#6b7280", 2
 
+                # Statistische Sicherheit (EM)
                 em_pct = random.uniform(7, 14) if test_modus else 10.0
                 em_safety = puffer_val / em_pct if em_pct > 0 else 1.0
 
@@ -230,27 +254,28 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     'earn': earn_str, 'tage': 30, 'stars_val': s_val, 'stars_str': "⭐" * s_val,
                     'trend_status': t_status, 'trend_icon': t_icon, 'trend_color': t_col,
                     'growth_label': g_label, 'growth_color': g_bg, 'growth_text_color': g_text,
-                    'em_pct': em_pct, 'em_safety': em_safety, 'mkt_cap': random.uniform(10, 500)
+                    'em_pct': em_pct, 'em_safety': em_safety, 'mkt_cap': mkt_cap
                 }
-            except: return None
+            except Exception as e:
+                return None
 
-        # --- Ausführung & Filterung ---
+        # --- 4. FILTERUNG & SORTIERUNG ---
         for s in ticker_liste:
             res = check_single_stock(s)
             if res:
-                # Hier nutzen wir jetzt deine Variable aus der Sidebar:
-                if only_uptrend: 
-                    # Nur hinzufügen, wenn es ein Trend (🛡️) ist
+                # Nutzt deine Sidebar-Variable 'only_uptrend'
+                if only_uptrend:
                     if res['trend_status'] == "Trend":
                         all_results.append(res)
                 else:
-                    # Falls Checkbox aus: Alle hinzufügen (Trends 🛡️ & Dips 💎)
+                    # Zeigt Trends UND Dips
                     all_results.append(res)
         
-        # Sortierung (Sterne absteigend, dann Rendite)
+        # Sortierung: Qualität (Sterne) zuerst, dann Rendite
         st.session_state.profi_scan_results = sorted(
             all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True
         )
+
 
 # --- 3. ANZEIGE-SCHLEIFE (HTML) ---
 if st.session_state.profi_scan_results:
@@ -554,6 +579,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
