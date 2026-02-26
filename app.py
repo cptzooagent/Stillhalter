@@ -5,67 +5,68 @@ import numpy as np
 from scipy.stats import norm
 from datetime import datetime, timedelta
 import concurrent.futures
-import time
 
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
-# --- 1. MATHE & TECHNIK ---
+# --- 1. MATHE & TECHNIK (VEKTORISIERT) ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
+    """Standard BSM Delta Berechnung."""
     if T <= 0 or sigma <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
-def calculate_rsi(data, window=14):
-    if len(data) < window + 1: return pd.Series([50] * len(data))
-    delta = data.diff()
+def calculate_rsi_vectorized(series, window=14):
+    """Berechnet RSI effizient für ganze Datenreihen."""
+    delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-def calculate_pivots(symbol):
-    """Berechnet Daily und Weekly Pivot-Punkte (inkl. R2 für CC-Ziele)."""
+def get_pivot_points(hist_df):
+    """Berechnet Pivots aus einem übergebenen History-Dataframe (spart Requests)."""
     try:
-        tk = yf.Ticker(symbol)
-        hist_d = tk.history(period="5d") 
-        if len(hist_d) < 2: return None
-        last_day = hist_d.iloc[-2]
-        h_d, l_d, c_d = last_day['High'], last_day['Low'], last_day['Close']
-        p_d = (h_d + l_d + c_d) / 3
-        s1_d = (2 * p_d) - h_d
-        s2_d = p_d - (h_d - l_d)
-        r2_d = p_d + (h_d - l_d) 
-
-        hist_w = tk.history(period="3wk", interval="1wk")
-        if len(hist_w) < 2: 
-            return {"P": p_d, "S1": s1_d, "S2": s2_d, "R2": r2_d, "W_S2": s2_d, "W_R2": r2_d}
-        
-        last_week = hist_w.iloc[-2]
-        h_w, l_w, c_w = last_week['High'], last_week['Low'], last_week['Close']
-        p_w = (h_w + l_w + c_w) / 3
-        s2_w = p_w - (h_w - l_w)
-        r2_w = p_w + (h_w - l_w) 
-
-        return {"P": p_d, "S1": s1_d, "S2": s2_d, "R2": r2_d, "W_S2": s2_w, "W_R2": r2_w}
+        if len(hist_df) < 2: return None
+        # Daily Pivots (basierend auf dem vorletzten Tag)
+        last_day = hist_df.iloc[-2]
+        h, l, c = last_day['High'], last_day['Low'], last_day['Close']
+        p = (h + l + c) / 3
+        return {
+            "P": p, "S1": (2 * p) - h, "S2": p - (h - l), "R2": p + (h - l)
+        }
     except: return None
 
+# --- 2. HIGH-SPEED DATENBESCHAFFUNG ---
+@st.cache_data(ttl=3600)
+def get_combined_watchlist():
+    try:
+        url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
+        df = pd.read_csv(url)
+        tickers = df['Symbol'].tolist()
+        nasdaq_extra = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR", "HOOD", "PLTR", "SQ"]
+        full_list = list(set(tickers + nasdaq_extra))
+        return [t.replace('.', '-') for t in full_list]
+    except: return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META"]
+
+def get_batch_stock_data(tickers):
+    """Holt alle Marktdaten für die Watchlist in EINEM Request (Sicher vor Sperren)."""
+    try:
+        # 150 Tage reichen für RSI und SMA 50/100, für SMA 200 nehmen wir 250 Tage
+        data = yf.download(tickers, period="250d", group_by='ticker', auto_adjust=True, progress=False)
+        return data
+    except Exception as e:
+        st.error(f"Batch-Download fehlgeschlagen: {e}")
+        return None
+
 def get_openclaw_analysis(symbol):
+    """KI-Sentiment Analyse über die News-Schnittstelle."""
     try:
         tk = yf.Ticker(symbol)
         all_news = tk.news
-        if not all_news or len(all_news) == 0:
-            return "Neutral", "🤖 OpenClaw: Yahoo liefert aktuell keine Daten.", 0.5
+        if not all_news: return "Neutral", "🤖 OpenClaw: Keine News.", 0.5
         huge_blob = str(all_news).lower()
-        display_text = ""
-        for n in all_news:
-            for val in n.values():
-                if isinstance(val, str) and val.count(" ") > 3:
-                    display_text = val
-                    break
-            if display_text: break
-        if not display_text:
-            display_text = all_news[0].get('title', 'Marktstimmung aktiv (Text folgt)')
+        display_text = all_news[0].get('title', 'Marktstimmung aktiv')
         score = 0.5
         bull_words = ['earnings', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'up', 'bull', 'upgrade']
         bear_words = ['sell-off', 'disruption', 'miss', 'down', 'risk', 'decline', 'short', 'warning', 'sell']
@@ -77,55 +78,13 @@ def get_openclaw_analysis(symbol):
         status = "Bullish" if score > 0.55 else "Bearish" if score < 0.45 else "Neutral"
         icon = "🟢" if status == "Bullish" else "🔴" if status == "Bearish" else "🟡"
         return status, f"{icon} OpenClaw: {display_text[:90]}", score
-    except Exception: return "N/A", "🤖 OpenClaw: System-Reset...", 0.5
-
-@st.cache_data(ttl=86400)
-def get_combined_watchlist():
-    try:
-        url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
-        df = pd.read_csv(url)
-        tickers = df['Symbol'].tolist()
-        nasdaq_extra = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR", "HOOD", "PLTR", "SQ"]
-        full_list = list(set(tickers + nasdaq_extra))
-        return [t.replace('.', '-') for t in full_list]
-    except: return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META"]
-
-@st.cache_data(ttl=3600)
-def get_finviz_sentiment(symbol):
-    try:
-        import random
-        return random.choice(["🟢", "🟡", "🟢"]), 0.2 
-    except: return "⚪", 0.0
-
-def get_stock_data_full(symbol):
-    try:
-        tk = yf.Ticker(symbol)
-        hist = tk.history(period="150d") 
-        if hist.empty: return None, [], "", 50, True, False, 0, None
-        price = hist['Close'].iloc[-1] 
-        dates = list(tk.options)
-        rsi_series = calculate_rsi(hist['Close'])
-        rsi_val = rsi_series.iloc[-1]
-        sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1] if len(hist) >= 200 else hist['Close'].mean()
-        is_uptrend = price > sma_200
-        sma_20 = hist['Close'].rolling(window=20).mean()
-        std_20 = hist['Close'].rolling(window=20).std()
-        lower_band = (sma_20 - 2 * std_20).iloc[-1]
-        is_near_lower = price <= (lower_band * 1.02)
-        atr = (hist['High'] - hist['Low']).rolling(window=14).mean().iloc[-1]
-        pivots = calculate_pivots(symbol)
-        earn_str = ""
-        try:
-            cal = tk.calendar
-            if cal is not None and 'Earnings Date' in cal:
-                earn_str = cal['Earnings Date'][0].strftime('%d.%m.')
-        except: pass
-        return price, dates, earn_str, rsi_val, is_uptrend, is_near_lower, atr, pivots
-    except: return None, [], "", 50, True, False, 0, None
+    except: return "N/A", "🤖 OpenClaw: Offline", 0.5
 
 def get_analyst_conviction(info):
+    """Fundamentale Bewertung basierend auf Analysten-Zielen."""
     try:
-        current = info.get('current_price', info.get('currentPrice', 1))
+        # Nutzt info-Ersatz aus fast_info wenn möglich
+        current = info.get('currentPrice', info.get('lastPrice', 1))
         target = info.get('targetMedianPrice', 0)
         upside = ((target / current) - 1) * 100 if target > 0 else 0
         rev_growth = info.get('revenueGrowth', 0) * 100
@@ -136,6 +95,7 @@ def get_analyst_conviction(info):
         return f"⚖️ Neutral (Ziel: {upside:.0f}%)", "#7f8c8d"
     except: return "🔍 Check nötig", "#7f8c8d"
 
+# --- 3. SIDEBAR & GLOBAL MONITORING ---
 with st.sidebar:
     st.header("🛡️ Strategie-Einstellungen")
     otm_puffer_slider = st.slider("Gewünschter Puffer (%)", 3, 25, 15, key="puffer_sid")
@@ -147,40 +107,35 @@ with st.sidebar:
     only_uptrend = st.checkbox("Nur Aufwärtstrend (SMA 200)", value=False, key="trend_sid")
     test_modus = st.checkbox("🛠️ Simulations-Modus (Test)", value=False, key="sim_checkbox")
 
-def get_market_data():
+def get_market_context():
+    """Holt globale Marktdaten für die Ampel (Nasdaq, VIX, BTC)."""
     try:
-        ndq = yf.Ticker("^NDX"); vix = yf.Ticker("^VIX"); btc = yf.Ticker("BTC-USD")
-        h_ndq = ndq.history(period="1mo"); h_vix = vix.history(period="1d"); h_btc = btc.history(period="1d")
-        if h_ndq.empty: return 0, 50, 0, 20, 0
-        cp_ndq = h_ndq['Close'].iloc[-1]
-        sma20_ndq = h_ndq['Close'].rolling(window=20).mean().iloc[-1]
+        # Batch-Download für Markt-Indikatoren
+        m_data = yf.download(["^NDX", "^VIX", "BTC-USD"], period="30d", interval="1d", progress=False)
+        cp_ndq = m_data['Close']['^NDX'].iloc[-1]
+        sma20_ndq = m_data['Close']['^NDX'].rolling(window=20).mean().iloc[-1]
         dist_ndq = ((cp_ndq - sma20_ndq) / sma20_ndq) * 100
-        delta = h_ndq['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        rsi_ndq = 100 - (100 / (1 + rs)).iloc[-1]
-        v_val = h_vix['Close'].iloc[-1] if not h_vix.empty else 20
-        b_val = h_btc['Close'].iloc[-1] if not h_btc.empty else 0
-        return cp_ndq, rsi_ndq, dist_ndq, v_val, b_val
-    except: return 0, 50, 0, 20, 0
-
-def get_crypto_fg():
-    try:
+        
+        rsi_ndq = calculate_rsi_vectorized(m_data['Close']['^NDX']).iloc[-1]
+        vix_val = m_data['Close']['^VIX'].iloc[-1]
+        btc_val = m_data['Close']['BTC-USD'].iloc[-1]
+        
+        # Crypto Fear & Greed (API Request bleibt)
         import requests
-        r = requests.get("https://api.alternative.me/fng/")
-        return int(r.json()['data'][0]['value'])
-    except: return 50
+        r = requests.get("https://api.alternative.me/fng/", timeout=5)
+        crypto_fg = int(r.json()['data'][0]['value'])
+        
+        return cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val, crypto_fg
+    except: return 0, 50, 0, 20, 0, 50
 
+# --- VISUALS: MARKT-AMPEL ---
 st.markdown("## 🌍 Globales Markt-Monitoring")
-cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
-crypto_fg = get_crypto_fg()
-stock_fg = 50 
+cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val, crypto_fg = get_market_context()
 
 if dist_ndq < -2 or vix_val > 25:
     m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Nasdaq-Schwäche / Hohe Volatilität"
     m_advice = "Defensiv agieren. Fokus auf Call-Verkäufe zur Depot-Absicherung."
-elif rsi_ndq > 72 or stock_fg > 80:
+elif rsi_ndq > 72:
     m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT: Korrekturgefahr (Gier/RSI hoch)"
     m_advice = "Keine neuen Puts mit engem Puffer. Gewinne sichern."
 else:
@@ -189,14 +144,11 @@ else:
 
 st.markdown(f'<div style="background-color: {m_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;"><h3 style="margin:0; font-size: 1.4em;">{m_text}</h3><p style="margin:0; opacity: 0.9;">{m_advice}</p></div>', unsafe_allow_html=True)
 
-r1c1, r1c2, r1c3 = st.columns(3)
-r2c1, r2c2, r2c3 = st.columns(3)
+r1c1, r1c2, r1c3, r1c4 = st.columns(4)
 with r1c1: st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
 with r1c2: st.metric("Bitcoin", f"{btc_val:,.0f} $")
 with r1c3: st.metric("VIX (Angst)", f"{vix_val:.2f}", delta="HOCH" if vix_val > 22 else "Normal", delta_color="inverse")
-with r2c1: st.metric("Fear & Greed (Stock)", f"{stock_fg}")
-with r2c2: st.metric("Fear & Greed (Crypto)", f"{crypto_fg}")
-with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_ndq > 70 else None, delta_color="inverse")
+with r1c4: st.metric("Nasdaq RSI", f"{int(rsi_ndq)}", delta="HEISS" if rsi_ndq > 70 else None, delta_color="inverse")
 
 st.markdown("---")
 
@@ -649,3 +601,4 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
