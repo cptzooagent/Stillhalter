@@ -24,6 +24,36 @@ def get_stars_logic(analyst_label, uptrend):
         
     return s_val, "⭐" * int(s_val)
 
+@st.cache_data(ttl=3600)
+def get_combined_watchlist():
+    """
+    Lädt die S&P 500 Ticker von Wikipedia und kombiniert sie 
+    mit den Symbolen aus dem User-Depot.
+    """
+    try:
+        # 1. S&P 500 Ticker von Wikipedia laden
+        url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+        tables = pd.read_html(url)
+        sp500_df = tables[0]
+        watchlist = sp500_df['Symbol'].tolist()
+        
+        # Yahoo Finance Korrektur: Punkte durch Bindestriche ersetzen (z.B. BRK.B -> BRK-B)
+        watchlist = [t.replace('.', '-') for t in watchlist]
+    except Exception as e:
+        # Fallback, falls Wikipedia nicht erreichbar ist
+        watchlist = ["AAPL", "MSFT", "NVDA", "TSLA", "AMD", "AMZN", "META", "GOOGL"]
+        st.warning(f"S&P 500 konnte nicht geladen werden, nutze Standard-Watchlist. ({e})")
+    
+    # 2. Depotwerte hinzufügen
+    if 'depot_df' in st.session_state and not st.session_state['depot_df'].empty:
+        # Wir nehmen an, deine Depot-Spalte heißt 'Symbol'
+        depot_symbols = st.session_state['depot_df']['Symbol'].dropna().unique().tolist()
+        # Kombinieren und Duplikate entfernen
+        combined = list(set(watchlist + depot_symbols))
+        return combined
+    
+    return watchlist
+
 # --- SETUP & STYLING ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
@@ -485,3 +515,4 @@ if symbol_input:
         )
     else:
         st.info(f"Lade echte {opt_type} Kette von Yahoo Finance...")
+
