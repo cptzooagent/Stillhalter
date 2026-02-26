@@ -429,7 +429,7 @@ if symbol_input:
 </div>
 """, unsafe_allow_html=True)
 
-    # --- 4. OPTIONSKETTE (STABILE VERSION) ---
+    # --- 4. OPTIONSKETTE (LOGIK-FIX FÜR PUT/CALL STRIKES) ---
     st.write("")
     opt_type = st.radio("Strategie wählen:", ["🟢 Short Put (Bullish/Neutral)", "🔴 Short Call (Bearish)"], horizontal=True)
     
@@ -437,40 +437,51 @@ if symbol_input:
         data = []
         base_price = cp if 'cp' in locals() else 100.0
         
-        # Generiere 11 Strikes um den Kurs herum
-        for i in range(-5, 6):
-            # Für Puts gehen wir unter den Preis, für Calls drüber (vereinfacht für Demo)
-            strike = round(base_price * (1 + i*0.02), 1)
-            bid = round(random.uniform(0.5, 4.0), 2)
-            puffer = round(((strike/base_price)-1)*100, 1)
+        # Logik-Umschaltung basierend auf Radio-Button
+        is_put = "Short Put" in opt_type
+        
+        # Generiere 10 OTM-Strikes
+        for i in range(1, 11):
+            if is_put:
+                # Put: Strikes gehen nach UNTEN (z.B. 98, 96, 94...)
+                puffer_pct = -(i * 2.0)
+                strike = round(base_price * (1 + puffer_pct/100), 1)
+            else:
+                # Call: Strikes gehen nach OBEN (z.B. 102, 104, 106...)
+                puffer_pct = +(i * 2.0)
+                strike = round(base_price * (1 + puffer_pct/100), 1)
+            
+            bid = round(random.uniform(0.5, 4.0) / (i*0.5 + 1), 2) # Prämie sinkt, je weiter OTM
             y_pa = round((bid / strike) * (365/30) * 100, 1)
+            delta = round(0.30 - (i * 0.025), 2) # Delta sinkt, je weiter OTM
             
             data.append({
                 "Strike": strike, 
                 "Bid": bid, 
-                "Puffer %": puffer, 
+                "Puffer %": puffer_pct, 
                 "Yield p.a. %": y_pa, 
-                "Delta": round(0.1 + abs(i)*0.05, 2)
+                "Delta": delta if delta > 0.01 else 0.01
             })
         
         df_opt = pd.DataFrame(data)
         
-        # Anzeige mit Progress-Balken für den Puffer
+        # Anzeige mit Progress-Balken
         st.dataframe(
             df_opt,
             use_container_width=True,
             hide_index=True,
             column_config={
+                "Strike": st.column_config.NumberColumn(format="%.1f $"),
                 "Yield p.a. %": st.column_config.NumberColumn(format="%.1f%%"),
                 "Puffer %": st.column_config.ProgressColumn(
                     "Puffer %",
-                    help="Abstand zum Strike",
+                    help="Abstand zum aktuellen Kurs",
                     format="%.1f%%",
-                    min_value=-20,
-                    max_value=20
+                    min_value=-25 if is_put else 0,
+                    max_value=0 if is_put else 25
                 ),
                 "Delta": st.column_config.NumberColumn(format="%.2f")
             }
         )
     else:
-        st.info("Echte Optionsketten werden für dieses Symbol geladen...")
+        st.info(f"Lade echte {opt_type} Kette von Yahoo Finance...")
