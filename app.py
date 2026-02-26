@@ -233,37 +233,40 @@ if st.button("🚀 S&P 500 Profi-Scan starten", key="run_pro_scan", use_containe
         except Exception as e:
             st.error(f"Fehler beim S&P 500 Scan: {e}")
             
-# --- DISPLAY: DEIN ORIGINAL HTML DESIGN (LINKSBÜNDIG) ---
-if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
-    all_results = st.session_state.profi_scan_results
-    st.subheader(f"🎯 Top-Setups nach Qualität ({len(all_results)} Treffer)")
+# --- ANZEIGEBLOCK: SCANNER-ERGEBNISSE ---
+if st.session_state.profi_scan_results:
+    st.write("---")
+    st.subheader(f"🎯 Top-Setups nach Qualität ({len(st.session_state.profi_scan_results)} Treffer)")
+    
+    # 4 Spalten Layout
     cols = st.columns(4)
-    heute_dt = datetime.now()
-
-    for idx, res in enumerate(all_results):
+    
+    for idx, res in enumerate(st.session_state.profi_scan_results):
         with cols[idx % 4]:
-            earn_str = res.get('earn', "---"); status_txt = res.get('status', "Trend")
-            sent_icon = res.get('sent_icon', "🟢"); stars = res.get('stars_str', "⭐")
-            s_color = "#10b981" if "Trend" in status_txt else "#3b82f6"
-            a_label = res.get('analyst_label', "Keine Analyse"); a_color = res.get('analyst_color', "#8b5cf6")
-            mkt_cap = res.get('mkt_cap', 0); rsi_val = int(res.get('rsi', 50))
-            rsi_style = "color: #ef4444; font-weight: 900;" if rsi_val >= 70 else "color: #10b981; font-weight: 700;" if rsi_val <= 35 else "color: #4b5563; font-weight: 700;"
-            delta_val = abs(res.get('delta', 0)); delta_col = "#10b981" if delta_val < 0.20 else "#f59e0b" if delta_val < 0.30 else "#ef4444"
-            em_safety = res.get('em_safety', 1.0); em_col = "#10b981" if em_safety >= 1.5 else "#f59e0b" if em_safety >= 1.0 else "#ef4444"
+            # Variablen-Vorbereitung
+            s_color = "#10b981" if "Trend" in res['status'] else "#3b82f6"
             
-            is_earning_risk = False
-            if earn_str and earn_str != "---":
-                try:
-                    earn_date = datetime.strptime(f"{earn_str}2026", "%d.%m.%Y")
-                    if 0 <= (earn_date - heute_dt).days <= res.get('tage', 14): is_earning_risk = True
-                except: pass
-            card_border, card_shadow, card_bg = ("4px solid #ef4444", "0 8px 16px rgba(239, 68, 68, 0.25)", "#fffcfc") if is_earning_risk else ("1px solid #e5e7eb", "0 4px 6px -1px rgba(0,0,0,0.05)", "#ffffff")
+            # RSI Farblogik
+            rsi_val = res.get('rsi', 50)
+            if rsi_val <= 35:
+                rsi_bg, rsi_text = "#dcfce7", "#166534" # Grün
+            elif rsi_val >= 70:
+                rsi_bg, rsi_text = "#fee2e2", "#991b1b" # Rot
+            else:
+                rsi_bg, rsi_text = "#f3f4f6", "#4b5563" # Neutral
 
-            html_code = f"""
-<div style="background: {card_bg}; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: {card_shadow}; font-family: sans-serif;">
+            # Delta & EM Styling
+            delta_val = abs(res.get('delta', 0.15))
+            delta_col = "#10b981" if delta_val < 0.20 else "#f59e0b"
+            em_safety = res.get('em_safety', 1.2)
+            em_col = "#10b981" if em_safety >= 1.5 else "#f59e0b"
+            
+            # Der HTML Code - Linksbündig für sauberes Rendering
+            html_tile = f"""
+<div style="background: white; border: 1px solid #e5e7eb; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); font-family: sans-serif; min-height: 380px;">
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-<span style="font-size: 1.2em; font-weight: 800; color: #111827;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{stars}</span></span>
-<span style="font-size: 0.75em; font-weight: 700; color: {s_color}; background: {s_color}10; padding: 2px 8px; border-radius: 6px;">{sent_icon} {status_txt}</span>
+<span style="font-size: 1.2em; font-weight: 800; color: #111827;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{res['stars_str']}</span></span>
+<span style="font-size: 0.75em; font-weight: 700; color: {s_color}; background: {s_color}10; padding: 2px 8px; border-radius: 6px;">{res['sent_icon']} {res['status']}</span>
 </div>
 <div style="margin: 10px 0;">
 <div style="font-size: 0.7em; color: #6b7280; font-weight: 600; text-transform: uppercase;">Yield p.a.</div>
@@ -272,11 +275,11 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
 <div style="border-left: 3px solid #8b5cf6; padding-left: 8px;">
 <div style="font-size: 0.6em; color: #6b7280;">Strike</div>
-<div style="font-size: 0.9em; font-weight: 700;">{res['strike']:.1f}&#36;</div>
+<div style="font-size: 0.9em; font-weight: 700;">{res['strike']:.1f}$</div>
 </div>
 <div style="border-left: 3px solid #f59e0b; padding-left: 8px;">
 <div style="font-size: 0.65em; color: #6b7280;">Mid</div>
-<div style="font-size: 0.9em; font-weight: 700;">{res['bid']:.2f}&#36;</div>
+<div style="font-size: 0.9em; font-weight: 700;">{res['bid']:.2f}$</div>
 </div>
 <div style="border-left: 3px solid #3b82f6; padding-left: 8px;">
 <div style="font-size: 0.65em; color: #6b7280;">Puffer</div>
@@ -292,25 +295,23 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 <span style="font-size: 0.65em; color: #4b5563; font-weight: bold;">Stat. Erwartung (EM):</span>
 <span style="font-size: 0.75em; font-weight: 800; color: {em_col};">{res['em_pct']:+.1f}%</span>
 </div>
-<div style="font-size: 0.6em; color: #6b7280; margin-top: 2px;">Sicherheit: <b>{em_safety:.1f}x EM</b></div>
 </div>
 <hr style="border: 0; border-top: 1px solid #f3f4f6; margin: 10px 0;">
 <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72em; color: #4b5563; margin-bottom: 10px;">
 <span>⏳ <b>{res['tage']}d</b></span>
 <div style="display: flex; gap: 4px;">
-<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; {rsi_style}">RSI: {rsi_val}</span>
-<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-weight: 700;">{mkt_cap:.0f}B</span>
+<span style="background: {rsi_bg}; color: {rsi_text}; padding: 2px 6px; border-radius: 4px; font-weight: 700;">RSI: {rsi_val}</span>
+<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; font-weight: 700;">{res['mkt_cap']:.0f}B</span>
 </div>
-<span style="font-weight: 800; color: {'#ef4444' if is_earning_risk else '#6b7280'};">
-{'⚠️' if is_earning_risk else '🗓️'} {earn_str}
-</span>
 </div>
-<div style="background: {a_color}10; color: {a_color}; padding: 8px; border-radius: 8px; border-left: 4px solid {a_color}; font-size: 0.7em; font-weight: bold; text-align: center;">
-🚀 {a_label}
+<div style="background: {res['analyst_color']}10; color: {res['analyst_color']}; padding: 8px; border-radius: 8px; border-left: 4px solid {res['analyst_color']}; font-size: 0.7em; font-weight: bold; text-align: center;">
+🚀 {res['analyst_label']}
 </div>
 </div>
 """
-            st.markdown(html_code, unsafe_allow_html=True)
+            st.markdown(html_tile, unsafe_allow_html=True)
+else:
+    st.info("Klicke auf den Button oben, um den S&P 500 Scan zu starten.")
                     
 # --- SEKTION 2: DEPOT-MANAGER (INKL. STERNE & BATCH) ---
 st.markdown("---")
@@ -519,6 +520,7 @@ if symbol_input:
         )
     else:
         st.info(f"Lade echte {opt_type} Kette von Yahoo Finance...")
+
 
 
 
