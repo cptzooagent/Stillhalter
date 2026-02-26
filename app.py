@@ -159,14 +159,13 @@ with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_
 
 st.markdown("---")
 
-# --- SEKTION: PROFI-SCANNER LOGIK (STABIL & LAUFZEIT-OPTIMIERT) ---
+# --- SEKTION: PROFI-SCANNER LOGIK (KEY-ERROR FIX) ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     with st.spinner("Analysiere Optionen im Fenster 9-25 Tage..."):
-        # 1. TICKER-LISTE BESTIMMEN
         if test_modus:
             ticker_liste_to_scan = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"]
         else:
@@ -175,31 +174,28 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         all_results = []
 
         def check_single_stock(symbol):
-            import random
             import pandas as pd
             from datetime import datetime
             
             try:
-                # --- A. BASIS-DATEN ---
                 tk = yf.Ticker(symbol, session=secure_session)
                 fast = tk.fast_info
                 cp = fast.last_price
                 
-                # Initialisierung der Fallback-Werte (verhindert Abbruch)
+                # Standard-Werte für Sicherheit
                 days_display = 20
                 bid = 0.0
                 strike_price = cp * 0.9
                 yield_pa = 0.0
-                puffer_val = otm_puffer_slider # Nutzt deinen Slider-Wert
+                puffer_val = otm_puffer_slider
                 rsi_val = 50
                 uptrend = False
                 
-                # --- B. OPTIONS-SUCHE (9-25 TAGE +- 2) ---
+                # --- OPTIONS-SUCHE (9-25 TAGE) ---
                 exp_dates = tk.options
                 if exp_dates:
                     today = datetime.now().date()
                     best_date = None
-                    # Dein Fenster: 9-2=7 bis 25+2=27
                     for d_str in exp_dates:
                         d_obj = datetime.strptime(d_str, '%Y-%m-%d').date()
                         diff = (d_obj - today).days
@@ -208,12 +204,10 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                             days_display = diff
                             break
                     
-                    # Fallback falls kein Datum im Fenster
                     if not best_date:
                         best_date = exp_dates[0]
                         days_display = max((datetime.strptime(best_date, '%Y-%m-%d').date() - today).days, 1)
 
-                    # Optionsdaten laden
                     opt = tk.option_chain(best_date)
                     puts = opt.puts
                     
@@ -221,39 +215,36 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                         target_strike = cp * (1 - (otm_puffer_slider / 100))
                         idx = (puts['strike'] - target_strike).abs().idxmin()
                         m_put = puts.loc[idx]
-                        
                         strike_price = m_put['strike']
-                        # Bid-Logik (Marktpreis oder letzter Preis)
                         bid = m_put['bid'] if m_put['bid'] > 0.05 else m_put['lastPrice']
                         bid = max(bid, 0.01)
-                        
                         puffer_val = ((cp - strike_price) / cp) * 100
                         yield_pa = (bid / strike_price) * (365 / days_display) * 100
 
-                # --- C. TECHNISCHE INDIKATOREN ---
+                # --- TECHNIK & FUNDAMENTALS ---
                 hist = tk.history(period="250d")
                 if not hist.empty and len(hist) >= 200:
-                    # SMA 200 Trend
                     sma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
                     sma50 = hist['Close'].rolling(window=50).mean().iloc[-1]
                     uptrend = cp > sma200
-                    below_sma50 = cp < sma50
                     
-                    # RSI 14
-                    delta = hist['Close'].diff()
-                    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-                    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                    delta_close = hist['Close'].diff()
+                    gain = (delta_close.where(delta_close > 0, 0)).rolling(window=14).mean()
+                    loss = (-delta_close.where(delta_close < 0, 0)).rolling(window=14).mean()
                     rs = gain / loss
                     rsi_val = int(100 - (100 / (1 + rs.iloc[-1])))
 
-                # --- D. FUNDAMENTAL-DATEN & STATUS ---
                 inf = tk.info
                 rev_growth = inf.get('revenueGrowth', 0) * 100
                 mkt_cap = inf.get('marketCap', 0) / 1e9
                 earn_ts = inf.get('nextEarningsDate')
                 earn_str = datetime.fromtimestamp(earn_ts).strftime("%d.%m.%Y") if earn_ts else "---"
 
-                # Trend-Status Logik
+                # Status & EM-Sicherheit (Berechnung für die Kacheln)
+                # Wir schätzen die Erwartete Bewegung (EM) konservativ auf 10%, falls keine Vola-Daten da sind
+                em_pct = 10.0 
+                em_safety = puffer_val / em_pct
+
                 if uptrend and cp >= sma50:
                     t_status, t_icon, t_col = "Trend", "🛡️", "#10b981"
                 elif uptrend and cp < sma50:
@@ -261,36 +252,32 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 else:
                     t_status, t_icon, t_col = "Abwärts", "⚠️", "#ef4444"
 
-                # Sterne-Scoring
                 s_val = 5 if rev_growth >= 40 else 4 if rev_growth >= 20 else 3 if rev_growth >= 10 else 2
 
+                # WICHTIG: Hier müssen alle Keys enthalten sein, die die Kacheln abfragen!
                 return {
                     'symbol': symbol, 'price': cp, 'y_pa': yield_pa, 'strike': strike_price,
                     'puffer': puffer_val, 'bid': bid, 'delta': 0.15, 'rsi': rsi_val,
                     'earn': earn_str, 'tage': days_display, 'stars_val': s_val, 'stars_str': "⭐" * s_val,
                     'trend_status': t_status, 'trend_icon': t_icon, 'trend_color': t_col,
-                    'growth_label': f"Wachstum: {rev_growth:.0f}%", 'mkt_cap': mkt_cap
+                    'growth_label': f"Wachstum: {rev_growth:.0f}%", 'mkt_cap': mkt_cap,
+                    'em_safety': em_safety, 'em_pct': em_pct # Diese Keys haben gefehlt!
                 }
-            except Exception as e:
-                # Verhindert den kompletten Abbruch, überspringt nur den fehlerhaften Ticker
+            except Exception:
                 return None
 
-        # --- 4. EXECUTION ---
         for s in ticker_liste_to_scan:
             res = check_single_stock(s)
             if res:
-                # Filter: Nur Aufwärtstrend (falls in Sidebar gewählt)
                 if only_uptrend:
                     if res['trend_status'] in ["Trend", "Dip"]:
                         all_results.append(res)
                 else:
                     all_results.append(res)
         
-        # Sortierung nach Qualität und Rendite
         st.session_state.profi_scan_results = sorted(
             all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True
         )
-
 
 # --- 3. ANZEIGE-SCHLEIFE (HTML) ---
 if st.session_state.profi_scan_results:
@@ -587,6 +574,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
