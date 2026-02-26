@@ -5,12 +5,25 @@ import numpy as np
 import requests
 from scipy.stats import norm
 from datetime import datetime, timedelta
-import concurrent.futures # Wichtig für Block 2
+import concurrent.futures
 
-# --- SETUP ---
+# --- SETUP & STYLING ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
-# --- 1. TECHNISCHE MATHEMATIK (ROBUST GEGEN NAN) ---
+# --- 1. DER SICHERHEITS-CACHE (PUNKT 1) ---
+@st.cache_data(ttl=3600)  # Daten werden 1 Stunde lang im Speicher gehalten
+def get_batch_data_cached(tickers):
+    """Holt Marktdaten für alle Ticker in einem Rutsch und schützt vor Sperren."""
+    try:
+        if not tickers: return pd.DataFrame()
+        # auto_adjust=True ist wichtig für korrekte Renditeberechnungen
+        data = yf.download(tickers, period="250d", group_by='ticker', auto_adjust=True, progress=False)
+        return data
+    except Exception as e:
+        st.error(f"⚠️ Yahoo-Download fehlgeschlagen (Sperre aktiv?): {e}")
+        return pd.DataFrame()
+
+# --- 2. TECHNISCHE MATHEMATIK (VEKTORISIERT) ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     try:
         if T <= 0 or sigma <= 0 or S <= 0: return 0
@@ -19,7 +32,6 @@ def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     except: return 0
 
 def calculate_rsi_vectorized(series, window=14):
-    """Berechnet RSI und fängt leere Daten ab."""
     if series.empty or len(series) < window: return pd.Series([50] * len(series))
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
@@ -36,52 +48,7 @@ def get_pivot_points(hist_df):
         return {"P": p, "S1": (2 * p) - h, "S2": p - (h - l), "R2": p + (h - l)}
     except: return None
 
-# --- 2. MARKT-DATEN LOGIK (REDUZIERTE LAST) ---
-@st.cache_data(ttl=3600)
-def get_combined_watchlist():
-    # Fallback-Liste falls Github/API hakt
-    default = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR", "PLTR"]
-    try:
-        url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
-        df = pd.read_csv(url, timeout=5)
-        tickers = df['Symbol'].tolist()
-        return [t.replace('.', '-') for t in list(set(tickers + default))]
-    except: return default
-
-def get_market_context():
-    """Zentrale Abfrage für die Markt-Ampel mit Fehler-Handshake."""
-    # Standardwerte (verhindert 'nan' Anzeige)
-    res = {"cp": 0, "rsi": 50, "dist": 0, "vix": 20, "btc": 0, "fg": 50}
-    try:
-        # Nur 1 Request für alles Wichtige
-        data = yf.download(["^NDX", "^VIX", "BTC-USD"], period="60d", interval="1d", progress=False)
-        
-        if not data.empty:
-            # Nasdaq Daten sicher extrahieren
-            if '^NDX' in data['Close']:
-                c = data['Close']['^NDX'].dropna()
-                if not c.empty:
-                    res["cp"] = c.iloc[-1]
-                    sma20 = c.rolling(window=20).mean().iloc[-1]
-                    res["dist"] = ((res["cp"] - sma20) / sma20) * 100
-                    res["rsi"] = calculate_rsi_vectorized(c).iloc[-1]
-            
-            # VIX & BTC sicher extrahieren
-            if '^VIX' in data['Close']:
-                v = data['Close']['^VIX'].dropna()
-                if not v.empty: res["vix"] = v.iloc[-1]
-            
-            if 'BTC-USD' in data['Close']:
-                b = data['Close']['BTC-USD'].dropna()
-                if not b.empty: res["btc"] = b.iloc[-1]
-
-        # Fear & Greed API
-        f_req = requests.get("https://api.alternative.me/fng/", timeout=3)
-        res["fg"] = int(f_req.json()['data'][0]['value'])
-    except: pass
-    return res
-
-# --- 3. HELPER FÜR FUNDAMENTALS ---
+# --- 3. ANALYSE-HELPER ---
 def get_analyst_conviction(info):
     try:
         cur = info.get('currentPrice', info.get('lastPrice', 1))
@@ -99,7 +66,6 @@ def get_openclaw_analysis(symbol):
         news = tk.news
         if not news: return "Neutral", "🤖 Keine News.", 0.5
         score = 0.5
-        # Einfaches News-Sentiment
         txt = str(news[:3]).lower()
         bull = ['buy', 'beat', 'growth', 'upgrade', 'ai']
         bear = ['sell', 'miss', 'short', 'risk', 'warning']
@@ -109,9 +75,35 @@ def get_openclaw_analysis(symbol):
         return status, f"🤖 KI: {news[0]['title'][:70]}...", score
     except: return "N/A", "🤖 Offline", 0.5
 
-# --- 4. SIDEBAR ---
+# --- 4. MARKT-AMPEL LOGIK ---
+def get_market_context():
+    res = {"cp": 0, "rsi": 50, "dist": 0, "vix": 20, "btc": 0, "fg": 50}
+    try:
+        # Hier nutzen wir ebenfalls einen Batch für die 3 wichtigsten Indikatoren
+        data = yf.download(["^NDX", "^VIX", "BTC-USD"], period="60d", interval="1d", progress=False)
+        if not data.empty:
+            if '^NDX' in data['Close']:
+                c = data['Close']['^NDX'].dropna()
+                if not c.empty:
+                    res["cp"] = c.iloc[-1]
+                    sma20 = c.rolling(window=20).mean().iloc[-1]
+                    res["dist"] = ((res["cp"] - sma20) / sma20) * 100
+                    res["rsi"] = calculate_rsi_vectorized(c).iloc[-1]
+            if '^VIX' in data['Close']:
+                v = data['Close']['^VIX'].dropna()
+                if not v.empty: res["vix"] = v.iloc[-1]
+            if 'BTC-USD' in data['Close']:
+                b = data['Close']['BTC-USD'].dropna()
+                if not b.empty: res["btc"] = b.iloc[-1]
+        
+        f_req = requests.get("https://api.alternative.me/fng/", timeout=3)
+        res["fg"] = int(f_req.json()['data'][0]['value'])
+    except: pass
+    return res
+
+# --- 5. SIDEBAR ---
 with st.sidebar:
-    st.header("🛡️ Strategie-Filter")
+    st.header("🛡️ Scanner-Filter")
     otm_puffer_slider = st.slider("OTM Puffer (%)", 5, 25, 12)
     min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 5, 100, 12)
     min_stock_price, max_stock_price = st.slider("Preis ($)", 0, 1000, (40, 600))
@@ -119,11 +111,10 @@ with st.sidebar:
     only_uptrend = st.checkbox("Nur SMA 200 Uptrend", value=False)
     test_modus = st.checkbox("🛠️ Test-Modus", value=False)
 
-# --- 5. VISUALS: MARKT-AMPEL ---
+# --- 6. VISUALISIERUNG MARKT-AMPEL ---
 st.markdown("## 🌍 Globales Markt-Monitoring")
 m = get_market_context()
 
-# Ampel-Variablen sicher initialisieren (Verhindert 'not defined' Fehler)
 ampel_color = "#27ae60"
 ampel_text = "MARKT STABIL"
 ampel_advice = "Puts auf starke Aktien möglich."
@@ -526,6 +517,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | © 2026 CapTrader AI")
+
 
 
 
