@@ -367,7 +367,7 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
 else:
     st.info("Scanner bereit. Bitte auf '🚀 Profi-Scan starten' klicken.")
                     
-# --- SEKTION 2: DEPOT-MANAGER (MIT PIVOT-PUNKTEN) ---
+# --- SEKTION 2: DEPOT-MANAGER (OPTIMIERT MIT BATCH-PROCESSING) ---
 st.markdown("---")
 st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
@@ -376,8 +376,8 @@ if 'depot_data_cache' not in st.session_state:
 
 if st.session_state.depot_data_cache is None:
     st.info("📦 Die Depot-Analyse ist aktuell pausiert, um den Start zu beschleunigen.")
-    if st.button("🚀 Depot jetzt analysieren (Inkl. Pivot-Check)", use_container_width=True):
-        with st.spinner("Berechne Pivot-Punkte und Signale..."):
+    if st.button("🚀 Depot jetzt analysieren (High-Speed Mode)", use_container_width=True):
+        with st.spinner("Berechne Pivot-Punkte und Signale via Batch-Abfrage..."):
             my_assets = {
                 "LRCX": [100, 210], "MU": [100, 390], "AFRM": [100, 76.00], "ELF": [100, 109.00], "ETSY": [100, 67.00],
                 "GTLB": [100, 41.00], "GTM": [100, 17.00], "HIMS": [100, 36.00],
@@ -385,61 +385,53 @@ if st.session_state.depot_data_cache is None:
                 "RBRK": [100, 70.00], "SE": [100, 170.00], "TTD": [100, 102.00]
             }
             
+            ticker_keys = list(my_assets.keys())
+            # Batch-Download für das gesamte Depot
+            depot_batch = yf.download(ticker_keys, period="250d", group_by='ticker', auto_adjust=True, progress=False)
+            
             depot_list = []
-            for symbol, data in my_assets.items():
+            for symbol in ticker_keys:
                 try:
-                    time.sleep(0.6) 
-                    res = get_stock_data_full(symbol)
-                    if res is None or res[0] is None: continue
+                    hist = depot_batch[symbol]
+                    if hist.empty: continue
                     
-                    price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
-                    qty, entry = data[0], data[1]
+                    price = hist['Close'].iloc[-1]
+                    qty, entry = my_assets[symbol][0], my_assets[symbol][1]
                     perf_pct = ((price - entry) / entry) * 100
-
-                    # Sterne & KI
+                    
+                    # Technische Indikatoren aus Batch
+                    rsi_series = calculate_rsi_vectorized(hist['Close'])
+                    rsi = rsi_series.iloc[-1]
+                    pivots = get_pivot_points(hist) # Nutzt hist aus Batch
+                    
+                    # KI & Analysten (Gezielte Einzelabfragen nur bei Bedarf)
                     ki_status, _, _ = get_openclaw_analysis(symbol)
                     ki_icon = "🟢" if ki_status == "Bullish" else "🔴" if ki_status == "Bearish" else "🟡"
                     
-                    try:
-                        info_temp = yf.Ticker(symbol).info
-                        analyst_txt_temp, _ = get_analyst_conviction(info_temp)
-                        stars_count = 3 if "HYPER" in analyst_txt_temp else 2 if "Stark" in analyst_txt_temp else 1
-                        star_display = "⭐" * stars_count
-                    except:
-                        star_display = "⭐"
-
-                    # PIVOT DATEN EXTRAHIEREN
+                    # Pivot-Level extrahieren
                     s2_d = pivots.get('S2') if pivots else None
-                    s2_w = pivots.get('W_S2') if pivots else None
                     r2_d = pivots.get('R2') if pivots else None
-                    r2_w = pivots.get('W_R2') if pivots else None
                     
                     # AKTIONEN LOGIK
                     put_action = "⏳ Warten"
                     if rsi < 35 or (s2_d and price <= s2_d * 1.02): put_action = "🟢 JETZT (S2/RSI)"
-                    if s2_w and price <= s2_w * 1.01: put_action = "🔥 EXTREM (Weekly S2)"
                     
                     call_action = "⏳ Warten"
                     if rsi > 55 and r2_d and price >= r2_d * 0.98: call_action = "🟢 JETZT (R2/RSI)"
 
-                    # DATENSATZ ERSTELLEN
                     depot_list.append({
-                        "Ticker": f"{symbol} {star_display}",
-                        "Earnings": earn if earn else "---",
+                        "Ticker": symbol,
                         "Einstand": f"{entry:.2f} $",
                         "Aktuell": f"{price:.2f} $",
                         "P/L %": f"{perf_pct:+.1f}%",
                         "KI-Check": f"{ki_icon} {ki_status}",
                         "RSI": int(rsi),
-                        "Short Put (Repair)": put_action,
-                        "Covered Call": call_action,
-                        "S2 Daily": f"{s2_d:.2f} $" if s2_d else "---",
-                        "S2 Weekly": f"{s2_w:.2f} $" if s2_w else "---",
-                        "R2 Daily": f"{r2_d:.2f} $" if r2_d else "---",
-                        "R2 Weekly": f"{r2_w:.2f} $" if r2_w else "---" 
+                        "Repair (Put)": put_action,
+                        "Income (CC)": call_action,
+                        "S2 Support": f"{s2_d:.2f} $" if s2_d else "---",
+                        "R2 Target": f"{r2_d:.2f} $" if r2_d else "---"
                     })
-                except Exception as e:
-                    continue
+                except: continue
             
             st.session_state.depot_data_cache = depot_list
             st.rerun()
@@ -450,200 +442,109 @@ else:
         if st.button("🔄 Daten aktualisieren"):
             st.session_state.depot_data_cache = None
             st.rerun()
+    
+    # Depot als interaktive Tabelle
+    df_depot = pd.DataFrame(st.session_state.depot_data_cache)
+    st.dataframe(df_depot, use_container_width=True, hide_index=True)
 
-    # Anzeige der Tabelle mit allen Pivot-Spalten
-    st.table(pd.DataFrame(st.session_state.depot_data_cache))
-                    
-# --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
+# --- SEKTION 3: EINZEL-TICKER COCKPIT ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
-symbol_input = st.text_input("Ticker Symbol", value="MU", help="Gib ein Ticker-Symbol ein").upper()
+symbol_input = st.text_input("Ticker Symbol", value="MU", help="Gib ein Symbol ein").upper()
 
 if symbol_input:
     try:
-        with st.spinner(f"Erstelle Dashboard für {symbol_input}..."):
+        with st.spinner(f"Lade Echtzeit-Daten für {symbol_input}..."):
             tk = yf.Ticker(symbol_input)
+            # Nutzt fast_info für sofortige Daten
+            f_info = tk.fast_info
+            price = f_info['lastPrice']
+            
+            # Historische Daten für RSI/Pivots
+            hist = tk.history(period="250d")
+            rsi = calculate_rsi_vectorized(hist['Close']).iloc[-1]
+            pivots = get_pivot_points(hist)
+            sma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
+            uptrend = price > sma200
+            
+            # Sentiment & Analysten
+            ki_status, ki_text, _ = get_openclaw_analysis(symbol_input)
             info = tk.info
-            res = get_stock_data_full(symbol_input)
+            analyst_txt, analyst_col = get_analyst_conviction(info)
 
-            # Ändere diese Zeile in Sektion 3:
-            if res[0] is not None:
-                price, dates, earn, rsi, uptrend, near_lower, atr, pivots_res = res  # pivots_res hinzugefügt
-                analyst_txt, analyst_col = get_analyst_conviction(info)
+            # 1. AMPEL-LOGIK (PANIK-SCHUTZ)
+            ampel_color, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
+            if rsi < 25:
+                ampel_color, ampel_text = "#e74c3c", "STOPP: PANIK-ABVERKAUF (RSI < 25)"
+            elif rsi > 75:
+                ampel_color, ampel_text = "#e74c3c", "STOPP: ÜBERHITZT (RSI > 75)"
+            elif uptrend and 30 <= rsi <= 55:
+                ampel_color, ampel_text = "#27ae60", "TOP SETUP (Trend-Bestätigung)"
+            
+            st.markdown(f"""
+                <div style="background-color: {ampel_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
+                    <h2 style="margin:0; font-size: 1.8em;">● {ampel_text}</h2>
+                </div>
+            """, unsafe_allow_html=True)
 
-                # --- NEU: Earnings-Anzeige im Scanner (vor der Ampel) ---
-                if earn and earn != "---":
-                    # Optischer Hinweis, falls Earnings in Kürze anstehen (Beispiel Feb/März 2026)
-                    if "Feb" in earn or "Mar" in earn:
-                        st.error(f"⚠️ **Earnings-Warnung:** Nächste Zahlen am {earn}. Vorsicht bei neuen Trades!")
-                    else:
-                        st.info(f"🗓️ Nächste Earnings: {earn}")
+            # 2. METRIKEN
+            m1, m2, m3, m4 = st.columns(4)
+            m1.metric("Kurs", f"{price:.2f} $")
+            m2.metric("RSI (14)", f"{int(rsi)}", delta="Überverkauft" if rsi < 30 else None)
+            m3.metric("Trend", "🛡️ Bullish" if uptrend else "💎 Dip-Play")
+            m4.metric("S2 Support", f"{pivots['S2']:.2f} $" if pivots else "n.a.")
+
+            # 3. KI-INSIGHTS & EARNINGS
+            st.info(ki_text)
+            
+            # Analysten Box
+            st.markdown(f"""
+                <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 8px solid {analyst_col};">
+                    <h4 style="margin:0; color: #333;">💡 Analysten-Einschätzung</h4>
+                    <p style="font-size: 1.1em; font-weight: bold; color: {analyst_col}; margin: 5px 0;">{analyst_txt}</p>
+                </div>
+            """, unsafe_allow_html=True)
+
+            # 4. OPTION-CHAIN
+            st.markdown("---")
+            st.subheader("🎯 Option-Chain Auswahl")
+            opt_mode = st.radio("Modus:", ["Put (Cash Secured)", "Call (Covered)"], horizontal=True)
+            
+            dates = tk.options
+            valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 45]
+            
+            if valid_dates:
+                target_date = st.selectbox("Verfallstag wählen", valid_dates)
+                days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
+                
+                chain = tk.option_chain(target_date).puts if "Put" in opt_mode else tk.option_chain(target_date).calls
+                
+                # Filter & Berechnung
+                df_opt = chain[chain['openInterest'] > 20].copy()
+                if "Put" in opt_mode:
+                    df_opt = df_opt[df_opt['strike'] < price].sort_values('strike', ascending=False)
+                    df_opt['Puffer %'] = ((price - df_opt['strike']) / price) * 100
                 else:
-                    st.write("🗓️ Keine Earnings-Daten verfügbar")
-
-                # --- 2. NEU: STRATEGIE-SIGNAL (Die Logik aus dem Depot-Manager) ---
-                # Wir extrahieren die S2-Werte aus pivots_res für die Berechnung
-                s2_d = pivots_res.get('S2') if pivots_res else None
-                s2_w = pivots_res.get('W_S2') if pivots_res else None
-        
-                put_action_scanner = "⏳ Warten (Kein Signal)"
-                signal_color = "white"
-
-                if s2_w and price <= s2_w * 1.01:
-                    put_action_scanner = "🔥 EXTREM (Weekly S2)"
-                    signal_color = "#ff4b4b" # Rot für Alarm/Chance
-                elif rsi < 35 or (s2_d and price <= s2_d * 1.02):
-                    put_action_scanner = "🟢 JETZT (S2/RSI)"
-                    signal_color = "#27ae60" # Grün für Einstieg
-
-                # Anzeige des Signals als hervorgehobene Metrik
-                st.markdown(f"""
-                    <div style="padding:10px; border-radius:10px; border: 2px solid {signal_color}; text-align:center;">
-                        <small>Aktuelles Short Put Signal:</small><br>
-                        <strong style="font-size:20px; color:{signal_color};">{put_action_scanner}</strong>
-                    </div>
-                """, unsafe_allow_html=True)
+                    df_opt = df_opt[df_opt['strike'] > price].sort_values('strike', ascending=True)
+                    df_opt['Puffer %'] = ((df_opt['strike'] - price) / price) * 100
                 
-                # Sterne-Logik (Basis für Qualität)
-                stars = 0
-                if "HYPER" in analyst_txt: stars = 3
-                elif "Stark" in analyst_txt: stars = 2
-                elif "Neutral" in analyst_txt: stars = 1
-                if uptrend and stars > 0: stars += 0.5
+                df_opt['Yield p.a. %'] = (df_opt['bid'] / df_opt['strike']) * (365 / max(1, days_to_exp)) * 100
                 
-                # --- VERSCHÄRFTE AMPEL-LOGIK (PANIK-SCHUTZ) ---
-                ampel_color, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
-                
-                if rsi < 25:
-                    # Panik-Schutz greift zuerst
-                    ampel_color, ampel_text = "#e74c3c", "STOPP: PANIK-ABVERKAUF (RSI < 25)"
-                elif rsi > 75:
-                    ampel_color, ampel_text = "#e74c3c", "STOPP: ÜBERHITZT (RSI > 75)"
-                elif stars >= 2.5 and uptrend and 30 <= rsi <= 60:
-                    # Ideales Setup
-                    ampel_color, ampel_text = "#27ae60", "TOP SETUP (Sicher)"
-                elif "Warnung" in analyst_txt:
-                    ampel_color, ampel_text = "#e74c3c", "STOPP: ANALYSTEN-WARNUNG"
-                else:
-                    ampel_color, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
+                # Styling
+                def highlight_options(row):
+                    if row['Puffer %'] >= 10: return ['background-color: rgba(39, 174, 96, 0.15)'] * len(row)
+                    if row['Puffer %'] >= 5: return ['background-color: rgba(241, 196, 15, 0.15)'] * len(row)
+                    return [''] * len(row)
 
-                # 1. HEADER: Ampel
-                st.markdown(f"""
-                    <div style="background-color: {ampel_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
-                        <h2 style="margin:0; font-size: 1.8em; letter-spacing: 1px;">● {ampel_text}</h2>
-                    </div>
-                """, unsafe_allow_html=True)
-
-                # 2. METRIKEN-BOARD
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Kurs", f"{price:.2f} $")
-                with col2:
-                    st.metric("RSI (14)", f"{int(rsi)}", delta="PANIK" if rsi < 25 else None, delta_color="inverse")
-                with col3:
-                    status_icon = "🛡️" if uptrend else "💎"
-                    st.metric("Phase", f"{status_icon} {'Trend' if uptrend else 'Dip'}")
-                with col4:
-                    st.metric("Qualität", "⭐" * int(stars))
-
-                # --- VOLLSTÄNDIGE PIVOT ANALYSE ANZEIGE ---
-                st.markdown("---")
-                pivots = calculate_pivots(symbol_input)
-                if pivots:
-                    st.markdown("#### 🛡️ Technische Absicherung & Ziele (Pivots)")
-                    pc1, pc2, pc3, pc4, pc5 = st.columns(5)
-                    
-                    pc1.metric("Weekly S2 (Boden)", f"{pivots['W_S2']:.2f} $")
-                    pc2.metric("Daily S2", f"{pivots['S2']:.2f} $")
-                    pc3.metric("Pivot (P)", f"{pivots['P']:.2f} $")
-                    pc4.metric("Daily R2 (Ziel)", f"{pivots['R2']:.2f} $")
-                    pc5.metric("Weekly R2 (Top)", f"{pivots['W_R2']:.2f} $")
-                    
-                    st.caption(f"💡 **CC-Tipp:** Ein Covered Call am R2 Weekly ({pivots['W_R2']:.2f} $) bietet die höchste statistische Sicherheit gegen Ausstoppen.")
-
-                # 3. ANALYSTEN BOX
-                st.markdown(f"""
-                    <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 10px solid {analyst_col}; margin-top: 10px;">
-                        <h4 style="margin-top:0; color: #31333F;">💡 Fundamentale Analyse</h4>
-                        <p style="font-size: 1.1em; font-weight: bold; color: {analyst_col};">{analyst_txt}</p>
-                        <hr style="margin: 10px 0;">
-                        <span style="color: #555;">📅 Nächste Earnings: <b>{earn if earn else 'n.a.'}</b></span>
-                    </div>
-                """, unsafe_allow_html=True)
-
-                # --- 4. OPTIONEN TABELLE & UMSCHALTER (AKTUALISIERTE VERSION) ---
-                st.markdown("---")
-                st.markdown("### 🎯 Option-Chain Auswahl")
-                
-                # Der neue Umschalter
-                option_mode = st.radio("Strategie wählen:", ["Put (Cash Secured)", "Call (Covered)"], horizontal=True)
-                
-                heute = datetime.now()
-                # Zeitfenster: 5 bis 35 Tage
-                valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
-                
-                if valid_dates:
-                    target_date = st.selectbox("📅 Wähle deinen Verfallstag", valid_dates)
-                    days_to_expiry = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
-
-                    # NEU: OpenClaw KI-Box VOR der Tabelle
-                    ki_status, ki_text, ki_score = get_openclaw_analysis(symbol_input)
-                    st.info(ki_text) # Zeigt die KI-News direkt an
-
-                    opt_chain = tk.option_chain(target_date)
-                    chain = opt_chain.puts if "Put" in option_mode else opt_chain.calls
-                    df_disp = chain.copy()
-
-                    # NEU: Filter für Liquidität (Open Interest)
-                    df_disp = df_disp[df_disp['openInterest'] > 50]
-                    
-                    # Holen der Daten je nach Modus
-                    if "Put" in option_mode:
-                        chain = tk.option_chain(target_date).puts
-                        # Filter: Nur Strikes unter aktuellem Preis
-                        df_disp = chain[chain['strike'] < price].copy()
-                        df_disp['Puffer %'] = ((price - df_disp['strike']) / price) * 100
-                        sort_order = False # Höchster Strike zuerst
-                    else:
-                        chain = tk.option_chain(target_date).calls
-                        # Filter: Nur Strikes über aktuellem Preis
-                        df_disp = chain[chain['strike'] > price].copy()
-                        df_disp['Puffer %'] = ((df_disp['strike'] - price) / price) * 100
-                        sort_order = True # Niedrigster Strike (über Preis) zuerst
-
-                    # Berechnungen
-                    df_disp['strike'] = df_disp['strike'].astype(float)
-                    df_disp['Yield p.a. %'] = (df_disp['bid'] / df_disp['strike']) * (365 / max(1, days_to_expiry)) * 100
-                    
-                    # Sortierung für bessere Übersicht
-                    df_disp = df_disp.sort_values('strike', ascending=sort_order)
-
-                    # Styling Funktion
-                    def style_rows(row):
-                        p = row['Puffer %']
-                        if p >= 10: return ['background-color: rgba(39, 174, 96, 0.1)'] * len(row)
-                        elif 5 <= p < 10: return ['background-color: rgba(241, 196, 15, 0.1)'] * len(row)
-                        return ['background-color: rgba(231, 76, 60, 0.1)'] * len(row)
-
-                    # Tabelle anzeigen (Top 15 Strikes)
-                    styled_df = df_disp[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].head(15).style.apply(style_rows, axis=1).format({
-                        'strike': '{:.2f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $',
-                        'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
-                    })
-                    
-                    st.dataframe(
-                        styled_df, 
-                        use_container_width=True, 
-                        height=400
-                    )
-                    
-                    st.caption("🟢 >10% Puffer | 🟡 5-10% Puffer | 🔴 <5% Puffer (Risiko)")
+                st.dataframe(
+                    df_opt[['strike', 'bid', 'ask', 'openInterest', 'Puffer %', 'Yield p.a. %']].head(12).style.apply(highlight_options, axis=1).format({
+                        'strike': '{:.2f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $', 'Puffer %': '{:.1f}%', 'Yield p.a. %': '{:.1f}%'
+                    }), use_container_width=True
+                )
+                st.caption("🟢 >10% Puffer | 🟡 5-10% Puffer | Basis: Mid-Preise & Open Interest > 20")
 
     except Exception as e:
-        st.error(f"Fehler bei der Detail-Analyse: {e}")
-        st.info("Hinweis: Manche Ticker-Symbole liefern am Wochenende oder bei geringer Liquidität keine Optionsdaten.")
+        st.error(f"Ticker {symbol_input} konnte nicht geladen werden.")
 
 # --- FOOTER ---
 st.markdown("---")
-st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Datenquelle: Yahoo Finance | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
-
-
+st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'} | © 2026 CapTrader AI")
