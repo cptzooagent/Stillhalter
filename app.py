@@ -2,42 +2,42 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import numpy as np
+import requests
 from scipy.stats import norm
 from datetime import datetime, timedelta
-import concurrent.futures
 
-# --- SETUP ---
+# --- SETUP & STYLING ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
-# --- 1. MATHE & TECHNIK (VEKTORISIERT) ---
+# --- 1. MATHE & TECHNIK (VEKTORISIERT & ROBUST) ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     """Standard BSM Delta Berechnung."""
-    if T <= 0 or sigma <= 0: return 0
-    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
+    try:
+        if T <= 0 or sigma <= 0 or S <= 0: return 0
+        d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+        return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
+    except: return 0
 
 def calculate_rsi_vectorized(series, window=14):
-    """Berechnet RSI effizient für ganze Datenreihen."""
+    """Berechnet RSI und bereinigt NaN-Werte für die Ampel."""
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
     rs = gain / loss
-    return 100 - (100 / (1 + rs))
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.fillna(50) # Fallback auf neutralen RSI
 
 def get_pivot_points(hist_df):
-    """Berechnet Pivots aus einem übergebenen History-Dataframe (spart Requests)."""
+    """Berechnet Pivots aus History-Dataframe."""
     try:
         if len(hist_df) < 2: return None
-        # Daily Pivots (basierend auf dem vorletzten Tag)
         last_day = hist_df.iloc[-2]
         h, l, c = last_day['High'], last_day['Low'], last_day['Close']
         p = (h + l + c) / 3
-        return {
-            "P": p, "S1": (2 * p) - h, "S2": p - (h - l), "R2": p + (h - l)
-        }
+        return {"P": p, "S1": (2 * p) - h, "S2": p - (h - l), "R2": p + (h - l)}
     except: return None
 
-# --- 2. HIGH-SPEED DATENBESCHAFFUNG ---
+# --- 2. DATENBESCHAFFUNG (BATCH-OPTIMIERT) ---
 @st.cache_data(ttl=3600)
 def get_combined_watchlist():
     try:
@@ -47,108 +47,104 @@ def get_combined_watchlist():
         nasdaq_extra = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR", "HOOD", "PLTR", "SQ"]
         full_list = list(set(tickers + nasdaq_extra))
         return [t.replace('.', '-') for t in full_list]
-    except: return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META"]
+    except: return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA"]
 
-def get_batch_stock_data(tickers):
-    """Holt alle Marktdaten für die Watchlist in EINEM Request (Sicher vor Sperren)."""
+def get_market_context():
+    """Holt globale Marktdaten und schützt vor NaN-Fehlern."""
+    # Standardwerte setzen falls Download fehlschlägt
+    cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val, crypto_fg = 0, 50, 0, 20, 0, 50
     try:
-        # 150 Tage reichen für RSI und SMA 50/100, für SMA 200 nehmen wir 250 Tage
-        data = yf.download(tickers, period="250d", group_by='ticker', auto_adjust=True, progress=False)
-        return data
-    except Exception as e:
-        st.error(f"Batch-Download fehlgeschlagen: {e}")
-        return None
+        m_data = yf.download(["^NDX", "^VIX", "BTC-USD"], period="60d", interval="1d", progress=False)
+        if not m_data.empty:
+            # Daten für Nasdaq extrahieren
+            ndx_close = m_data['Close']['^NDX'].dropna()
+            if not ndx_close.empty:
+                cp_ndq = ndx_close.iloc[-1]
+                sma20 = ndx_close.rolling(window=20).mean().iloc[-1]
+                dist_ndq = ((cp_ndq - sma20) / sma20) * 100
+                rsi_ndq = calculate_rsi_vectorized(ndx_close).iloc[-1]
+            
+            # VIX & BTC
+            vix_series = m_data['Close']['^VIX'].dropna()
+            if not vix_series.empty: vix_val = vix_series.iloc[-1]
+            
+            btc_series = m_data['Close']['BTC-USD'].dropna()
+            if not btc_series.empty: btc_val = btc_series.iloc[-1]
+        
+        # Crypto Fear & Greed
+        res = requests.get("https://api.alternative.me/fng/", timeout=3)
+        crypto_fg = int(res.json()['data'][0]['value'])
+    except: pass
+    return cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val, crypto_fg
 
 def get_openclaw_analysis(symbol):
-    """KI-Sentiment Analyse über die News-Schnittstelle."""
+    """KI-Sentiment Analyse via News."""
     try:
         tk = yf.Ticker(symbol)
-        all_news = tk.news
-        if not all_news: return "Neutral", "🤖 OpenClaw: Keine News.", 0.5
-        huge_blob = str(all_news).lower()
-        display_text = all_news[0].get('title', 'Marktstimmung aktiv')
+        news = tk.news
+        if not news: return "Neutral", "🤖 Keine News.", 0.5
+        blob = str(news).lower()
         score = 0.5
-        bull_words = ['earnings', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'up', 'bull', 'upgrade']
-        bear_words = ['sell-off', 'disruption', 'miss', 'down', 'risk', 'decline', 'short', 'warning', 'sell']
-        for w in bull_words:
-            if w in huge_blob: score += 0.08
-        for w in bear_words:
-            if w in huge_blob: score -= 0.08
-        score = max(0.1, min(0.9, score))
-        status = "Bullish" if score > 0.55 else "Bearish" if score < 0.45 else "Neutral"
-        icon = "🟢" if status == "Bullish" else "🔴" if status == "Bearish" else "🟡"
-        return status, f"{icon} OpenClaw: {display_text[:90]}", score
-    except: return "N/A", "🤖 OpenClaw: Offline", 0.5
+        bull = ['growth', 'beat', 'buy', 'ai', 'demand', 'up', 'upgrade']
+        bear = ['sell', 'miss', 'down', 'risk', 'decline', 'warning']
+        for w in bull: 
+            if w in blob: score += 0.05
+        for w in bear: 
+            if w in blob: score -= 0.05
+        status = "Bullish" if score > 0.52 else "Bearish" if score < 0.48 else "Neutral"
+        return status, f"🤖 KI: {news[0]['title'][:80]}...", score
+    except: return "N/A", "🤖 KI Offline", 0.5
 
 def get_analyst_conviction(info):
-    """Fundamentale Bewertung basierend auf Analysten-Zielen."""
+    """Bewertung basierend auf Analysten-Zielen."""
     try:
-        # Nutzt info-Ersatz aus fast_info wenn möglich
-        current = info.get('currentPrice', info.get('lastPrice', 1))
+        current = info.get('currentPrice', 1)
         target = info.get('targetMedianPrice', 0)
         upside = ((target / current) - 1) * 100 if target > 0 else 0
         rev_growth = info.get('revenueGrowth', 0) * 100
-        if rev_growth > 40: return f"🚀 HYPER-GROWTH (+{rev_growth:.0f}% Wachst.)", "#9b59b6"
-        elif upside > 15 and rev_growth > 5: return f"✅ Stark (Ziel: +{upside:.0f}%, Wachst.: {rev_growth:.1f}%)", "#27ae60"
-        elif upside > 25: return f"💎 Quality-Dip (Ziel: +{upside:.0f}%)", "#2980b9"
-        elif upside < 0 or rev_growth < -2: return f"⚠️ Warnung (Ziel: {upside:.1f}%, Wachst.: {rev_growth:.1f}%)", "#e67e22"
-        return f"⚖️ Neutral (Ziel: {upside:.0f}%)", "#7f8c8d"
-    except: return "🔍 Check nötig", "#7f8c8d"
+        if rev_growth > 30: return f"🚀 HYPER-GROWTH (+{rev_growth:.0f}%)", "#9b59b6"
+        if upside > 15: return f"✅ Stark (Ziel: +{upside:.0f}%)", "#27ae60"
+        return f"⚖️ Neutral", "#7f8c8d"
+    except: return "🔍 Check", "#7f8c8d"
 
-# --- 3. SIDEBAR & GLOBAL MONITORING ---
+# --- 3. SIDEBAR & MARKTAUSWERTUNG ---
 with st.sidebar:
-    st.header("🛡️ Strategie-Einstellungen")
-    otm_puffer_slider = st.slider("Gewünschter Puffer (%)", 3, 25, 15, key="puffer_sid")
-    min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 0, 100, 12, key="yield_sid")
-    min_stock_price, max_stock_price = st.slider("Aktienpreis-Spanne ($)", 0, 1000, (60, 500), key="price_sid")
-    st.markdown("---")
-    st.subheader("Qualitäts-Filter")
-    min_mkt_cap = st.slider("Mindest-Marktkapitalisierung (Mrd. $)", 1, 1000, 20, key="mkt_cap_sid")
-    only_uptrend = st.checkbox("Nur Aufwärtstrend (SMA 200)", value=False, key="trend_sid")
-    test_modus = st.checkbox("🛠️ Simulations-Modus (Test)", value=False, key="sim_checkbox")
-
-def get_market_context():
-    """Holt globale Marktdaten für die Ampel (Nasdaq, VIX, BTC)."""
-    try:
-        # Batch-Download für Markt-Indikatoren
-        m_data = yf.download(["^NDX", "^VIX", "BTC-USD"], period="30d", interval="1d", progress=False)
-        cp_ndq = m_data['Close']['^NDX'].iloc[-1]
-        sma20_ndq = m_data['Close']['^NDX'].rolling(window=20).mean().iloc[-1]
-        dist_ndq = ((cp_ndq - sma20_ndq) / sma20_ndq) * 100
-        
-        rsi_ndq = calculate_rsi_vectorized(m_data['Close']['^NDX']).iloc[-1]
-        vix_val = m_data['Close']['^VIX'].iloc[-1]
-        btc_val = m_data['Close']['BTC-USD'].iloc[-1]
-        
-        # Crypto Fear & Greed (API Request bleibt)
-        import requests
-        r = requests.get("https://api.alternative.me/fng/", timeout=5)
-        crypto_fg = int(r.json()['data'][0]['value'])
-        
-        return cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val, crypto_fg
-    except: return 0, 50, 0, 20, 0, 50
+    st.header("🛡️ Scanner-Filter")
+    otm_puffer_slider = st.slider("OTM Puffer (%)", 5, 25, 12)
+    min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 5, 100, 12)
+    min_stock_price, max_stock_price = st.slider("Preis ($)", 0, 1000, (40, 600))
+    min_mkt_cap = st.slider("Market Cap (Mrd. $)", 1, 1000, 15)
+    only_uptrend = st.checkbox("Nur SMA 200 Uptrend", value=False)
+    test_modus = st.checkbox("🛠️ Test-Modus (Schnell)", value=False)
 
 # --- VISUALS: MARKT-AMPEL ---
 st.markdown("## 🌍 Globales Markt-Monitoring")
 cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val, crypto_fg = get_market_context()
 
-if dist_ndq < -2 or vix_val > 25:
-    m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Nasdaq-Schwäche / Hohe Volatilität"
-    m_advice = "Defensiv agieren. Fokus auf Call-Verkäufe zur Depot-Absicherung."
-elif rsi_ndq > 72:
-    m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT: Korrekturgefahr (Gier/RSI hoch)"
-    m_advice = "Keine neuen Puts mit engem Puffer. Gewinne sichern."
-else:
-    m_color, m_text = "#27ae60", "✅ TRENDSTARK: Marktumfeld ist konstruktiv"
-    m_advice = "Puts auf starke Aktien bei Rücksetzern möglich."
+# Ampel-Logik definieren
+m_color, m_text, m_advice = "#27ae60", "MARKT STABIL", "Puts auf starke Aktien möglich."
 
-st.markdown(f'<div style="background-color: {m_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;"><h3 style="margin:0; font-size: 1.4em;">{m_text}</h3><p style="margin:0; opacity: 0.9;">{m_advice}</p></div>', unsafe_allow_html=True)
+if dist_ndq < -2 or vix_val > 24:
+    m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: SCHWÄCHE"
+    m_advice = "Vorsicht bei neuen Positionen. Volatilität steigt."
+elif rsi_ndq > 70:
+    m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT (RSI HOCH)"
+    m_advice = "Korrekturgefahr. Keine gierigen Puts eröffnen."
 
-r1c1, r1c2, r1c3, r1c4 = st.columns(4)
-with r1c1: st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
-with r1c2: st.metric("Bitcoin", f"{btc_val:,.0f} $")
-with r1c3: st.metric("VIX (Angst)", f"{vix_val:.2f}", delta="HOCH" if vix_val > 22 else "Normal", delta_color="inverse")
-with r1c4: st.metric("Nasdaq RSI", f"{int(rsi_ndq)}", delta="HEISS" if rsi_ndq > 70 else None, delta_color="inverse")
+# Anzeige der Ampel
+st.markdown(f"""
+    <div style="background-color: {m_color}; color: white; padding: 20px; border-radius: 12px; text-align: center; margin-bottom: 25px;">
+        <h2 style="margin:0;">{m_text}</h2>
+        <p style="margin:0; font-size: 1.1em; opacity: 0.9;">{m_advice}</p>
+    </div>
+""", unsafe_allow_html=True)
+
+# Metriken in 4 Spalten
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Nasdaq 100", f"{cp_ndq:,.0f}" if cp_ndq > 0 else "N/A", f"{dist_ndq:.1f}% vs SMA20")
+c2.metric("Bitcoin", f"{btc_val:,.0f} $" if btc_val > 0 else "N/A")
+c3.metric("VIX (Angst)", f"{vix_val:.2f}" if vix_val > 0 else "N/A", delta="HOCH" if vix_val > 22 else "OK", delta_color="inverse")
+c4.metric("Nasdaq RSI", f"{int(rsi_ndq)}", delta="HEISS" if rsi_ndq > 70 else "KALT" if rsi_ndq < 30 else None, delta_color="inverse")
 
 st.markdown("---")
 
@@ -550,3 +546,4 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | © 2026 CapTrader AI")
+
