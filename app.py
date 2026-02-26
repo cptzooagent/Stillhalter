@@ -159,14 +159,13 @@ with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_
 
 st.markdown("---")
 
-# --- SEKTION 1: PROFI-SCANNER LOGIK ---
+# --- SEKTION 1: PROFI-SCANNER LOGIK (SMA & GROWTH) ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
-    with st.spinner("Markt-Scanner analysiert Ticker..."):
-        # Ticker-Auswahl (Simulation vs. Echt)
+    with st.spinner("Analysiere Trends und Fundamentaldaten..."):
         ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else get_combined_watchlist()
         all_results = []
 
@@ -174,92 +173,80 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             import random
             from datetime import datetime, timedelta
             
-            # --- 1. DATEN-LOGIK (SIMULATION ODER ECHT) ---
-            if test_modus:
-                cp = random.uniform(80, 600)
-                puffer_val = random.uniform(5, 20)
-                strike_price = cp * (1 - (puffer_val / 100))
-                yield_pa = random.uniform(5, 75)  # Breitere Spanne für Test
-                bid = random.uniform(0.50, 8.50)
-                delta_val = random.uniform(-0.05, -0.45)
-                rsi_val = random.randint(20, 85)
-                rev_growth = random.uniform(-20, 110)
-                mkt_cap = random.uniform(2, 900)
-                tage_rest = random.choice([7, 14, 28, 45])
-                
-                # Earnings-Simulation
-                if random.random() > 0.75:
-                    earn_dt = datetime.now() + timedelta(days=random.randint(1, 6))
+            try:
+                # --- 1. DATEN-LOGIK (SIMULATION ODER ECHT) ---
+                if test_modus:
+                    cp = random.uniform(80, 600)
+                    rev_growth = random.uniform(-15, 95)
+                    rsi_val = random.randint(25, 75)
+                    # SMA Simulation
+                    above_sma200 = random.choice([True, True, False])
+                    below_sma50 = random.choice([True, False])
+                    # Restliche Sim-Werte
+                    puffer_val = random.uniform(7, 18)
+                    yield_pa = random.uniform(10, 60)
+                    strike_price, bid, delta_val = cp*(1-puffer_val/100), random.uniform(0.5, 5.0), random.uniform(-0.1, -0.4)
+                    earn_str = (datetime.now() + timedelta(days=random.randint(2, 60))).strftime("%d.%m.%Y")
                 else:
-                    earn_dt = datetime.now() + timedelta(days=random.randint(15, 80))
-                earn_str = earn_dt.strftime("%d.%m.%Y")
-                
-                # Sterne-Simulation (1 bis 5 für Sortier-Test)
-                stars_count = random.randint(1, 5)
-            else:
-                try:
                     tk = yf.Ticker(symbol, session=secure_session)
                     inf = tk.info
                     fast = tk.fast_info
                     cp = fast.last_price
                     rev_growth = inf.get('revenueGrowth', 0) * 100
-                    mkt_cap = fast.market_cap / 1e9
                     earn_str = inf.get('nextEarningsDate', "---")
-                    tage_rest = 30 
-                    # Hier deine Options-Logik einfügen
-                    strike_price, puffer_val, yield_pa, bid, delta_val, rsi_val = cp*0.9, 10.0, 15.0, 1.10, -0.15, 50
-                    stars_count = 3 # Standard
-                except: return None
+                    
+                    # SMA Berechnung (Echt-Daten)
+                    hist = tk.history(period="250d")
+                    sma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
+                    sma50 = hist['Close'].rolling(window=50).mean().iloc[-1]
+                    above_sma200 = cp > sma200
+                    below_sma50 = cp < sma50
+                    
+                    # Platzhalter für deine Options-Logik
+                    puffer_val, yield_pa, strike_price, bid, delta_val, rsi_val = 10.0, 18.0, cp*0.9, 1.5, -0.15, 50
 
-            # --- 2. GROWTH-LABEL & STERNE-LOGIK (REIN FUNDAMENTAL) ---
-            if rev_growth >= 40:
-                g_label, g_bg, g_text = f"🚀 HYPER-GROWTH (+{rev_growth:.0f}% Wachst.)", "#f3e8ff", "#8b5cf6"
-                stars_count = 5  # Top-Wachstum = 5 Sterne
-            elif rev_growth >= 20:
-                g_label, g_bg, g_text = f"💪 STARK (+{rev_growth:.0f}% Wachst.)", "#dcfce7", "#10b981"
-                stars_count = 4  # Starkes Wachstum = 4 Sterne
-            elif rev_growth >= 10:
-                g_label, g_bg, g_text = f"📈 SOLIDE (+{rev_growth:.0f}% Wachst.)", "#e0f2fe", "#0ea5e9"
-                stars_count = 3  # Solides Wachstum = 3 Sterne
-            elif rev_growth > 0:
-                g_label, g_bg, g_text = "⚪ NEUTRAL", "#f3f4f6", "#6b7280"
-                stars_count = 2  # Geringes Wachstum = 2 Sterne
-            else:
-                g_label, g_bg, g_text = "⚠️ NEGATIV", "#fee2e2", "#ef4444"
-                stars_count = 1  # Kein/Negatives Wachstum = 1 Stern
+                # --- 2. TREND-LOGIK (SMA BASIERT) ---
+                if above_sma200 and not below_sma50:
+                    t_status, t_icon, t_col = "Aufwärtstrend", "📈", "#10b981"
+                elif above_sma200 and below_sma50:
+                    t_status, t_icon, t_col = "Dip im Trend", "📉", "#3b82f6"
+                else:
+                    t_status, t_icon, t_col = "Abwärtstrend", "⚠️", "#ef4444"
 
-            # --- 3. EM & SICHERHEIT (NUR FÜR DIE ANZEIGE) ---
-            em_pct = random.uniform(6, 16) if test_modus else 10.0
-            em_safety = puffer_val / em_pct if em_pct > 0 else 1.0
+                # --- 3. GROWTH-LABEL & STERNE-SCORING ---
+                if rev_growth >= 40:
+                    g_label, g_bg, g_text, s_val = f"🚀 HYPER-GROWTH (+{rev_growth:.0f}%)", "#f3e8ff", "#8b5cf6", 5
+                elif rev_growth >= 20:
+                    g_label, g_bg, g_text, s_val = f"💪 STARK (+{rev_growth:.0f}%)", "#dcfce7", "#10b981", 4
+                elif rev_growth >= 10:
+                    g_label, g_bg, g_text, s_val = f"📈 SOLIDE (+{rev_growth:.0f}%)", "#e0f2fe", "#0ea5e9", 3
+                elif rev_growth > 0:
+                    g_label, g_bg, g_text, s_val = "⚪ NEUTRAL", "#f3f4f6", "#6b7280", 2
+                else:
+                    g_label, g_bg, g_text, s_val = "⚠️ NEGATIV", "#fee2e2", "#ef4444", 1
 
-            # --- 3. EM & SICHERHEIT ---
-            em_pct = random.uniform(6, 16) if test_modus else 10.0
-            em_safety = puffer_val / em_pct if em_pct > 0 else 1.0
+                # --- 4. EM & SICHERHEIT ---
+                em_pct = random.uniform(7, 14) if test_modus else 10.0
+                em_safety = puffer_val / em_pct if em_pct > 0 else 1.0
 
-            return {
-                'symbol': symbol, 'price': cp, 'y_pa': yield_pa, 'strike': strike_price,
-                'puffer': puffer_val, 'bid': bid, 'delta': delta_val, 'rsi': rsi_val,
-                'earn': earn_str, 'tage': tage_rest, 'mkt_cap': mkt_cap,
-                'stars_val': stars_count, # Numerischer Wert für Sortierung
-                'stars_str': "⭐" * stars_count, 
-                'status': "Trend" if rsi_val < 70 else "Overbought", 
-                'sent_icon': "🟢" if rsi_val < 50 else "🟡",
-                'growth_label': g_label, 'growth_color': g_bg, 'growth_text_color': g_text,
-                'em_pct': em_pct, 'em_safety': em_safety
-            }
+                return {
+                    'symbol': symbol, 'price': cp, 'y_pa': yield_pa, 'strike': strike_price,
+                    'puffer': puffer_val, 'bid': bid, 'delta': delta_val, 'rsi': rsi_val,
+                    'earn': earn_str, 'tage': 30, 'stars_val': s_val, 'stars_str': "⭐" * s_val,
+                    'trend_status': t_status, 'trend_icon': t_icon, 'trend_color': t_col,
+                    'growth_label': g_label, 'growth_color': g_bg, 'growth_text_color': g_text,
+                    'em_pct': em_pct, 'em_safety': em_safety
+                }
+            except: return None
 
-        # Ausführung des Scans
+        # Scan ausführen
         for s in ticker_liste:
             res = check_single_stock(s)
             if res: all_results.append(res)
         
-        # --- 4. SORTIERUNG (VON STARK NACH SCHWACH) ---
-        # 1. Kriterium: Sterne (stars_val) absteigend
-        # 2. Kriterium: Rendite (y_pa) absteigend
+        # Sortierung: Erst Sterne (Wachstum), dann Rendite
         st.session_state.profi_scan_results = sorted(
-            all_results, 
-            key=lambda x: (x['stars_val'], x['y_pa']), 
-            reverse=True
+            all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True
         )
 
 # --- 3. ANZEIGE-LOGIK (DIE KACHELN) ---
@@ -271,27 +258,43 @@ if st.session_state.profi_scan_results:
 
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
-            # Berechnungen für UI-Farben
-            delta_col = "#10b981" if abs(res['delta']) < 0.20 else "#f59e0b" if abs(res['delta']) < 0.30 else "#ef4444"
-            em_col = "#10b981" if res['em_safety'] >= 1.5 else "#f59e0b" if res['em_safety'] >= 1.0 else "#ef4444"
-            rsi_style = "color: #ef4444; font-weight: 700;" if res['rsi'] >= 70 else "color: #10b981; font-weight: 700;" if res['rsi'] <= 35 else "color: #4b5563;"
+            # UI-Vorbereitung (Farben & Status)
+            t_col = res.get('trend_color', '#6b7280')
+            t_icon = res.get('trend_icon', '➡️')
+            t_status = res.get('trend_status', 'Neutral')
             
+            delta_val = abs(res.get('delta', 0))
+            delta_col = "#10b981" if delta_val < 0.20 else "#f59e0b" if delta_val < 0.30 else "#ef4444"
+            
+            em_safety = res.get('em_safety', 1.0)
+            em_col = "#10b981" if em_safety >= 1.5 else "#f59e0b" if em_safety >= 1.0 else "#ef4444"
+            
+            rsi_val = res.get('rsi', 50)
+            rsi_style = "color: #ef4444; font-weight: 700;" if rsi_val >= 70 else "color: #10b981; font-weight: 700;" if rsi_val <= 35 else "color: #4b5563;"
+            
+            # Earnings-Check für Rahmenfarbe
             is_earning_risk = False
+            earn_str = res.get('earn', '---')
             try:
-                e_str = res['earn'] if "202" in res['earn'] else f"{res['earn']}.2026"
-                earn_date = datetime.strptime(e_str, "%d.%m.%Y")
-                if 0 <= (earn_date - heute_dt).days <= res['tage']: is_earning_risk = True
+                e_dt = datetime.strptime(earn_str if "202" in earn_str else f"{earn_str}.2026", "%d.%m.%Y")
+                if 0 <= (e_dt - heute_dt).days <= 30: is_earning_risk = True
             except: pass
 
             card_border, card_shadow, card_bg = ("3px solid #ef4444", "0 10px 15px rgba(239, 68, 68, 0.2)", "#fffcfc") if is_earning_risk else ("1px solid #e5e7eb", "0 4px 6px rgba(0,0,0,0.05)", "#ffffff")
 
-            # HTML CODE - STARTET GANZ LINKS
+            # HTML CODE - AB HIER GANZE LINKS AM RAND STARTEN
             html_code = f"""
 <div style="background: {card_bg}; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: {card_shadow}; font-family: sans-serif; min-height: 460px; display: flex; flex-direction: column; justify-content: space-between;">
 <div>
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-<span style="font-size: 1.2em; font-weight: 800; color: #111827;">{res['symbol']} <span style="color: #f59e0b; font-size: 0.8em;">{res['stars_str']}</span></span>
-<span style="font-size: 0.75em; font-weight: 700; color: #3b82f6; background: #3b82f610; padding: 2px 8px; border-radius: 6px;">{res['sent_icon']} {res['status']}</span>
+<div style="display: flex; align-items: center; gap: 8px;">
+<span style="font-size: 1.2em; font-weight: 800; color: #111827;">{res['symbol']}</span>
+<span style="font-size: 0.9em;">{res['stars_str']}</span>
+</div>
+<div style="display: flex; align-items: center; gap: 5px; color: {t_col}; font-weight: 700; font-size: 0.8em;">
+<span>{t_icon}</span>
+<span style="text-transform: uppercase; letter-spacing: 0.5px;">{t_status}</span>
+</div>
 </div>
 <div style="margin: 10px 0;">
 <div style="font-size: 0.7em; color: #6b7280; font-weight: 600; text-transform: uppercase;">Yield p.a.</div>
@@ -312,7 +315,7 @@ if st.session_state.profi_scan_results:
 </div>
 <div style="border-left: 3px solid {delta_col}; padding-left: 8px;">
 <div style="font-size: 0.65em; color: #6b7280;">Delta</div>
-<div style="font-size: 1.0em; font-weight: 700; color: {delta_col};">{abs(res['delta']):.2f}</div>
+<div style="font-size: 1.0em; font-weight: 700; color: {delta_col};">{delta_val:.2f}</div>
 </div>
 </div>
 <div style="background: {em_col}10; padding: 8px 10px; border-radius: 8px; border: 1px dashed {em_col};">
@@ -320,15 +323,15 @@ if st.session_state.profi_scan_results:
 <span style="font-size: 0.65em; color: #4b5563; font-weight: bold;">Stat. Erwartung (EM):</span>
 <span style="font-size: 0.8em; font-weight: 800; color: {em_col};">±{res['em_pct']:.1f}%</span>
 </div>
-<div style="font-size: 0.6em; color: #6b7280; margin-top: 2px;">Sicherheit: <b>{res['em_safety']:.1f}x EM</b></div>
+<div style="font-size: 0.6em; color: #6b7280; margin-top: 2px;">Sicherheit: <b>{em_safety:.1f}x EM</b></div>
 </div>
 </div>
 <div>
 <hr style="border: 0; border-top: 1px solid #f3f4f6; margin: 10px 0;">
 <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72em; color: #4b5563; margin-bottom: 10px;">
 <span>⏳ <b>{res['tage']}d</b></span>
-<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; {rsi_style}">RSI: {res['rsi']}</span>
-<span style="font-weight: 800; color: {'#ef4444' if is_earning_risk else '#6b7280'};">{'🚨' if is_earning_risk else '🗓️'} {res['earn']}</span>
+<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; {rsi_style}">RSI: {rsi_val}</span>
+<span style="font-weight: 800; color: {'#ef4444' if is_earning_risk else '#6b7280'};">{'🚨' if is_earning_risk else '🗓️'} {earn_str}</span>
 </div>
 <div style="background: {res['growth_color']}; color: {res['growth_text_color']}; padding: 8px; border-radius: 8px; font-size: 0.65em; font-weight: 800; text-align: center; text-transform: uppercase;">
 {res['growth_label']}
@@ -336,6 +339,7 @@ if st.session_state.profi_scan_results:
 </div>
 </div>
 """
+        
             st.markdown(html_code, unsafe_allow_html=True)
                     
 # --- SEKTION 2: DEPOT-MANAGER (MIT PIVOT-PUNKTEN) ---
@@ -578,5 +582,6 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
