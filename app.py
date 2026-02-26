@@ -211,13 +211,26 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     stars_count = 3 # Standard
                 except: return None
 
-            # --- 2. GROWTH-LABEL LOGIK ---
+            # --- 2. GROWTH-LABEL & STERNE-LOGIK (REIN FUNDAMENTAL) ---
             if rev_growth >= 40:
                 g_label, g_bg, g_text = f"🚀 HYPER-GROWTH (+{rev_growth:.0f}% Wachst.)", "#f3e8ff", "#8b5cf6"
-            elif rev_growth >= 15:
+                stars_count = 5  # Top-Wachstum = 5 Sterne
+            elif rev_growth >= 20:
                 g_label, g_bg, g_text = f"💪 STARK (+{rev_growth:.0f}% Wachst.)", "#dcfce7", "#10b981"
-            else:
+                stars_count = 4  # Starkes Wachstum = 4 Sterne
+            elif rev_growth >= 10:
+                g_label, g_bg, g_text = f"📈 SOLIDE (+{rev_growth:.0f}% Wachst.)", "#e0f2fe", "#0ea5e9"
+                stars_count = 3  # Solides Wachstum = 3 Sterne
+            elif rev_growth > 0:
                 g_label, g_bg, g_text = "⚪ NEUTRAL", "#f3f4f6", "#6b7280"
+                stars_count = 2  # Geringes Wachstum = 2 Sterne
+            else:
+                g_label, g_bg, g_text = "⚠️ NEGATIV", "#fee2e2", "#ef4444"
+                stars_count = 1  # Kein/Negatives Wachstum = 1 Stern
+
+            # --- 3. EM & SICHERHEIT (NUR FÜR DIE ANZEIGE) ---
+            em_pct = random.uniform(6, 16) if test_modus else 10.0
+            em_safety = puffer_val / em_pct if em_pct > 0 else 1.0
 
             # --- 3. EM & SICHERHEIT ---
             em_pct = random.uniform(6, 16) if test_modus else 10.0
@@ -565,4 +578,5 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
