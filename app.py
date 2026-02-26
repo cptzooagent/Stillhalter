@@ -1366,4 +1366,4 @@ else:
 
 st.markdown("---")
 st.success("🎉 Die vollständige Option-A Version wurde erfolgreich geladen!")
-``
+
