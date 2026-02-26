@@ -4,6 +4,7 @@ import yfinance as yf
 import numpy as np
 import requests
 import random
+import time
 from scipy.stats import norm
 from datetime import datetime, timedelta
 import concurrent.futures
@@ -421,6 +422,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | © 2026 CapTrader AI")
+
 
 
 
