@@ -25,6 +25,36 @@ class CurlCffiSession(FastSession):
 # Globale Session für alle yfinance-Aufrufe
 secure_session = CurlCffiSession()
 
+with st.sidebar:
+    st.header("🛡️ Strategie-Einstellungen")
+    
+    # Puffer als Slider für schnelles Adjustieren
+    otm_puffer_slider = st.slider("Gewünschter Puffer (%)", 0, 100, 15, key="puffer_sid")
+    p_puffer = otm_puffer_slider / 100
+    
+    # Rendite als Number Input für Präzision (wie in deiner alten Sidebar)
+    min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 0, 100, 12, key="yield_sid")
+    p_min_yield = min_yield_pa
+
+    # Preis-Spanne 0-1000
+    min_stock_price, max_stock_price = st.slider("Aktienpreis-Spanne ($)", 0, 1000, (60, 500), key="price_sid")
+    
+    st.markdown("---")
+    st.subheader("Qualitäts-Filter")
+    
+    # Market Cap 0-1000 (Mrd $)
+    min_mkt_cap = st.slider("Mindest-Marktkapitalisierung (Mrd. $)", 0, 1000, 20, key="mkt_cap_sid")
+    p_min_cap = min_mkt_cap * 1e9
+    
+    only_uptrend = st.checkbox("Nur Aufwärtstrend (SMA 200)", value=False, key="trend_sid")
+    test_modus = st.checkbox("🛠️ Simulations-Modus (Test)", value=False, key="sim_checkbox")
+
+    st.markdown("---")
+    # WICHTIG: Ticker-Liste muss in die Sidebar, damit du sie im Blick hast
+    default_tickers = "MU, LRCX, AMD, NVDA, TSLA, PLTR, COIN, AFRM, ELF, ETSY, GTLB, HIMS, HOOD"
+    ticker_input = st.text_area("Ticker-Liste", value=default_tickers)
+    ticker_liste = [s.strip().upper() for s in ticker_input.split(",") if s.strip()]
+
 # --- 2. MARKT-DATEN FUNKTIONEN ---
 
 def get_market_data():
@@ -533,6 +563,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
