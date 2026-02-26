@@ -133,10 +133,11 @@ if 'profi_scan_results' not in st.session_state:
 if st.button("🚀 Profi-Scan starten", key="run_pro_scan", use_container_width=True):
     all_results = []
     
+    # 1. PFAD: DEMO-MODUS (AKTIV BEI SPERRE)
     if demo_mode:
-        with st.spinner("Generiere Demo-Setups..."):
-            time.sleep(1) # <--- Genau hier war der Einrückungsfehler
-            demo_tickers = ["NVDA", "TSLA", "AAPL", "AMD", "MSFT", "MU", "PLTR", "AMZN", "META", "COIN"]
+        with st.spinner("Generiere Demo-Setups für UI-Test..."):
+            time.sleep(1) 
+            demo_tickers = ["NVDA", "TSLA", "AAPL", "AMD", "MSFT", "MU", "PLTR", "AMZN", "META", "COIN", "MSTR", "NFLX"]
             for s in demo_tickers:
                 y_pa = random.uniform(15.0, 35.0)
                 puffer = random.uniform(10.0, 20.0)
@@ -156,24 +157,29 @@ if st.button("🚀 Profi-Scan starten", key="run_pro_scan", use_container_width=
                 })
             st.session_state.profi_scan_results = all_results
             st.success("Demo-Scan abgeschlossen!")
+
+    # 2. PFAD: ECHT-MODUS (YAHOO API)
     else:
-        # Echt-Modus (Yahoo)
-        ticker_liste = ["NVDA", "TSLA", "AMD", "MU", "PLTR"] if test_modus else get_combined_watchlist()
-        with st.spinner(f"Scanne {len(ticker_liste)} Ticker..."):
+        ticker_liste = ["NVDA", "TSLA", "AMD", "MU"] if test_modus else get_combined_watchlist()
+        with st.spinner(f"Scanne {len(ticker_liste)} Ticker (Batch Mode)..."):
             batch_data = get_batch_data_cached(ticker_liste, is_demo=False)
+            
             if not batch_data.empty:
                 def check_stock(symbol):
                     try:
                         hist = batch_data[symbol] if len(ticker_liste) > 1 else batch_data
-                        if hist.empty: return None
+                        if hist.empty or len(hist) < 20: return None
+                        
                         price = hist['Close'].iloc[-1]
                         sma200 = hist['Close'].rolling(200).mean().iloc[-1]
                         uptrend = price > sma200
+                        
                         if only_uptrend and not uptrend: return None
                         
-                        # Dummy-Werte für Echt-Modus Felder (um KeyErrors zu vermeiden)
+                        tk = yf.Ticker(symbol)
+                        # Minimales Setup für Echt-Daten-Rückgabe (Erweiterbar)
                         return {
-                            'symbol': symbol, 'price': price, 'y_pa': 18.5, 'strike': price*0.88,
+                            'symbol': symbol, 'price': price, 'y_pa': 18.5, 'strike': price * 0.88,
                             'puffer': 12.0, 'bid': 2.50, 'rsi': 55, 'tage': 30,
                             'em_pct': 0.0, 'em_col': "#7f8c8d", 'status': "🛡️ Trend" if uptrend else "💎 Dip",
                             'stars_val': 2.0, 'stars_str': "⭐⭐", 'analyst_label': "✅ Stark",
@@ -188,71 +194,48 @@ if st.button("🚀 Profi-Scan starten", key="run_pro_scan", use_container_width=
                         if res: all_results.append(res)
                 st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['stars_val'], reverse=True)
 
-# --- DISPLAY: DAS "PROFI" KACHEL-DESIGN ---
+# --- 3. DISPLAY: KACHELN (LINKSBÜNDIGES HTML) ---
 if st.session_state.profi_scan_results:
     st.markdown(f"### 🎯 Top-Setups nach Qualität ({len(st.session_state.profi_scan_results)} Treffer)")
     res_list = st.session_state.profi_scan_results
-    
-    # Grid-System: 4 Spalten
     cols = st.columns(4)
     
     for i, res in enumerate(res_list):
         with cols[i % 4]:
             st.markdown(f"""
-            <div style="
-                background-color: white; 
-                padding: 20px; 
-                border-radius: 15px; 
-                border: 1px solid #e6e9ef; 
-                box-shadow: 2px 2px 10px rgba(0,0,0,0.05);
-                margin-bottom: 20px;
-                min-height: 280px;
-            ">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <h2 style="margin:0; color: #1f2937; font-size: 1.4em;">{res['symbol']}</h2>
-                    <span style="font-size: 0.8em;">{res['stars_str']}</span>
-                </div>
-                <div style="margin-top: 5px;">
-                    <span style="font-size: 0.75em; font-weight: 800; color: {res['em_col']}; background: {res['em_col']}22; padding: 2px 6px; border-radius: 4px;">
-                        {res['em_pct']:+.1f}%
-                    </span>
-                </div>
-                <p style="color: {res['analyst_color']}; font-weight: bold; font-size: 0.85em; margin: 12px 0 5px 0;">{res['analyst_label']}</p>
-                <hr style="border: 0; border-top: 1px solid #eee; margin: 10px 0;">
-                
-                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                    <span style="font-size: 0.85em; color: #6b7280;">Rendite p.a.</span>
-                    <span style="font-size: 1em; font-weight: bold; color: #10b981;">{res['y_pa']:.1f}%</span>
-                </div>
-                
-                <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-                    <span style="font-size: 0.85em; color: #6b7280;">Strike (OTM)</span>
-                    <span style="font-size: 0.9em; font-weight: 600;">{res['strike']:.1f}$ ({res['puffer']:.1f}%)</span>
-                </div>
-
-                <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
-                    <span style="font-size: 0.85em; color: #6b7280;">Laufzeit</span>
-                    <span style="font-size: 0.9em; font-weight: 600;">{res['tage']} Tage</span>
-                </div>
-
-                <div style="
-                    background: #f9fafb; 
-                    padding: 8px; 
-                    border-radius: 8px; 
-                    display: flex; 
-                    justify-content: space-around; 
-                    font-size: 0.75em; 
-                    font-weight: 600; 
-                    color: #4b5563;
-                ">
-                    <span>RSI: {int(res['rsi'])}</span>
-                    <span>|</span>
-                    <span>{res['status']}</span>
-                    <span>|</span>
-                    <span>{res['mkt_cap']:.0f}B</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+<div style="background-color: white; padding: 20px; border-radius: 15px; border: 1px solid #e6e9ef; box-shadow: 2px 2px 10px rgba(0,0,0,0.05); margin-bottom: 20px; min-height: 280px;">
+<div style="display: flex; justify-content: space-between; align-items: center;">
+<h2 style="margin:0; color: #1f2937; font-size: 1.4em;">{res['symbol']}</h2>
+<span style="font-size: 0.8em;">{res['stars_str']}</span>
+</div>
+<div style="margin-top: 5px;">
+<span style="font-size: 0.75em; font-weight: 800; color: {res['em_col']}; background: {res['em_col']}22; padding: 2px 6px; border-radius: 4px;">
+{res['em_pct']:+.1f}%
+</span>
+</div>
+<p style="color: {res['analyst_color']}; font-weight: bold; font-size: 0.85em; margin: 12px 0 5px 0;">{res['analyst_label']}</p>
+<hr style="border: 0; border-top: 1px solid #eee; margin: 10px 0;">
+<div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+<span style="font-size: 0.85em; color: #6b7280;">Rendite p.a.</span>
+<span style="font-size: 1em; font-weight: bold; color: #10b981;">{res['y_pa']:.1f}%</span>
+</div>
+<div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+<span style="font-size: 0.85em; color: #6b7280;">Strike (OTM)</span>
+<span style="font-size: 0.9em; font-weight: 600;">{res['strike']:.1f}$ ({res['puffer']:.1f}%)</span>
+</div>
+<div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
+<span style="font-size: 0.85em; color: #6b7280;">Laufzeit</span>
+<span style="font-size: 0.9em; font-weight: 600;">{res['tage']} Tage</span>
+</div>
+<div style="background: #f9fafb; padding: 8px; border-radius: 8px; display: flex; justify-content: space-around; font-size: 0.75em; font-weight: 600; color: #4b5563;">
+<span>RSI: {int(res['rsi'])}</span>
+<span>|</span>
+<span>{res['status']}</span>
+<span>|</span>
+<span>{res['mkt_cap']:.0f}B</span>
+</div>
+</div>
+""", unsafe_allow_html=True)
                     
 # --- SEKTION 2: DEPOT-MANAGER (INKL. STERNE & BATCH) ---
 st.markdown("---")
@@ -437,6 +420,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | © 2026 CapTrader AI")
+
 
 
 
