@@ -119,14 +119,14 @@ if st.button("🚀 Profi-Scan starten", key="run_pro_scan", use_container_width=
     
     if demo_mode:
         with st.spinner("Generiere Demo-Setups..."):
-            time.sleep(1) 
+            time.sleep(1) # <--- Genau hier war der Einrückungsfehler
             demo_tickers = ["NVDA", "TSLA", "AAPL", "AMD", "MSFT", "MU", "PLTR", "AMZN", "META", "COIN"]
             for s in demo_tickers:
                 y_pa = random.uniform(15.0, 35.0)
                 puffer = random.uniform(10.0, 20.0)
                 price = random.uniform(100, 950)
                 uptrend = random.choice([True, False])
-                label, color = ("🚀 HYPER-GROWTH", "#9b59b6") if random.random() > 0.7 else ("✅ Stark (Ziel: +18%)", "#27ae60")
+                label, color = ("🚀 HYPER-GROWTH", "#9b59b6") if random.random() > 0.7 else ("✅ Stark", "#27ae60")
                 s_val, s_str = get_stars_logic(label, uptrend)
                 
                 all_results.append({
@@ -139,7 +139,9 @@ if st.button("🚀 Profi-Scan starten", key="run_pro_scan", use_container_width=
                     'analyst_color': color, 'mkt_cap': random.uniform(100, 3000)
                 })
             st.session_state.profi_scan_results = all_results
+            st.success("Demo-Scan abgeschlossen!")
     else:
+        # Echt-Modus (Yahoo)
         ticker_liste = ["NVDA", "TSLA", "AMD", "MU", "PLTR"] if test_modus else get_combined_watchlist()
         with st.spinner(f"Scanne {len(ticker_liste)} Ticker..."):
             batch_data = get_batch_data_cached(ticker_liste, is_demo=False)
@@ -147,18 +149,15 @@ if st.button("🚀 Profi-Scan starten", key="run_pro_scan", use_container_width=
                 def check_stock(symbol):
                     try:
                         hist = batch_data[symbol] if len(ticker_liste) > 1 else batch_data
-                        if hist.empty or len(hist) < 20: return None
-                        
+                        if hist.empty: return None
                         price = hist['Close'].iloc[-1]
                         sma200 = hist['Close'].rolling(200).mean().iloc[-1]
                         uptrend = price > sma200
-                        
                         if only_uptrend and not uptrend: return None
                         
-                        tk = yf.Ticker(symbol)
-                        # Minimaler Check für Echt-Daten
+                        # Dummy-Werte für Echt-Modus Felder (um KeyErrors zu vermeiden)
                         return {
-                            'symbol': symbol, 'price': price, 'y_pa': 18.5, 'strike': price * 0.88,
+                            'symbol': symbol, 'price': price, 'y_pa': 18.5, 'strike': price*0.88,
                             'puffer': 12.0, 'bid': 2.50, 'rsi': 55, 'tage': 30,
                             'em_pct': 0.0, 'em_col': "#7f8c8d", 'status': "🛡️ Trend" if uptrend else "💎 Dip",
                             'stars_val': 2.0, 'stars_str': "⭐⭐", 'analyst_label': "✅ Stark",
@@ -172,8 +171,6 @@ if st.button("🚀 Profi-Scan starten", key="run_pro_scan", use_container_width=
                         res = f.result()
                         if res: all_results.append(res)
                 st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['stars_val'], reverse=True)
-
-# (Anzeige-Logik bleibt wie im letzten Post - das HTML-Design mit den Kacheln)
 
 # --- DISPLAY: DAS "PROFI" KACHEL-DESIGN ---
 if st.session_state.profi_scan_results:
@@ -424,6 +421,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | © 2026 CapTrader AI")
+
 
 
 
