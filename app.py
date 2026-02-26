@@ -7,6 +7,14 @@ import time
 import concurrent.futures
 from curl_cffi.requests import Session as FastSession
 
+# MUSS der erste Streamlit-Befehl im Skript sein!
+st.set_page_config(
+    page_title="Profi-Trading Cockpit",
+    page_icon="🚀",
+    layout="wide", # Das hier löst das Stauchungs-Problem
+    initial_sidebar_state="expanded"
+)
+
 # --- 1. INFRASTRUKTUR: SICHERE SESSION GEGEN 401 FEHLER ---
 class CurlCffiSession(FastSession):
     def __init__(self, *args, **kwargs):
@@ -563,6 +571,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
