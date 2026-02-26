@@ -350,7 +350,7 @@ if st.session_state.profi_scan_results:
 """
             st.markdown(html_code, unsafe_allow_html=True)
                     
-# --- SEKTION 2: DEPOT-MANAGER (MIT PIVOT-PUNKTEN) ---
+# --- SEKTION 2: DEPOT-MANAGER (UNABHÄNGIG VON SIDEBAR) ---
 st.markdown("---")
 st.header("🛠️ Depot-Manager: Bestandsverwaltung & Reparatur")
 
@@ -358,47 +358,54 @@ if 'depot_data_cache' not in st.session_state:
     st.session_state.depot_data_cache = None
 
 if st.session_state.depot_data_cache is None:
-    st.info("📦 Die Depot-Analyse ist aktuell pausiert, um den Start zu beschleunigen.")
+    st.info("📦 Die Depot-Analyse ist aktuell pausiert. Klicke auf Start, um deine Bestände zu prüfen.")
     if st.button("🚀 Depot jetzt analysieren (Inkl. Pivot-Check)", use_container_width=True):
-        with st.spinner("Berechne Pivot-Punkte und Signale..."):
+        with st.spinner("Rufe Depot-Daten ab und berechne Pivot-Punkte..."):
+            # Deine festen Depotwerte
             my_assets = {
                 "LRCX": [100, 210], "MU": [100, 390], "AFRM": [100, 76.00], "ELF": [100, 109.00], "ETSY": [100, 67.00],
-                "GTLB": [100, 41.00], "GTM": [100, 17.00], "HIMS": [100, 36.00],
-                "HOOD": [100, 120.00], "JKS": [100, 50.00], "NVO": [100, 97.00],
-                "RBRK": [100, 70.00], "SE": [100, 170.00], "TTD": [100, 102.00]
+                "GTLB": [100, 41.00], "HIMS": [100, 36.00], "HOOD": [100, 120.00], 
+                "JKS": [100, 50.00], "NVO": [100, 97.00], "RBRK": [100, 70.00], 
+                "SE": [100, 170.00], "TTD": [100, 102.00]
             }
             
             depot_list = []
             for symbol, data in my_assets.items():
                 try:
                     tk = yf.Ticker(symbol, session=secure_session)
-                    f_info = tk.fast_info
-                    price = f_info.last_price
-    
-                    res = get_stock_data_full(symbol)
-                    if res is None or res[0] is None: continue
-    
-                    price_full, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+                    # Schneller Preisabruf
+                    price = tk.fast_info.last_price
+                    
+                    # SICHERER ABRUF: Falls get_stock_data_full scheitert, nutzen wir Fallbacks
+                    try:
+                        res = get_stock_data_full(symbol)
+                        price_full, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
+                    except:
+                        # Fallback falls die Funktion get_stock_data_full fehlt oder crasht
+                        rsi, uptrend, pivots = 50, False, {}
+                        earn = "N/A"
+
                     qty, entry = data[0], data[1]
                     perf_pct = ((price - entry) / entry) * 100
 
-                    # KI & Sentiment (fast_info hat keine News, also bleibt get_openclaw_analysis)
-                    ki_status, _, _ = get_openclaw_analysis(symbol)
-                    ki_icon = "🟢" if ki_status == "Bullish" else "🔴" if ki_status == "Bearish" else "🟡"
+                    # KI-Check (get_openclaw_analysis muss existieren)
+                    try:
+                        ki_status, _, _ = get_openclaw_analysis(symbol)
+                        ki_icon = "🟢" if ki_status == "Bullish" else "🔴" if ki_status == "Bearish" else "🟡"
+                    except:
+                        ki_status, ki_icon = "N/A", "⚪"
     
-                    # Sterne-Ersatz durch Trend/RSI Logik (um tk.info zu meiden)
-                    stars_count = 1
-                    if uptrend: stars_count += 1
-                    if rsi < 40: stars_count += 1
-                    star_display = "⭐" * stars_count
-
+                    # Sterne-Logik (Trend + RSI)
+                    stars = 1
+                    if uptrend: stars += 1
+                    if rsi < 40: stars += 1
+                    
                     # PIVOT DATEN EXTRAHIEREN
                     s2_d = pivots.get('S2') if pivots else None
                     s2_w = pivots.get('W_S2') if pivots else None
                     r2_d = pivots.get('R2') if pivots else None
-                    r2_w = pivots.get('W_R2') if pivots else None
                     
-                    # AKTIONEN LOGIK
+                    # REPARATUR LOGIK
                     put_action = "⏳ Warten"
                     if rsi < 35 or (s2_d and price <= s2_d * 1.02): put_action = "🟢 JETZT (S2/RSI)"
                     if s2_w and price <= s2_w * 1.01: put_action = "🔥 EXTREM (Weekly S2)"
@@ -406,10 +413,8 @@ if st.session_state.depot_data_cache is None:
                     call_action = "⏳ Warten"
                     if rsi > 55 and r2_d and price >= r2_d * 0.98: call_action = "🟢 JETZT (R2/RSI)"
 
-                    # DATENSATZ ERSTELLEN
                     depot_list.append({
-                        "Ticker": f"{symbol} {star_display}",
-                        "Earnings": earn if earn else "---",
+                        "Ticker": f"{symbol} {'⭐'*stars}",
                         "Einstand": f"{entry:.2f} $",
                         "Aktuell": f"{price:.2f} $",
                         "P/L %": f"{perf_pct:+.1f}%",
@@ -419,24 +424,28 @@ if st.session_state.depot_data_cache is None:
                         "Covered Call": call_action,
                         "S2 Daily": f"{s2_d:.2f} $" if s2_d else "---",
                         "S2 Weekly": f"{s2_w:.2f} $" if s2_w else "---",
-                        "R2 Daily": f"{r2_d:.2f} $" if r2_d else "---",
-                        "R2 Weekly": f"{r2_w:.2f} $" if r2_w else "---" 
+                        "Earnings": earn
                     })
                 except Exception as e:
+                    st.warning(f"Konnte {symbol} nicht laden: {e}")
                     continue
             
             st.session_state.depot_data_cache = depot_list
             st.rerun()
 
 else:
+    # Anzeige-Bereich
     col_header, col_btn = st.columns([3, 1])
+    with col_header:
+        st.subheader(f"Gelistete Bestände: {len(st.session_state.depot_data_cache)} Assets")
     with col_btn:
         if st.button("🔄 Daten aktualisieren"):
             st.session_state.depot_data_cache = None
             st.rerun()
 
-    # Anzeige der Tabelle mit allen Pivot-Spalten
-    st.table(pd.DataFrame(st.session_state.depot_data_cache))
+    # Tabelle anzeigen
+    df_display = pd.DataFrame(st.session_state.depot_data_cache)
+    st.dataframe(df_display, use_container_width=True, hide_index=True)
                     
 # --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
@@ -590,6 +599,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
