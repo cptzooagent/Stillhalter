@@ -443,101 +443,110 @@ else:
         st.session_state.depot_data_cache = None
         st.rerun()
 
-# --- SEKTION 3: EINZEL-TICKER COCKPIT (INKL. STERNE) ---
+# --- SEKTION 3: EINZEL-TICKER COCKPIT (KORRIGIERTER BUG) ---
 st.markdown("---")
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
-symbol_input = st.text_input("Ticker Symbol", value="MU").upper()
+symbol_input = st.text_input("Ticker Symbol", value="MU", key="cockpit_input").upper()
 
 if symbol_input:
     try:
         with st.spinner(f"Lade Cockpit für {symbol_input}..."):
             tk = yf.Ticker(symbol_input)
             hist = tk.history(period="250d")
-            price = hist['Close'].iloc[-1]
-            
-            # Technik
-            rsi = calculate_rsi_vectorized(hist['Close']).iloc[-1]
-            pivots = get_pivot_points(hist)
-            sma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
-            uptrend = price > sma200
-            
-            # Qualität & Sterne
-            info = tk.info
-            analyst_txt, analyst_col = get_analyst_conviction(info)
-            
-            stars_val = 1
-            if "HYPER" in analyst_txt: stars_val = 3
-            elif "Stark" in analyst_txt: stars_val = 2
-            if uptrend: stars_val += 1
-            star_display = "⭐" * min(int(stars_val), 4)
-
-            # Ampel-Logik
-            ampel_col, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
-            if rsi < 25: ampel_color, ampel_text = "#e74c3c", "STOPP: PANIK-ABVERKAUF"
-            elif rsi > 75: ampel_color, ampel_text = "#e74c3c", "STOPP: ÜBERHITZT"
-            elif stars_val >= 3 and uptrend and 30 <= rsi <= 60: ampel_color, ampel_text = "#27ae60", "TOP SETUP (Sicher)"
-
-            # Anzeige Ampel mit Sternen
-            st.markdown(f"""
-                <div style="background-color: {ampel_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
-                    <h2 style="margin:0; font-size: 1.8em;">{star_display} {ampel_text}</h2>
-                </div>
-            """, unsafe_allow_html=True)
-
-            # Metriken
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Kurs", f"{price:.2f} $")
-            m2.metric("Qualität", star_display)
-            m3.metric("RSI (14)", f"{int(rsi)}", delta="BUY" if rsi < 35 else "SELL" if rsi > 70 else None)
-            m4.metric("Trend-Basis", "SMA 200 ↑" if uptrend else "SMA 200 ↓")
-
-            # KI-Box
-            ki_status, ki_text, _ = get_openclaw_analysis(symbol_input)
-            st.info(ki_text)
-
-            # Analysten Box
-            st.markdown(f"""
-                <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 10px solid {analyst_col}; margin-top: 10px;">
-                    <h4 style="margin-top:0;">💡 Fundamentale Analyse</h4>
-                    <p style="font-size: 1.1em; font-weight: bold; color: {analyst_col};">{analyst_txt}</p>
-                </div>
-            """, unsafe_allow_html=True)
-
-            # Option-Chain
-            st.markdown("---")
-            st.subheader("🎯 Option-Chain Auswahl")
-            opt_mode = st.radio("Strategie:", ["Put (Cash Secured)", "Call (Covered)"], horizontal=True)
-            
-            dates = tk.options
-            valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 45]
-            
-            if valid_dates:
-                target_date = st.selectbox("Laufzeit wählen", valid_dates)
-                days = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
+            if hist.empty:
+                st.error("Keine historischen Daten gefunden.")
+            else:
+                price = hist['Close'].iloc[-1]
                 
-                chain = tk.option_chain(target_date).puts if "Put" in opt_mode else tk.option_chain(target_date).calls
-                df_opt = chain[chain['openInterest'] > 10].copy()
+                # Technik
+                rsi = calculate_rsi_vectorized(hist['Close']).iloc[-1]
+                pivots = get_pivot_points(hist)
+                sma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
+                uptrend = price > sma200
                 
-                if "Put" in opt_mode:
-                    df_opt = df_opt[df_opt['strike'] < price].sort_values('strike', ascending=False)
-                    df_opt['Puffer %'] = ((price - df_opt['strike']) / price) * 100
-                else:
-                    df_opt = df_opt[df_opt['strike'] > price].sort_values('strike', ascending=True)
-                    df_opt['Puffer %'] = ((df_opt['strike'] - price) / price) * 100
+                # Qualität & Sterne
+                info = tk.info
+                analyst_txt, analyst_col = get_analyst_conviction(info)
                 
-                df_opt['Yield p.a. %'] = (df_opt['bid'] / df_opt['strike']) * (365 / max(1, days)) * 100
-                
-                def style_rows(row):
-                    if row['Puffer %'] >= 10: return ['background-color: rgba(39, 174, 96, 0.1)'] * len(row)
-                    return [''] * len(row)
+                stars_val = 1
+                if "HYPER" in analyst_txt: stars_val = 3
+                elif "Stark" in analyst_txt: stars_val = 2
+                if uptrend: stars_val += 1
+                star_display = "⭐" * min(int(stars_val), 4)
 
-                st.dataframe(df_opt[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].head(10).style.apply(style_rows, axis=1).format({
-                    'strike': '{:.2f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $', 'Puffer %': '{:.1f}%', 'Yield p.a. %': '{:.1f}%'
-                }), use_container_width=True)
+                # Ampel-Logik (KORREKTUR: ampel_color einheitlich)
+                ampel_color, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
+                if rsi < 25: 
+                    ampel_color, ampel_text = "#e74c3c", "STOPP: PANIK-ABVERKAUF"
+                elif rsi > 75: 
+                    ampel_color, ampel_text = "#e74c3c", "STOPP: ÜBERHITZT"
+                elif stars_val >= 3 and uptrend and 30 <= rsi <= 60: 
+                    ampel_color, ampel_text = "#27ae60", "TOP SETUP (Sicher)"
+
+                # Anzeige Ampel
+                st.markdown(f"""
+                    <div style="background-color: {ampel_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
+                        <h2 style="margin:0; font-size: 1.8em;">{star_display} {ampel_text}</h2>
+                    </div>
+                """, unsafe_allow_html=True)
+
+                # Metriken
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Kurs", f"{price:.2f} $")
+                m2.metric("Qualität", star_display)
+                m3.metric("RSI (14)", f"{int(rsi)}", delta="BUY" if rsi < 35 else "SELL" if rsi > 70 else None)
+                m4.metric("Trend-Basis", "SMA 200 ↑" if uptrend else "SMA 200 ↓")
+
+                # KI-Box
+                ki_status, ki_text, _ = get_openclaw_analysis(symbol_input)
+                st.info(ki_text)
+
+                # Analysten Box
+                st.markdown(f"""
+                    <div style="background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 10px solid {analyst_col}; margin-top: 10px;">
+                        <h4 style="margin-top:0;">💡 Fundamentale Analyse</h4>
+                        <p style="font-size: 1.1em; font-weight: bold; color: {analyst_col};">{analyst_txt}</p>
+                    </div>
+                """, unsafe_allow_html=True)
+
+                # Option-Chain
+                st.markdown("---")
+                st.subheader("🎯 Option-Chain Auswahl")
+                opt_mode = st.radio("Strategie:", ["Put (Cash Secured)", "Call (Covered)"], horizontal=True, key="strat_radio")
+                
+                dates = tk.options
+                valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - datetime.now()).days <= 45]
+                
+                if valid_dates:
+                    target_date = st.selectbox("Laufzeit wählen", valid_dates, key="date_select")
+                    days = (datetime.strptime(target_date, '%Y-%m-%d') - datetime.now()).days
+                    
+                    chain = tk.option_chain(target_date).puts if "Put" in opt_mode else tk.option_chain(target_date).calls
+                    df_opt = chain[chain['openInterest'] > 10].copy()
+                    
+                    if not df_opt.empty:
+                        if "Put" in opt_mode:
+                            df_opt = df_opt[df_opt['strike'] < price].sort_values('strike', ascending=False)
+                            df_opt['Puffer %'] = ((price - df_opt['strike']) / price) * 100
+                        else:
+                            df_opt = df_opt[df_opt['strike'] > price].sort_values('strike', ascending=True)
+                            df_opt['Puffer %'] = ((df_opt['strike'] - price) / price) * 100
+                        
+                        df_opt['Yield p.a. %'] = (df_opt['bid'] / df_opt['strike']) * (365 / max(1, days)) * 100
+                        
+                        def style_rows(row):
+                            if row['Puffer %'] >= 10: return ['background-color: rgba(39, 174, 96, 0.1)'] * len(row)
+                            return [''] * len(row)
+
+                        st.dataframe(df_opt[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].head(10).style.apply(style_rows, axis=1).format({
+                            'strike': '{:.2f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $', 'Puffer %': '{:.1f}%', 'Yield p.a. %': '{:.1f}%'
+                        }), use_container_width=True)
+                    else:
+                        st.warning("Keine liquiden Optionen gefunden.")
 
     except Exception as e:
-        st.error(f"Fehler: {e}")
+        st.error(f"Fehler bei der Analyse: {e}")
 
 # --- FOOTER ---
 st.markdown("---")
-st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | © 2026 CapTrader AI")
+st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | © 2026 CapTrader AI")
