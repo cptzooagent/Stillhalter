@@ -194,7 +194,7 @@ if st.button("🚀 Profi-Scan starten", key="run_pro_scan", use_container_width=
                         if res: all_results.append(res)
                 st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['stars_val'], reverse=True)
 
-# --- 3. DISPLAY: KACHELN (LINKSBÜNDIGES HTML) ---
+# --- DISPLAY: KACHELN (EXAKTES ORIGINAL-DESIGN) ---
 if st.session_state.profi_scan_results:
     st.markdown(f"### 🎯 Top-Setups nach Qualität ({len(st.session_state.profi_scan_results)} Treffer)")
     res_list = st.session_state.profi_scan_results
@@ -202,36 +202,39 @@ if st.session_state.profi_scan_results:
     
     for i, res in enumerate(res_list):
         with cols[i % 4]:
+            # WICHTIG: Die Zeilen unten dürfen KEINE Leerzeichen am Anfang haben!
             st.markdown(f"""
-<div style="background-color: white; padding: 20px; border-radius: 15px; border: 1px solid #e6e9ef; box-shadow: 2px 2px 10px rgba(0,0,0,0.05); margin-bottom: 20px; min-height: 280px;">
-<div style="display: flex; justify-content: space-between; align-items: center;">
-<h2 style="margin:0; color: #1f2937; font-size: 1.4em;">{res['symbol']}</h2>
-<span style="font-size: 0.8em;">{res['stars_str']}</span>
+<div style="background-color: white; padding: 20px; border-radius: 15px; border: 1px solid #e6e9ef; box-shadow: 2px 2px 10px rgba(0,0,0,0.05); margin-bottom: 20px; min-height: 320px; display: flex; flex-direction: column;">
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+<h2 style="margin:0; color: #1f2937; font-size: 1.4em; font-weight: 700;">{res['symbol']}</h2>
+<span style="font-size: 1.1em;">{res['stars_str']}</span>
 </div>
-<div style="margin-top: 5px;">
-<span style="font-size: 0.75em; font-weight: 800; color: {res['em_col']}; background: {res['em_col']}22; padding: 2px 6px; border-radius: 4px;">
+<div style="margin-bottom: 10px;">
+<span style="font-size: 0.8em; font-weight: 800; color: {res['em_col']}; background: {res['em_col']}15; padding: 3px 8px; border-radius: 6px; border: 1px solid {res['em_col']}33;">
 {res['em_pct']:+.1f}%
 </span>
 </div>
-<p style="color: {res['analyst_color']}; font-weight: bold; font-size: 0.85em; margin: 12px 0 5px 0;">{res['analyst_label']}</p>
-<hr style="border: 0; border-top: 1px solid #eee; margin: 10px 0;">
-<div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-<span style="font-size: 0.85em; color: #6b7280;">Rendite p.a.</span>
-<span style="font-size: 1em; font-weight: bold; color: #10b981;">{res['y_pa']:.1f}%</span>
+<div style="color: {res['analyst_color']}; font-weight: 700; font-size: 0.9em; margin-bottom: 12px; display: flex; align-items: center; gap: 4px;">
+<span>{res['analyst_label']}</span>
 </div>
-<div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
-<span style="font-size: 0.85em; color: #6b7280;">Strike (OTM)</span>
-<span style="font-size: 0.9em; font-weight: 600;">{res['strike']:.1f}$ ({res['puffer']:.1f}%)</span>
+<hr style="border: 0; border-top: 1px solid #f1f3f5; margin: 0 0 15px 0;">
+<div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+<span style="font-size: 0.85em; color: #6b7280; font-weight: 500;">Rendite p.a.</span>
+<span style="font-size: 1em; font-weight: 800; color: #10b981;">{res['y_pa']:.1f}%</span>
+</div>
+<div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+<span style="font-size: 0.85em; color: #6b7280; font-weight: 500;">Strike (OTM)</span>
+<span style="font-size: 0.9em; font-weight: 600; color: #374151;">{res['strike']:.1f}$ ({res['puffer']:.1f}%)</span>
 </div>
 <div style="display: flex; justify-content: space-between; margin-bottom: 15px;">
-<span style="font-size: 0.85em; color: #6b7280;">Laufzeit</span>
-<span style="font-size: 0.9em; font-weight: 600;">{res['tage']} Tage</span>
+<span style="font-size: 0.85em; color: #6b7280; font-weight: 500;">Laufzeit</span>
+<span style="font-size: 0.9em; font-weight: 600; color: #374151;">{res['tage']} Tage</span>
 </div>
-<div style="background: #f9fafb; padding: 8px; border-radius: 8px; display: flex; justify-content: space-around; font-size: 0.75em; font-weight: 600; color: #4b5563;">
+<div style="margin-top: auto; background: #f8fafc; padding: 10px; border-radius: 10px; display: flex; justify-content: space-around; font-size: 0.75em; font-weight: 700; color: #64748b; border: 1px solid #f1f5f9;">
 <span>RSI: {int(res['rsi'])}</span>
-<span>|</span>
+<span style="color: #cbd5e1;">|</span>
 <span>{res['status']}</span>
-<span>|</span>
+<span style="color: #cbd5e1;">|</span>
 <span>{res['mkt_cap']:.0f}B</span>
 </div>
 </div>
@@ -420,6 +423,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Update: {datetime.now().strftime('%H:%M:%S')} | © 2026 CapTrader AI")
+
 
 
 
