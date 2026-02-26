@@ -221,27 +221,50 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     else:
                         above_sma200, below_sma50, rsi_val = False, False, 50
 
-                    # --- ECHTE OPTIONS-ABFRAGE ---
+                    # --- OPTIMIERTE OPTIONS-SUCHE (ZIEL: 9-25 TAGE) ---
                     try:
-                        expirations = tk.options
-                        if expirations:
-                            # Wir nehmen die Optionen mit ca. 30 Tagen Laufzeit
-                            opt = tk.option_chain(expirations[0])
+                        exp_dates = tk.options
+                        if exp_dates:
+                            today = datetime.now().date()
+                            best_date = None
+                            target_days_min = 9 - 2  # Untergrenze mit Puffer
+                            target_days_max = 25 + 2 # Obergrenze mit Puffer
+                            
+                            # Wir suchen das erste Datum, das in unser Fenster passt
+                            for date_str in exp_dates:
+                                exp_dt = datetime.strptime(date_str, '%Y-%m-%d').date()
+                                days_to_exp = (exp_dt - today).days
+                                
+                                if target_days_min <= days_to_exp <= target_days_max:
+                                    best_date = date_str
+                                    days_display = days_to_exp
+                                    break # Erstes passendes Datum gefunden
+                            
+                            # Fallback: Falls nichts im Fenster ist, nimm das nächste verfügbare
+                            if not best_date:
+                                best_date = exp_dates[0]
+                                days_display = (datetime.strptime(best_date, '%Y-%m-%d').date() - today).days
+
+                            opt = tk.option_chain(best_date)
                             puts = opt.puts
-                            # Ziel-Strike basierend auf deinem Sidebar-Puffer (puffer_sid)
+                            
+                            # Strike-Findung basierend auf deinem Slider
                             target_strike = cp * (1 - (otm_puffer_slider / 100))
                             idx = (puts['strike'] - target_strike).abs().idxmin()
                             m_put = puts.loc[idx]
                             
                             strike_price = m_put['strike']
-                            bid = m_put['bid'] if m_put['bid'] > 0 else m_put['lastPrice']
-                            delta_val = m_put.get('delta', -0.15)
+                            
+                            # Preis-Ermittlung (Bid oder LastPrice als Fallback)
+                            bid = m_put['bid'] if m_put['bid'] > 0.05 else m_put['lastPrice']
+                            bid = max(bid, 0.01) # Sicherheit gegen 0.0
+                            
                             puffer_val = ((cp - strike_price) / cp) * 100
-                            yield_pa = (bid / strike_price) * (365 / 30) * 100
+                            yield_pa = (bid / strike_price) * (365 / days_display) * 100
                         else:
-                            puffer_val, yield_pa, strike_price, bid, delta_val = 10.0, 0.0, cp*0.9, 0.0, 0.0
+                            puffer_val, yield_pa, strike_price, bid, days_display = 10.0, 0.0, cp*0.9, 0.0, 30
                     except:
-                        puffer_val, yield_pa, strike_price, bid, delta_val = 10.0, 0.0, cp*0.9, 0.0, 0.0
+                        puffer_val, yield_pa, strike_price, bid, days_display = 10.0, 0.0, cp*0.9, 0.0, 30
 
                 # --- 3. STATUS & SCORING ---
                 if above_sma200 and not below_sma50:
@@ -583,6 +606,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
