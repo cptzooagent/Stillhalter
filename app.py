@@ -127,6 +127,22 @@ with m_col3:
 
 st.markdown("---")
 
+
+# --- START SIDEBAR (Muss VOR den Scanner!) ---
+with st.sidebar:
+    st.header("🛡️ Strategie-Einstellungen")
+    otm_puffer_slider = st.slider("Puffer (%)", 3, 25, 15)
+    min_yield_pa = st.number_input("Mindest-Yield %", 0, 100, 12)
+    min_stock_price = st.number_input("Min. Preis ($)", 0, 1000, 60)
+    max_stock_price = st.number_input("Max. Preis ($)", 0, 1000, 500)
+    min_mkt_cap = st.slider("Mkt-Cap (Mrd. $)", 1, 1000, 20)
+    only_uptrend = st.checkbox("Nur Aufwärtstrend", value=False)
+    test_modus = st.checkbox("🛠️ Simulations-Modus", value=True)
+
+# --- JETZT FOLGT BLOCK 2 (Monitoring & Scanner) ---
+st.markdown("## 🌍 Globales Markt-Monitoring")
+# ... hier kann jetzt problemlos auf otm_puffer_slider zugegriffen werden
+
 # --- 3. SEKTION 1: PROFI-SCANNER (ULTRA-SPEED) ---
 st.header("🚀 Profi-Scanner (High Speed)")
 
@@ -432,5 +448,6 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Engine: curl_cffi v1.0")
+
 
 
