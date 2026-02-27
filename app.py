@@ -299,7 +299,7 @@ def get_analyst_conviction(info):
 
 
 
-# --- SEKTION 1: PROFI-SCANNER (HIGH-SPEED MULTITHREADING EDITION MIT SPEICHERUNG) ---
+# --- SEKTION 1: PROFI-SCANNER (ULTRA-SPEED FAST_INFO EDITION) ---
 
 # 1. Speicher initialisieren
 if 'profi_scan_results' not in st.session_state:
@@ -310,7 +310,7 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
     mkt_cap_limit = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
-    with st.spinner("Markt-Scanner läuft auf Hochtouren..."):
+    with st.spinner("Markt-Scanner läuft (Fast-Info Modus aktiv)..."):
         if test_modus:
             ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"]
         else:
@@ -320,24 +320,28 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
     progress_bar = st.progress(0)
     all_results = []
 
-    # --- DIE UNTER-FUNKTION FÜR DEN PARALLELEN CHECK ---
+    # --- DIE OPTIMIERTE UNTER-FUNKTION ---
     def check_single_stock(symbol):
         try:
-            time.sleep(0.3)
             tk = yf.Ticker(symbol)
-            info = tk.info
-            curr_price = info.get('currentPrice', 0)
-            m_cap = info.get('marketCap', 0)
             
-            if m_cap < mkt_cap_limit: return None
+            # SCHRITT A: FAST_INFO (Extrem schnell für Basis-Filter)
+            # Verhindert unnötige .info Abfragen für unpassende Aktien
+            f_info = tk.fast_info
+            curr_price = f_info.get('last_price') or f_info.get('lastPrice')
+            m_cap = f_info.get('market_cap') or f_info.get('marketCap')
+
+            if not curr_price or m_cap < mkt_cap_limit: return None
             if not (min_stock_price <= curr_price <= max_stock_price): return None
             
+            # SCHRITT B: VOLLSTÄNDIGE DATEN (Nur wenn Filter A bestanden)
             res = get_stock_data_full(symbol)
             if res[0] is None: return None
             price, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
             
             if only_uptrend and not uptrend: return None
 
+            # Earnings-Check (Laufzeit-Schutz)
             max_days_allowed = 24
             if earn and "." in earn:
                 try:
@@ -347,6 +351,7 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
                     max_days_allowed = min(24, (er_datum - heute).days - 2)
                 except: pass
 
+            # Options-Check
             valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= max_days_allowed]
             if not valid_dates: return None
             
@@ -362,6 +367,8 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
                 y_pa = (bid_val / o['strike']) * (365 / max(1, days)) * 100
                 
                 if y_pa >= min_yield_pa:
+                    # SCHRITT C: FUNDAMENTAL-DATEN (Nur für finale Kandidaten)
+                    info = tk.info
                     analyst_txt, analyst_col = get_analyst_conviction(info)
                     
                     stars = 0
@@ -386,7 +393,8 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
         except: return None
         return None
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+    # Parallelisierung mit moderater Worker-Anzahl für Yahoo Stability
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
         
         for i, future in enumerate(concurrent.futures.as_completed(futures)):
@@ -397,17 +405,16 @@ if st.button("🚀 Profi-Scan starten (High Speed)", key="kombi_scan_pro"):
             
             progress_bar.progress((i + 1) / len(ticker_liste))
             if i % 5 == 0:
-                status_text.text(f"Analysiere {i}/{len(ticker_liste)}: {current_ticker}...")
+                status_text.text(f"Scanning {i}/{len(ticker_liste)}: {current_ticker}...")
 
     status_text.empty()
     progress_bar.empty()
 
-    # Sortierung und Speicherung im Session State
     if all_results:
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
     else:
         st.session_state.profi_scan_results = []
-        st.warning("Keine Treffer gefunden.")
+        st.warning("Keine Treffer unter den aktuellen Kriterien gefunden.")
 
 # --- RESULTATE ANZEIGEN (Außerhalb des Buttons, damit sie stehen bleiben) ---
 if st.session_state.profi_scan_results:
@@ -713,3 +720,4 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler bei {symbol_input}: {e}")
+
