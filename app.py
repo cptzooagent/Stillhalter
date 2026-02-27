@@ -159,36 +159,32 @@ with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_
 
 st.markdown("---")
 
-# --- SEKTION: PROFI-SCANNER LOGIK ---
+# --- SEKTION: PROFI-SCANNER LOGIK (EARNINGS-FIX) ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     with st.spinner("Analysiere Markt- und Optionsdaten..."):
-        # Ticker-Auswahl basierend auf Test-Modus
         ticker_liste_to_scan = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else ticker_liste 
 
         all_results = []
 
         def check_single_stock(symbol):
             try:
-                # 1. API Abruf (Ticker & Basisdaten)
                 tk = yf.Ticker(symbol, session=secure_session)
                 fast = tk.fast_info
                 cp = fast.last_price
                 
-                # --- OPTIONS-LOGIK ---
+                # --- 1. OPTIONS-LOGIK ---
                 exp_dates = tk.options
                 days_display = 20
                 bid, strike_price, yield_pa = 0.0, cp * 0.9, 0.0
                 
                 if exp_dates:
                     today = datetime.now().date()
-                    # Finde Verfallstag zwischen 7 und 27 Tagen
                     best_date = next((d for d in exp_dates if 7 <= (datetime.strptime(d, '%Y-%m-%d').date() - today).days <= 27), exp_dates[0])
                     days_display = max((datetime.strptime(best_date, '%Y-%m-%d').date() - today).days, 1)
-                    
                     opt = tk.option_chain(best_date)
                     puts = opt.puts
                     if not puts.empty:
@@ -198,43 +194,45 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                         bid = max(puts.loc[idx, 'bid'] if puts.loc[idx, 'bid'] > 0.05 else puts.loc[idx, 'lastPrice'], 0.01)
                         yield_pa = (bid / strike_price) * (365 / days_display) * 100
 
-                # --- TECHNIK (RSI & TREND) ---
+                # --- 2. TECHNIK ---
                 hist = tk.history(period="250d")
                 rsi_val, uptrend = 50, False
                 if not hist.empty and len(hist) >= 200:
                     sma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
                     sma50 = hist['Close'].rolling(window=50).mean().iloc[-1]
                     uptrend = cp > sma200
-                    
                     delta_close = hist['Close'].diff()
                     gain = (delta_close.where(delta_close > 0, 0)).rolling(window=14).mean()
                     loss = (-delta_close.where(delta_close < 0, 0)).rolling(window=14).mean()
-                    
-                    # Stabiler RSI-Check
-                    last_gain = gain.iloc[-1]
-                    last_loss = loss.iloc[-1]
-                    if last_loss == 0:
-                        rsi_val = 100 if last_gain > 0 else 50
-                    else:
-                        rsi_val = int(100 - (100 / (1 + (last_gain / last_loss))))
+                    l_g, l_l = gain.iloc[-1], loss.iloc[-1]
+                    rsi_val = int(100 - (100 / (1 + (l_g / l_l)))) if l_l != 0 else 50
 
-                # --- FUNDAMENTALS & EARNINGS-FIX ---
-                inf = tk.info
-                rev_growth = inf.get('revenueGrowth', 0) * 100
-                earn_ts = inf.get('nextEarningsDate')
-                
-                # Earnings Logik (Simulations-Fix integriert)
-                if earn_ts:
-                    earn_str = datetime.fromtimestamp(earn_ts).strftime("%d.%m.%Y")
-                elif test_modus:
-                    # Im Test-Modus: Zufälliges Datum in 2-10 Tagen für Rahmen-Test
-                    import random
-                    test_days = random.randint(2, 10)
-                    earn_str = (datetime.now() + timedelta(days=test_days)).strftime("%d.%m.%Y")
-                else:
-                    earn_str = "---"
+                # --- 3. DER ECHTE EARNINGS-FIX ---
+                earn_str = "---"
+                try:
+                    # Stufe 1: Versuche nextEarningsDate aus info (oft Unix Timestamp)
+                    inf = tk.info
+                    e_val = inf.get('nextEarningsDate')
+                    
+                    if e_val:
+                        # Prüfen ob es ein Integer (Unix) oder String ist
+                        if isinstance(e_val, int):
+                            earn_str = datetime.fromtimestamp(e_val).strftime("%d.%m.%Y")
+                        else:
+                            earn_str = pd.to_datetime(e_val).strftime("%d.%m.%Y")
+                    
+                    # Stufe 2: Falls Stufe 1 scheitert, schau in den Kalender
+                    if earn_str == "---" and not tk.calendar.empty:
+                        cal_date = tk.calendar.iloc[0, 0] # Erstes Datum im Kalender
+                        earn_str = cal_date.strftime("%d.%m.%Y")
+                except:
+                    # Stufe 3: Simulations-Fallback für Testzwecke
+                    if test_modus:
+                        import random
+                        earn_str = (datetime.now() + timedelta(days=random.randint(2, 8))).strftime("%d.%m.%Y")
 
                 # Sterne & Labels
+                rev_growth = inf.get('revenueGrowth', 0) * 100
                 s_val = min((1 + (1 if rev_growth >= 20 else 0) + (1 if uptrend and 30 <= rsi_val <= 65 else 0)), 3)
                 if s_val == 3: g_label, g_bg, g_txt = f"🚀 TOP SETUP (+{rev_growth:.0f}%)", "#f3e8ff", "#8b5cf6"
                 elif s_val == 2: g_label, g_bg, g_txt = f"💪 STARK (+{rev_growth:.0f}%)", "#dcfce7", "#10b981"
@@ -251,19 +249,16 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     'trend_color': t_col, 'growth_label': g_label, 'growth_color': g_bg, 
                     'growth_text_color': g_txt, 'em_pct': 10.0, 'em_safety': (((cp - strike_price) / cp) * 100) / 10.0
                 }
-            except Exception as e:
-                return None
+            except: return None
 
-        # Ergebnisse sammeln
         for s in ticker_liste_to_scan:
             res = check_single_stock(s)
-            if res:
-                all_results.append(res)
+            if res: all_results.append(res)
         
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
 
-# --- ANZEIGE-SCHLEIFE (HTML - LINKSBÜNDIG) ---
-
+# --- ANZEIGE-SCHLEIFE (HTML) ---
+# (Wie gehabt, linksbündig!)
 if st.session_state.profi_scan_results:
     res_list = st.session_state.profi_scan_results
     cols = st.columns(4)
@@ -273,20 +268,18 @@ if st.session_state.profi_scan_results:
         with cols[idx % 4]:
             t_col, t_icon, t_status = res['trend_color'], res['trend_icon'], res['trend_status']
             
-            # Earnings Risiko Check (7 Tage)
+            # 7-Tage-Check für den Rahmen
             is_earning_risk = False
             try:
                 if res['earn'] != "---":
                     e_dt = datetime.strptime(res['earn'], "%d.%m.%Y")
-                    diff_days = (e_dt - heute_dt).days
-                    if 0 <= diff_days <= 7:
+                    if 0 <= (e_dt - heute_dt).days <= 7:
                         is_earning_risk = True
             except: pass
             
             card_border = "3px solid #ef4444" if is_earning_risk else "1px solid #e5e7eb"
             earn_warning = f"<div style='background:#ef4444;color:white;font-size:0.65em;font-weight:bold;text-align:center;border-radius:4px;padding:3px;margin-bottom:8px;'>⚠️ EARNINGS DANGER</div>" if is_earning_risk else ""
 
-            # HTML STRING LINKSBÜNDIG (WICHTIG!)
             html_code = f"""
 <div style="background: white; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif; min-height: 480px; display: flex; flex-direction: column; justify-content: space-between;">
 <div>
@@ -559,6 +552,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler: {e}")
+
 
 
 
