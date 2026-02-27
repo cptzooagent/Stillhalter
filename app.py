@@ -515,12 +515,24 @@ if symbol_input:
                     </div>
                 """, unsafe_allow_html=True)
 
-                # --- METRIKEN ---
+                # --- KORRIGIERTES METRIKEN-BOARD (ERSETZE DIESEN TEIL) ---
                 col1, col2, col3, col4 = st.columns(4)
+
+                # Sicherer Abruf des Volumens
+                try:
+                    # Neuer Attributname in yfinance fast_info
+                    vol_avg = f_info.ten_day_average_volume / 1e6
+                except:
+                    try:
+                        # Fallback falls ten_day nicht existiert
+                        vol_avg = f_info.last_volume / 1e6
+                    except:
+                        vol_avg = 0
+
                 with col1: st.metric("Kurs", f"{current_price:.2f} $")
                 with col2: st.metric("RSI (14)", f"{int(rsi)}", delta="LOW" if rsi < 30 else None)
                 with col3: st.metric("Trend", "🛡️ Trend" if uptrend else "💎 Dip")
-                with col4: st.metric("Volumen", f"{f_info.average_volume_10day / 1e6:.1f}M")
+                with col4: st.metric("Volumen (Avg)", f"{vol_avg:.1f}M")
 
                 # --- PIVOT ANALYSE ---
                 st.markdown("---")
@@ -566,3 +578,4 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler: {e}")
+
