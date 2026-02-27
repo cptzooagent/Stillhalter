@@ -10,7 +10,7 @@ from curl_cffi import requests as crequests
 from io import StringIO
 
 # Globale curl_cffi Session für yfinance
-session = crequests.Session(impersonate="chrome")yf.Ticker(symbol)
+session = crequests.Session(impersonate="chrome")
 
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
@@ -145,7 +145,7 @@ with st.sidebar:
 
 def get_market_data():
     try:
-        ndq = yf.Ticker("^NDX"); vix = yf.Ticker("^VIX"); btc = yf.Ticker("BTC-USD")
+        ndq = yf.Ticker("^NDX", session=session); vix = yf.Ticker("^VIX", session=session); btc = yf.Ticker("BTC-USD", session=session)
         h_ndq = ndq.history(period="1mo"); h_vix = vix.history(period="1d"); h_btc = btc.history(period="1d")
         if h_ndq.empty: return 0, 50, 0, 20, 0
         cp_ndq = h_ndq['Close'].iloc[-1]
@@ -389,7 +389,7 @@ symbol_input = st.text_input("Ticker Symbol", value="MU", help="Gib ein Ticker-S
 if symbol_input:
     try:
         with st.spinner(f"Erstelle Dashboard für {symbol_input}..."):
-            tk = yf.Ticker(symbol_input)
+            tk = yf.Ticker(symbol_input, session=session)
             info = tk.info
             res = get_stock_data_full(symbol_input)
 
@@ -530,6 +530,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
