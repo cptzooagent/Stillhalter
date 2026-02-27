@@ -166,27 +166,29 @@ if 'profi_scan_results' not in st.session_state:
 
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
     with st.spinner("Analysiere Markt- und Optionsdaten..."):
-        # Ticker-Auswahl
+        # Ticker-Auswahl basierend auf Test-Modus
         ticker_liste_to_scan = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else ticker_liste 
 
         all_results = []
 
         def check_single_stock(symbol):
             try:
-                # API Abruf
+                # 1. API Abruf (Ticker & Basisdaten)
                 tk = yf.Ticker(symbol, session=secure_session)
                 fast = tk.fast_info
                 cp = fast.last_price
                 
-                # --- 1. OPTIONS-LOGIK ---
+                # --- OPTIONS-LOGIK ---
                 exp_dates = tk.options
                 days_display = 20
                 bid, strike_price, yield_pa = 0.0, cp * 0.9, 0.0
                 
                 if exp_dates:
                     today = datetime.now().date()
+                    # Finde Verfallstag zwischen 7 und 27 Tagen
                     best_date = next((d for d in exp_dates if 7 <= (datetime.strptime(d, '%Y-%m-%d').date() - today).days <= 27), exp_dates[0])
                     days_display = max((datetime.strptime(best_date, '%Y-%m-%d').date() - today).days, 1)
+                    
                     opt = tk.option_chain(best_date)
                     puts = opt.puts
                     if not puts.empty:
@@ -196,28 +198,37 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                         bid = max(puts.loc[idx, 'bid'] if puts.loc[idx, 'bid'] > 0.05 else puts.loc[idx, 'lastPrice'], 0.01)
                         yield_pa = (bid / strike_price) * (365 / days_display) * 100
 
-                # --- 2. TECHNIK ---
+                # --- TECHNIK (RSI & TREND) ---
                 hist = tk.history(period="250d")
                 rsi_val, uptrend = 50, False
                 if not hist.empty and len(hist) >= 200:
                     sma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
                     sma50 = hist['Close'].rolling(window=50).mean().iloc[-1]
                     uptrend = cp > sma200
+                    
                     delta_close = hist['Close'].diff()
                     gain = (delta_close.where(delta_close > 0, 0)).rolling(window=14).mean()
                     loss = (-delta_close.where(delta_close < 0, 0)).rolling(window=14).mean()
-                    rsi_val = int(100 - (100 / (1 + (gain.iloc[-1] / loss.iloc[-1]))))
+                    
+                    # Stabiler RSI-Check
+                    last_gain = gain.iloc[-1]
+                    last_loss = loss.iloc[-1]
+                    if last_loss == 0:
+                        rsi_val = 100 if last_gain > 0 else 50
+                    else:
+                        rsi_val = int(100 - (100 / (1 + (last_gain / last_loss))))
 
-                # --- 3. FUNDAMENTALS & EARNINGS-FIX ---
+                # --- FUNDAMENTALS & EARNINGS-FIX ---
                 inf = tk.info
                 rev_growth = inf.get('revenueGrowth', 0) * 100
                 earn_ts = inf.get('nextEarningsDate')
                 
-                # Earnings Datum Logik
+                # Earnings Logik (Simulations-Fix integriert)
                 if earn_ts:
                     earn_str = datetime.fromtimestamp(earn_ts).strftime("%d.%m.%Y")
                 elif test_modus:
-                    # Simulation: Zufälliges Datum in 2-10 Tagen
+                    # Im Test-Modus: Zufälliges Datum in 2-10 Tagen für Rahmen-Test
+                    import random
                     test_days = random.randint(2, 10)
                     earn_str = (datetime.now() + timedelta(days=test_days)).strftime("%d.%m.%Y")
                 else:
@@ -241,12 +252,9 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     'growth_text_color': g_txt, 'em_pct': 10.0, 'em_safety': (((cp - strike_price) / cp) * 100) / 10.0
                 }
             except Exception as e:
-                # Falls ein Fehler auftritt, wird er in der Konsole ausgegeben, damit du siehst warum
-                print(f"Fehler bei {symbol}: {e}")
                 return None
 
-        # Scanner-Schleife
-        all_results = []
+        # Ergebnisse sammeln
         for s in ticker_liste_to_scan:
             res = check_single_stock(s)
             if res:
@@ -254,7 +262,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
 
-# --- ANZEIGE-SCHLEIFE (HTML) ---
+# --- ANZEIGE-SCHLEIFE (HTML - LINKSBÜNDIG) ---
 
 if st.session_state.profi_scan_results:
     res_list = st.session_state.profi_scan_results
@@ -278,7 +286,7 @@ if st.session_state.profi_scan_results:
             card_border = "3px solid #ef4444" if is_earning_risk else "1px solid #e5e7eb"
             earn_warning = f"<div style='background:#ef4444;color:white;font-size:0.65em;font-weight:bold;text-align:center;border-radius:4px;padding:3px;margin-bottom:8px;'>⚠️ EARNINGS DANGER</div>" if is_earning_risk else ""
 
-            # HTML-Code (linksbündig)
+            # HTML STRING LINKSBÜNDIG (WICHTIG!)
             html_code = f"""
 <div style="background: white; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif; min-height: 480px; display: flex; flex-direction: column; justify-content: space-between;">
 <div>
@@ -551,6 +559,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler: {e}")
+
 
 
 
