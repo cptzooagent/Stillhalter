@@ -362,8 +362,7 @@ if st.button("🚀 Depot-Daten jetzt laden/aktualisieren", key="depot_load_btn")
 
     st.info("💡 **Tipp:** '🔥 EXTREM' bedeutet, die Aktie notiert am Weekly S2 – statistisch ein sehr starker Boden.")
                     
-# --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
-st.markdown("---")
+# --- 9. SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
 symbol_input = st.text_input("Ticker Symbol", value="MU", help="Gib ein Ticker-Symbol ein").upper()
 
@@ -371,107 +370,148 @@ if symbol_input:
     try:
         with st.spinner(f"Erstelle Dashboard für {symbol_input}..."):
             tk = yf.Ticker(symbol_input)
-            info = tk.info
+            # info = tk.info # Hinweis: info wird unten für analyst_conviction gebraucht
             res = get_stock_data_full(symbol_input)
 
             if res[0] is not None:
-                price, dates, earn, rsi, uptrend, near_lower, atr, pivots_res = res
-                analyst_txt, analyst_col = get_analyst_conviction(info)
+                # Korrektes Entpacken der 8 Rückgabewerte
+                price, dates, earn, rsi, uptrend, near_lower, atr, pivots_res = res 
+                
+                # Analysten-Daten abrufen
+                analyst_txt, analyst_col = get_analyst_conviction(tk.info)
 
-                # 1. EARNINGS-WARNUNG
+                # --- 1. Earnings-Warnung ---
                 if earn and earn != "---":
-                    # Warnung falls Earnings im aktuellen Zeitraum (Beispiel-Logik)
                     if "Feb" in earn or "Mar" in earn:
-                        st.error(f"⚠️ **Earnings-Warnung:** Nächste Zahlen am {earn}. Erhöhte Volatilität erwartet!")
+                        st.error(f"⚠️ **Earnings-Warnung:** Nächste Zahlen am {earn}. Vorsicht bei neuen Trades!")
                     else:
                         st.info(f"🗓️ Nächste Earnings: {earn}")
-                
-                # 2. SIGNAL-BOX
+                else:
+                    st.write("🗓️ Keine Earnings-Daten verfügbar")
+
+                # --- 2. STRATEGIE-SIGNAL (S2 Logik) ---
                 s2_d = pivots_res.get('S2') if pivots_res else None
                 s2_w = pivots_res.get('W_S2') if pivots_res else None
-                
-                put_signal = "⏳ Warten"
-                sig_col = "#7f8c8d"
-                
-                if s2_w and price <= s2_w * 1.01:
-                    put_signal = "🔥 EXTREM (Weekly S2)"
-                    sig_col = "#ff4b4b"
-                elif rsi < 35 or (s2_d and price <= s2_d * 1.02):
-                    put_signal = "🟢 JETZT (S2/RSI)"
-                    sig_col = "#27ae60"
+        
+                put_action_scanner = "⏳ Warten (Kein Signal)"
+                signal_color = "gray"
 
+                if s2_w and price <= s2_w * 1.01:
+                    put_action_scanner = "🔥 EXTREM (Weekly S2)"
+                    signal_color = "#ff4b4b" 
+                elif rsi < 35 or (s2_d and price <= s2_d * 1.02):
+                    put_action_scanner = "🟢 JETZT (S2/RSI)"
+                    signal_color = "#27ae60"
+
+                # Signal-Box
                 st.markdown(f"""
-                    <div style="padding:15px; border-radius:10px; border: 2px solid {sig_col}; text-align:center; margin-bottom:15px;">
-                        <small>Strategie-Signal:</small><br>
-                        <strong style="font-size:22px; color:{sig_col};">{put_signal}</strong>
+                    <div style="padding:10px; border-radius:10px; border: 2px solid {signal_color}; text-align:center; margin-bottom: 20px;">
+                        <small style="color: gray;">Aktuelles Short Put Signal:</small><br>
+                        <strong style="font-size:20px; color:{signal_color};">{put_action_scanner}</strong>
                     </div>
                 """, unsafe_allow_html=True)
-
-                # 3. DIE SICHERHEITS-AMPEL
+                
+                # Sterne-Logik
+                stars = 0
+                if "HYPER" in analyst_txt: stars = 3
+                elif "Stark" in analyst_txt: stars = 2
+                elif "Neutral" in analyst_txt: stars = 1
+                if uptrend and stars > 0: stars += 1
+                
+                # --- AMPEL-LOGIK (PANIK-SCHUTZ) ---
                 ampel_color, ampel_text = "#f1c40f", "NEUTRAL / ABWARTEN"
+                
                 if rsi < 25:
                     ampel_color, ampel_text = "#e74c3c", "STOPP: PANIK-ABVERKAUF (RSI < 25)"
                 elif rsi > 75:
                     ampel_color, ampel_text = "#e74c3c", "STOPP: ÜBERHITZT (RSI > 75)"
-                elif uptrend and 30 <= rsi <= 60:
-                    ampel_color, ampel_text = "#27ae60", "TOP SETUP (Trendstark)"
+                elif stars >= 2.5 and uptrend and 30 <= rsi <= 60:
+                    ampel_color, ampel_text = "#27ae60", "TOP SETUP (Sicher)"
                 elif "Warnung" in analyst_txt:
-                    ampel_color, ampel_text = "#e74c3c", "STOPP: FUNDAMENTAL-WARNUNG"
+                    ampel_color, ampel_text = "#e74c3c", "STOPP: ANALYSTEN-WARNUNG"
 
+                # Anzeige Ampel-Header
                 st.markdown(f"""
                     <div style="background-color: {ampel_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;">
-                        <h2 style="margin:0;">● {ampel_text}</h2>
+                        <h2 style="margin:0; font-size: 1.8em;">● {ampel_text}</h2>
                     </div>
                 """, unsafe_allow_html=True)
 
-                # 4. METRIKEN
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Kurs", f"{price:.2f} $")
-                c2.metric("RSI (14)", f"{int(rsi)}", delta="Tief" if rsi < 30 else None)
-                c3.metric("Trend", "🛡️ Bull" if uptrend else "💎 Dip")
-                c4.metric("ATR", f"{atr:.2f} $")
+                # Metriken-Board
+                m_col1, m_col2, m_col3, m_col4 = st.columns(4)
+                m_col1.metric("Kurs", f"{price:.2f} $")
+                m_col2.metric("RSI (14)", f"{int(rsi)}", delta="PANIK" if rsi < 25 else None, delta_color="inverse")
+                m_col3.metric("Phase", f"{'🛡️ Trend' if uptrend else '💎 Dip'}")
+                m_col4.metric("Qualität", "⭐" * int(stars))
 
-                # 5. OPTIONS-WAHL
+                # --- PIVOT ANALYSE ANZEIGE ---
+                st.markdown("---")
+                if pivots_res:
+                    st.markdown("#### 🛡️ Technische Absicherung & Ziele (Pivots)")
+                    pc1, pc2, pc3, pc4, pc5 = st.columns(5)
+                    pc1.metric("Weekly S2", f"{pivots_res.get('W_S2', 0):.2f} $")
+                    pc2.metric("Daily S2", f"{pivots_res.get('S2', 0):.2f} $")
+                    pc3.metric("Pivot (P)", f"{pivots_res.get('P', 0):.2f} $")
+                    pc4.metric("Daily R2", f"{pivots_res.get('R2', 0):.2f} $")
+                    pc5.metric("Weekly R2", f"{pivots_res.get('W_R2', 0):.2f} $")
+                    st.caption(f"💡 **CC-Tipp:** Covered Call am R2 Weekly ({pivots_res.get('W_R2', 0):.2f} $) ist statistisch optimal.")
+
+                # Analysten Box
+                st.markdown(f"""
+                    <div style="background-color: #f0f2f6; padding: 20px; border-radius: 10px; border-left: 10px solid {analyst_col}; margin-top: 10px;">
+                        <h4 style="margin-top:0;">💡 Fundamentale Analyse</h4>
+                        <p style="font-size: 1.1em; font-weight: bold; color: {analyst_col};">{analyst_txt}</p>
+                        <hr>
+                        <span>📅 Nächste Earnings: <b>{earn if earn else 'n.a.'}</b></span>
+                    </div>
+                """, unsafe_allow_html=True)
+
+                # --- OPTIONEN TABELLE ---
+                st.markdown("---")
                 st.markdown("### 🎯 Option-Chain Auswahl")
-                opt_mode = st.radio("Modus:", ["Put (Cash Secured)", "Call (Covered)"], horizontal=True)
+                option_mode = st.radio("Strategie wählen:", ["Put (Cash Secured)", "Call (Covered)"], horizontal=True)
                 
                 heute = datetime.now()
-                valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
+                valid_dates = [d for d in dates if 5 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
                 
                 if valid_dates:
-                    t_date = st.selectbox("📅 Verfallstag wählen", valid_dates)
-                    days_to_exp = (datetime.strptime(t_date, '%Y-%m-%d') - heute).days
-                    
-                    # OpenClaw KI-Snippet
-                    _, ki_text, _ = get_openclaw_analysis(symbol_input)
-                    st.caption(ki_text)
+                    target_date = st.selectbox("📅 Wähle deinen Verfallstag", valid_dates)
+                    days_to_expiry = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
 
-                    # Chain laden
-                    opt_chain = tk.option_chain(t_date)
-                    df_opt = opt_chain.puts if "Put" in opt_mode else opt_chain.calls
-                    
-                    # Filtern & Berechnen
-                    if "Put" in opt_mode:
-                        df_opt = df_opt[df_opt['strike'] < price].copy()
-                        df_opt['Puffer %'] = ((price - df_opt['strike']) / price) * 100
-                        sort_asc = False
+                    # KI-News Sentiment (OpenClaw)
+                    ki_status, ki_text, ki_score = get_openclaw_analysis(symbol_input)
+                    st.info(ki_text)
+
+                    opt_chain = tk.option_chain(target_date)
+                    chain = opt_chain.puts if "Put" in option_mode else opt_chain.calls
+                    df_disp = chain[chain['openInterest'] > 20].copy()
+
+                    if "Put" in option_mode:
+                        df_disp = df_disp[df_disp['strike'] < price].copy()
+                        df_disp['Puffer %'] = ((price - df_disp['strike']) / price) * 100
+                        sort_order = False
                     else:
-                        df_opt = df_opt[df_opt['strike'] > price].copy()
-                        df_opt['Puffer %'] = ((df_opt['strike'] - price) / price) * 100
-                        sort_asc = True
-                    
-                    df_opt['Yield p.a. %'] = (df_opt['bid'] / df_opt['strike']) * (365 / max(1, days_to_exp)) * 100
-                    
-                    # Anzeige
-                    disp_df = df_opt[['strike', 'bid', 'ask', 'openInterest', 'Puffer %', 'Yield p.a. %']].head(12)
-                    st.dataframe(disp_df.sort_values('strike', ascending=sort_asc), use_container_width=True)
+                        df_disp = df_disp[df_disp['strike'] > price].copy()
+                        df_disp['Puffer %'] = ((df_disp['strike'] - price) / price) * 100
+                        sort_order = True
+
+                    df_disp['Yield p.a. %'] = (df_disp['bid'] / df_disp['strike']) * (365 / max(1, days_to_expiry)) * 100
+                    df_disp = df_disp.sort_values('strike', ascending=sort_order)
+
+                    def style_rows(row):
+                        p = row['Puffer %']
+                        if p >= 10: return ['background-color: rgba(39, 174, 96, 0.1)'] * len(row)
+                        elif 5 <= p < 10: return ['background-color: rgba(241, 196, 15, 0.1)'] * len(row)
+                        return ['background-color: rgba(231, 76, 60, 0.1)'] * len(row)
+
+                    st.dataframe(df_disp[['strike', 'bid', 'ask', 'Puffer %', 'Yield p.a. %']].head(12).style.apply(style_rows, axis=1).format({
+                        'strike': '{:.2f} $', 'bid': '{:.2f} $', 'ask': '{:.2f} $', 'Puffer %': '{:.1f} %', 'Yield p.a. %': '{:.1f} %'
+                    }), use_container_width=True)
+            else:
+                st.error("Daten konnten nicht geladen werden.")
 
     except Exception as e:
-        st.error(f"Fehler bei Analyse {symbol_input}: {e}")
-
-# --- FOOTER ---
-st.markdown("---")
-st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Engine: curl_cffi v1.0")
+        st.error(f"Fehler bei {symbol_input}: {e}")
 
 
 
