@@ -381,15 +381,20 @@ if st.button("🚀 Depot jetzt analysieren (Inkl. Pivot-Check)", use_container_w
             except: continue
         st.table(pd.DataFrame(depot_list))
 
-# --- SEKTION 3: DESIGN-UPGRADE & SICHERHEITS-AMPEL (INKL. PANIK-SCHUTZ) ---
+# --- SEKTION 3: PROFI-ANALYSE & TRADING-COCKPIT ---
 st.markdown("---")
 st.markdown("### 🔍 Profi-Analyse & Trading-Cockpit")
-symbol_input = st.text_input("Ticker Symbol", value="MU", help="Gib ein Ticker-Symbol ein").upper()
 
-if symbol_input:
+# Wir nutzen ein Formular, damit nicht jeder Tastendruck einen Re-Run auslöst
+with st.form("cockpit_form"):
+    symbol_input = st.text_input("Ticker Symbol", value="MU", help="Gib ein Ticker-Symbol ein").upper()
+    submit_button = st.form_submit_button("🚀 Analyse starten / aktualisieren")
+
+if submit_button and symbol_input:
     try:
         with st.spinner(f"Erstelle Dashboard für {symbol_input}..."):
-            tk = yf.Ticker(symbol_input, session=session)
+            # Hier nutzen wir jetzt die globale Session! 
+            tk = yf.Ticker(symbol_input, session=session) 
             info = tk.info
             res = get_stock_data_full(symbol_input)
 
@@ -399,17 +404,15 @@ if symbol_input:
 
                 # --- Earnings-Anzeige ---
                 if earn and earn != "---":
-                    if "Feb" in earn or "Mar" in earn:
-                        st.error(f"⚠️ **Earnings-Warnung:** Nächste Zahlen am {earn}. Vorsicht bei neuen Trades!")
-                    else:
-                        st.info(f"🗓️ Nächste Earnings: {earn}")
+                    # Dynamische Prüfung für 2026 [cite: 40]
+                    st.info(f"🗓️ Nächste Earnings: {earn}")
                 else:
                     st.write("🗓️ Keine Earnings-Daten verfügbar")
 
                 # --- STRATEGIE-SIGNAL ---
                 s2_d = pivots_res.get('S2') if pivots_res else None
                 s2_w = pivots_res.get('W_S2') if pivots_res else None
-        
+                
                 put_action_scanner = "⏳ Warten (Kein Signal)"
                 signal_color = "white"
 
@@ -426,6 +429,7 @@ if symbol_input:
                         <strong style="font-size:20px; color:{signal_color};">{put_action_scanner}</strong>
                     </div>
                 """, unsafe_allow_html=True)
+                
                 
                 # Sterne-Logik
                 stars = 0
@@ -530,6 +534,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
