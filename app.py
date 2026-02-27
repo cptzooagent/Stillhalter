@@ -8,12 +8,12 @@ import concurrent.futures
 import time
 from curl_cffi import requests  # Die stabile Engine gegen Bot-Blocking
 
-# --- CONFIG ---
+# --- 1. GRUNDKONFIGURATION ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
-# --- 0. CURL_CFFI ENGINE ---
+# --- 2. CURL_CFFI ENGINE (DIE BASIS) ---
 def fetch_with_curl(url):
-    """Holt Daten via curl_cffi im Chrome-Modus (für APIs/Scraping)."""
+    """Holt Daten via curl_cffi im Chrome-Modus."""
     try:
         with requests.Session(impersonate="chrome110") as s:
             res = s.get(url, timeout=10)
@@ -21,7 +21,7 @@ def fetch_with_curl(url):
     except Exception as e:
         return None
 
-# --- 1. MATHE & TECHNIK ---
+# --- 3. MATHEMATISCHE FUNKTIONEN ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     if T <= 0 or sigma <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
@@ -36,7 +36,6 @@ def calculate_rsi(data, window=14):
     return 100 - (100 / (1 + rs))
 
 def calculate_pivots(symbol):
-    """Berechnet Daily und Weekly Pivot-Punkte."""
     try:
         tk = yf.Ticker(symbol)
         hist_d = tk.history(period="5d") 
@@ -54,12 +53,11 @@ def calculate_pivots(symbol):
         h_w, l_w, c_w = last_week['High'], last_week['Low'], last_week['Close']
         p_w = (h_w + l_w + c_w) / 3
         s2_w, r2_w = p_w - (h_w - l_w), p_w + (h_w - l_w)
-
         return {"P": p_d, "S1": s1_d, "S2": s2_d, "R2": r2_d, "W_S2": s2_w, "W_R2": r2_w}
     except: return None
 
+# --- 4. DATEN-ANALYSEN ---
 def get_openclaw_analysis(symbol):
-    """KI-Sentiment Analyse via Yahoo News."""
     try:
         tk = yf.Ticker(symbol)
         all_news = tk.news
@@ -67,9 +65,9 @@ def get_openclaw_analysis(symbol):
         huge_blob = str(all_news).lower()
         display_text = all_news[0].get('title', 'Markt aktiv')
         score = 0.5
-        for w in ['growth', 'beat', 'buy', 'ai']: 
+        for w in ['growth', 'beat', 'buy', 'ai', 'profit']: 
             if w in huge_blob: score += 0.08
-        for w in ['miss', 'risk', 'sell', 'warning']: 
+        for w in ['miss', 'risk', 'sell', 'warning', 'decline']: 
             if w in huge_blob: score -= 0.08
         score = max(0.1, min(0.9, score))
         status = "Bullish" if score > 0.55 else "Bearish" if score < 0.45 else "Neutral"
@@ -79,7 +77,6 @@ def get_openclaw_analysis(symbol):
 
 @st.cache_data(ttl=3600)
 def get_stock_data_full(symbol):
-    """Zentrale Datenbeschaffung für einen Ticker."""
     try:
         tk = yf.Ticker(symbol)
         hist = tk.history(period="250d") 
@@ -99,36 +96,18 @@ def get_stock_data_full(symbol):
         return price, dates, earn_str, rsi_val, (price > sma_200), False, atr, pivots
     except: return None, [], "", 50, True, False, 0, None
 
+def get_analyst_conviction(info):
+    try:
+        current = info.get('currentPrice', 1)
+        target = info.get('targetMedianPrice', 0)
+        upside = ((target / current) - 1) * 100 if target > 0 else 0
+        rev_growth = info.get('revenueGrowth', 0) * 100
+        if rev_growth > 40: return f"🚀 HYPER-GROWTH (+{rev_growth:.0f}%)", "#9b59b6"
+        elif upside > 15: return f"✅ Stark (Ziel: +{upside:.0f}%)", "#27ae60"
+        return f"⚖️ Neutral", "#7f8c8d"
+    except: return "🔍 Check nötig", "#7f8c8d"
 
-# --- 2. GLOBAL MONITORING (MIT CURL_CFFI) ---
-def get_crypto_fg():
-    """Holt den Crypto Fear & Greed Index sicher via curl_cffi."""
-    res = fetch_with_curl("https://api.alternative.me/fng/")
-    if res and res.status_code == 200:
-        try:
-            return int(res.json()['data'][0]['value'])
-        except: return 50
-    return 50
-
-st.markdown("## 🌍 Globales Markt-Monitoring")
-
-# Marktdaten laden
-crypto_fg = get_crypto_fg()
-stock_fg = 50 # Platzhalter (kann durch eigene API ergänzt werden)
-
-# UI Layout für Monitoring
-m_col1, m_col2, m_col3 = st.columns(3)
-with m_col1:
-    st.metric("Fear & Greed (Crypto)", f"{crypto_fg}")
-with m_col2:
-    st.metric("Markt-Status", "Aktiv" if datetime.now().hour < 22 else "Closed")
-with m_col3:
-    st.metric("Scanner-Engine", "curl_cffi / Chrome110")
-
-st.markdown("---")
-
-
-# --- START SIDEBAR (Muss VOR den Scanner!) ---
+# --- 5. SIDEBAR INITIALISIERUNG (WICHTIG: VOR DEM SCANNER!) ---
 with st.sidebar:
     st.header("🛡️ Strategie-Einstellungen")
     otm_puffer_slider = st.slider("Puffer (%)", 3, 25, 15)
@@ -139,9 +118,26 @@ with st.sidebar:
     only_uptrend = st.checkbox("Nur Aufwärtstrend", value=False)
     test_modus = st.checkbox("🛠️ Simulations-Modus", value=True)
 
-# --- JETZT FOLGT BLOCK 2 (Monitoring & Scanner) ---
+# --- 6. GLOBAL MONITORING (WIRD NUR EINMAL ANGEZEIGT) ---
+def get_crypto_fg():
+    res = fetch_with_curl("https://api.alternative.me/fng/")
+    if res and res.status_code == 200:
+        try: return int(res.json()['data'][0]['value'])
+        except: return 50
+    return 50
+
 st.markdown("## 🌍 Globales Markt-Monitoring")
-# ... hier kann jetzt problemlos auf otm_puffer_slider zugegriffen werden
+fg_val = get_crypto_fg()
+
+m_col1, m_col2, m_col3 = st.columns(3)
+with m_col1:
+    st.metric("Fear & Greed (Crypto)", fg_val)
+with m_col2:
+    st.metric("Markt-Status", "Aktiv")
+with m_col3:
+    st.metric("Scanner-Engine", "curl_cffi / Chrome110")
+
+st.markdown("---")
 
 # --- 3. SEKTION 1: PROFI-SCANNER (ULTRA-SPEED) ---
 st.header("🚀 Profi-Scanner (High Speed)")
@@ -448,6 +444,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Engine: curl_cffi v1.0")
+
 
 
 
