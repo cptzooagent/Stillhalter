@@ -9,6 +9,9 @@ import time
 from curl_cffi import requests as crequests
 from io import StringIO
 
+# Globale curl_cffi Session für yfinance
+session = crequests.Session(impersonate="chrome")yf.Ticker(symbol)
+
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
@@ -28,7 +31,7 @@ def calculate_rsi(data, window=14):
 
 def calculate_pivots(symbol):
     try:
-        tk = yf.Ticker(symbol)
+        tk = yf.Ticker(symbol, session=session)
         hist_d = tk.history(period="5d")
         if len(hist_d) < 2: return None
         last_day = hist_d.iloc[-2]
@@ -50,7 +53,7 @@ def calculate_pivots(symbol):
 
 def get_openclaw_analysis(symbol):
     try:
-        tk = yf.Ticker(symbol)
+        tk = yf.Ticker(symbol, session=session)
         all_news = tk.news
         if not all_news:
             return "Neutral", "🤖 OpenClaw: Yahoo liefert aktuell keine Daten.", 0.5
@@ -91,7 +94,7 @@ def get_combined_watchlist():
 
 def get_stock_data_full(symbol):
     try:
-        tk = yf.Ticker(symbol)
+        tk = yf.Ticker(symbol, session=session)
         hist = tk.history(period="150d")
         if hist.empty: return None, [], "", 50, True, False, 0, None
         price = hist['Close'].iloc[-1]
@@ -210,7 +213,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         def check_single_stock(symbol):
             try:
                 time.sleep(0.8) 
-                tk = yf.Ticker(symbol)
+                tk = yf.Ticker(symbol, session=session)
                 info = tk.info
                 if not info or 'currentPrice' not in info: return None
                 m_cap = info.get('marketCap', 0)
@@ -527,6 +530,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
