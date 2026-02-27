@@ -159,7 +159,7 @@ with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_
 
 st.markdown("---")
 
-# --- SEKTION: PROFI-SCANNER LOGIK (MIT SIMULATIONS-FIX) ---
+# --- SEKTION: PROFI-SCANNER LOGIK ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
@@ -173,6 +173,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
 
         def check_single_stock(symbol):
             try:
+                # API Abruf
                 tk = yf.Ticker(symbol, session=secure_session)
                 fast = tk.fast_info
                 cp = fast.last_price
@@ -205,18 +206,18 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     delta_close = hist['Close'].diff()
                     gain = (delta_close.where(delta_close > 0, 0)).rolling(window=14).mean()
                     loss = (-delta_close.where(delta_close < 0, 0)).rolling(window=14).mean()
-                    rsi_val = int(100 - (100 / (1 + (gain / loss).iloc[-1])))
+                    rsi_val = int(100 - (100 / (1 + (gain.iloc[-1] / loss.iloc[-1]))))
 
-                # --- 3. FUNDAMENTALS & EARNINGS-FIX (WICHTIG!) ---
+                # --- 3. FUNDAMENTALS & EARNINGS-FIX ---
                 inf = tk.info
                 rev_growth = inf.get('revenueGrowth', 0) * 100
                 earn_ts = inf.get('nextEarningsDate')
                 
-                # Falls im Simulationsmodus kein Datum kommt, erzeuge ein Test-Datum
+                # Earnings Datum Logik
                 if earn_ts:
                     earn_str = datetime.fromtimestamp(earn_ts).strftime("%d.%m.%Y")
                 elif test_modus:
-                    # Erzeugt ein zufälliges Datum in den nächsten 2-10 Tagen für den Test
+                    # Simulation: Zufälliges Datum in 2-10 Tagen
                     test_days = random.randint(2, 10)
                     earn_str = (datetime.now() + timedelta(days=test_days)).strftime("%d.%m.%Y")
                 else:
@@ -239,15 +240,21 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     'trend_color': t_col, 'growth_label': g_label, 'growth_color': g_bg, 
                     'growth_text_color': g_txt, 'em_pct': 10.0, 'em_safety': (((cp - strike_price) / cp) * 100) / 10.0
                 }
-            except: return None
+            except Exception as e:
+                # Falls ein Fehler auftritt, wird er in der Konsole ausgegeben, damit du siehst warum
+                print(f"Fehler bei {symbol}: {e}")
+                return None
 
+        # Scanner-Schleife
+        all_results = []
         for s in ticker_liste_to_scan:
             res = check_single_stock(s)
-            if res: all_results.append(res)
+            if res:
+                all_results.append(res)
         
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
 
-# --- 3. ANZEIGE-SCHLEIFE (HTML - STRIKT LINKSBÜNDIG) ---
+# --- ANZEIGE-SCHLEIFE (HTML) ---
 
 if st.session_state.profi_scan_results:
     res_list = st.session_state.profi_scan_results
@@ -263,14 +270,15 @@ if st.session_state.profi_scan_results:
             try:
                 if res['earn'] != "---":
                     e_dt = datetime.strptime(res['earn'], "%d.%m.%Y")
-                    if 0 <= (e_dt - heute_dt).days <= 7:
+                    diff_days = (e_dt - heute_dt).days
+                    if 0 <= diff_days <= 7:
                         is_earning_risk = True
             except: pass
             
             card_border = "3px solid #ef4444" if is_earning_risk else "1px solid #e5e7eb"
             earn_warning = f"<div style='background:#ef4444;color:white;font-size:0.65em;font-weight:bold;text-align:center;border-radius:4px;padding:3px;margin-bottom:8px;'>⚠️ EARNINGS DANGER</div>" if is_earning_risk else ""
 
-            # DER HTML-BLOCK MUSS AM LINKEN RAND STARTEN
+            # HTML-Code (linksbündig)
             html_code = f"""
 <div style="background: white; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif; min-height: 480px; display: flex; flex-direction: column; justify-content: space-between;">
 <div>
@@ -543,6 +551,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler: {e}")
+
 
 
 
