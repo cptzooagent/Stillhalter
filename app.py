@@ -159,7 +159,7 @@ with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_
 
 st.markdown("---")
 
-# --- SEKTION: PROFI-SCANNER LOGIK (EARNINGS-FIX) ---
+# --- SEKTION: PROFI-SCANNER LOGIK (FINALE VERSION) ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
@@ -173,25 +173,22 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         def check_single_stock(symbol):
             try:
                 tk = yf.Ticker(symbol, session=secure_session)
-                fast = tk.fast_info
-                cp = fast.last_price
+                f_i = tk.fast_info
+                cp = f_i.last_price
                 
-                # --- 1. OPTIONS-LOGIK ---
+                # --- 1. OPTIONEN ---
                 exp_dates = tk.options
-                days_display = 20
-                bid, strike_price, yield_pa = 0.0, cp * 0.9, 0.0
-                
+                days_display, bid, strike_price, yield_pa = 20, 0.0, cp * 0.9, 0.0
                 if exp_dates:
                     today = datetime.now().date()
                     best_date = next((d for d in exp_dates if 7 <= (datetime.strptime(d, '%Y-%m-%d').date() - today).days <= 27), exp_dates[0])
                     days_display = max((datetime.strptime(best_date, '%Y-%m-%d').date() - today).days, 1)
                     opt = tk.option_chain(best_date)
-                    puts = opt.puts
-                    if not puts.empty:
-                        target_strike = cp * (1 - (otm_puffer_slider / 100))
-                        idx = (puts['strike'] - target_strike).abs().idxmin()
-                        strike_price = puts.loc[idx, 'strike']
-                        bid = max(puts.loc[idx, 'bid'] if puts.loc[idx, 'bid'] > 0.05 else puts.loc[idx, 'lastPrice'], 0.01)
+                    if not opt.puts.empty:
+                        target = cp * (1 - (otm_puffer_slider / 100))
+                        idx = (opt.puts['strike'] - target).abs().idxmin()
+                        strike_price = opt.puts.loc[idx, 'strike']
+                        bid = max(opt.puts.loc[idx, 'bid'] if opt.puts.loc[idx, 'bid'] > 0.05 else opt.puts.loc[idx, 'lastPrice'], 0.01)
                         yield_pa = (bid / strike_price) * (365 / days_display) * 100
 
                 # --- 2. TECHNIK ---
@@ -199,47 +196,44 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 rsi_val, uptrend = 50, False
                 if not hist.empty and len(hist) >= 200:
                     sma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
-                    sma50 = hist['Close'].rolling(window=50).mean().iloc[-1]
                     uptrend = cp > sma200
-                    delta_close = hist['Close'].diff()
-                    gain = (delta_close.where(delta_close > 0, 0)).rolling(window=14).mean()
-                    loss = (-delta_close.where(delta_close < 0, 0)).rolling(window=14).mean()
-                    l_g, l_l = gain.iloc[-1], loss.iloc[-1]
-                    rsi_val = int(100 - (100 / (1 + (l_g / l_l)))) if l_l != 0 else 50
+                    delta = hist['Close'].diff()
+                    g = delta.where(delta > 0, 0).rolling(window=14).mean().iloc[-1]
+                    l = (-delta.where(delta < 0, 0)).rolling(window=14).mean().iloc[-1]
+                    rsi_val = int(100 - (100 / (1 + (g / l)))) if l != 0 else 50
 
-                # --- 3. DER ECHTE EARNINGS-FIX ---
+                # --- 3. DER BRUTE-FORCE EARNINGS FIX ---
                 earn_str = "---"
-                try:
-                    # Stufe 1: Versuche nextEarningsDate aus info (oft Unix Timestamp)
-                    inf = tk.info
-                    e_val = inf.get('nextEarningsDate')
-                    
-                    if e_val:
-                        # Prüfen ob es ein Integer (Unix) oder String ist
-                        if isinstance(e_val, int):
-                            earn_str = datetime.fromtimestamp(e_val).strftime("%d.%m.%Y")
-                        else:
-                            earn_str = pd.to_datetime(e_val).strftime("%d.%m.%Y")
-                    
-                    # Stufe 2: Falls Stufe 1 scheitert, schau in den Kalender
-                    if earn_str == "---" and not tk.calendar.empty:
-                        cal_date = tk.calendar.iloc[0, 0] # Erstes Datum im Kalender
-                        earn_str = cal_date.strftime("%d.%m.%Y")
-                except:
-                    # Stufe 3: Simulations-Fallback für Testzwecke
-                    if test_modus:
-                        import random
-                        earn_str = (datetime.now() + timedelta(days=random.randint(2, 8))).strftime("%d.%m.%Y")
+                # Versuch A: info-Objekt
+                inf = tk.info
+                e_val = inf.get('nextEarningsDate')
+                
+                # Versuch B: Kalender-Tabelle (Sehr zuverlässig für US-Stocks)
+                if not e_val:
+                    try:
+                        cal = tk.calendar
+                        if cal is not None and not cal.empty:
+                            # Das erste Datum im Kalender ist meistens das Earnings-Date
+                            e_val = cal.iloc[0, 0]
+                    except: pass
 
-                # Sterne & Labels
+                if e_val:
+                    if isinstance(e_val, (int, float)):
+                        earn_str = datetime.fromtimestamp(e_val).strftime("%d.%m.%Y")
+                    else:
+                        earn_str = pd.to_datetime(e_val).strftime("%d.%m.%Y")
+                elif test_modus:
+                    earn_str = (datetime.now() + timedelta(days=random.randint(2, 10))).strftime("%d.%m.%Y")
+
+                # Sterne & Wachstum (Backup-Werte falls info leer)
                 rev_growth = inf.get('revenueGrowth', 0) * 100
-                s_val = min((1 + (1 if rev_growth >= 20 else 0) + (1 if uptrend and 30 <= rsi_val <= 65 else 0)), 3)
+                s_val = min((1 + (1 if rev_growth >= 15 else 0) + (1 if uptrend and 30 <= rsi_val <= 65 else 0)), 3)
+                
                 if s_val == 3: g_label, g_bg, g_txt = f"🚀 TOP SETUP (+{rev_growth:.0f}%)", "#f3e8ff", "#8b5cf6"
                 elif s_val == 2: g_label, g_bg, g_txt = f"💪 STARK (+{rev_growth:.0f}%)", "#dcfce7", "#10b981"
                 else: g_label, g_bg, g_txt = "⚪ NEUTRAL", "#f3f4f6", "#6b7280"
 
-                t_status, t_icon, t_col = ("Trend", "🛡️", "#10b981") if uptrend and cp >= sma50 else \
-                                         ("Dip", "💎", "#3b82f6") if uptrend else ("Abwärts", "⚠️", "#ef4444")
+                t_status, t_icon, t_col = ("Trend", "🛡️", "#10b981") if uptrend else ("Abwärts", "⚠️", "#ef4444")
 
                 return {
                     'symbol': symbol, 'price': cp, 'y_pa': yield_pa, 'strike': strike_price,
@@ -257,8 +251,8 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
         
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
 
-# --- ANZEIGE-SCHLEIFE (HTML) ---
-# (Wie gehabt, linksbündig!)
+# --- ANZEIGE-SCHLEIFE (FIXED HTML) ---
+
 if st.session_state.profi_scan_results:
     res_list = st.session_state.profi_scan_results
     cols = st.columns(4)
@@ -266,9 +260,7 @@ if st.session_state.profi_scan_results:
 
     for idx, res in enumerate(res_list):
         with cols[idx % 4]:
-            t_col, t_icon, t_status = res['trend_color'], res['trend_icon'], res['trend_status']
-            
-            # 7-Tage-Check für den Rahmen
+            # Risiko Check
             is_earning_risk = False
             try:
                 if res['earn'] != "---":
@@ -280,6 +272,7 @@ if st.session_state.profi_scan_results:
             card_border = "3px solid #ef4444" if is_earning_risk else "1px solid #e5e7eb"
             earn_warning = f"<div style='background:#ef4444;color:white;font-size:0.65em;font-weight:bold;text-align:center;border-radius:4px;padding:3px;margin-bottom:8px;'>⚠️ EARNINGS DANGER</div>" if is_earning_risk else ""
 
+            # HTML MUSS LINKSBÜNDIG STEHEN
             html_code = f"""
 <div style="background: white; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif; min-height: 480px; display: flex; flex-direction: column; justify-content: space-between;">
 <div>
@@ -288,8 +281,8 @@ if st.session_state.profi_scan_results:
 <span style="font-size: 1.2em; font-weight: 800; color: #111827;">{res['symbol']}</span>
 <span style="font-size: 0.9em;">{res['stars_str']}</span>
 </div>
-<div style="display: flex; align-items: center; gap: 4px; color: {t_col}; font-weight: 700; font-size: 0.8em; background: {t_col}10; padding: 2px 8px; border-radius: 6px;">
-<span>{t_icon}</span><span style="text-transform: uppercase;">{t_status}</span>
+<div style="display: flex; align-items: center; gap: 4px; color: {res['trend_color']}; font-weight: 700; font-size: 0.8em; background: {res['trend_color']}10; padding: 2px 8px; border-radius: 6px;">
+<span>{res['trend_icon']}</span><span style="text-transform: uppercase;">{res['trend_status']}</span>
 </div>
 </div>
 {earn_warning}
@@ -552,6 +545,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler: {e}")
+
 
 
 
