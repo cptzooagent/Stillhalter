@@ -8,10 +8,15 @@ import concurrent.futures
 import time
 import requests
 
-# --- 1. SETUP ---
+# --- 1. SETUP & KONFIGURATION ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
 # --- 2. MATHEMATISCHE FUNKTIONEN ---
+def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
+    if T <= 0 or sigma <= 0: return 0
+    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
+
 def calculate_rsi(data, window=14):
     if len(data) < window + 1: return pd.Series([50] * len(data))
     delta = data.diff()
@@ -29,10 +34,50 @@ def calculate_pivots(symbol):
         h_d, l_d, c_d = last_day['High'], last_day['Low'], last_day['Close']
         p_d = (h_d + l_d + c_d) / 3
         s1_d, s2_d, r2_d = (2 * p_d) - h_d, p_d - (h_d - l_d), p_d + (h_d - l_d)
-        return {"P": p_d, "S1": s1_d, "S2": s2_d, "R2": r2_d}
+        
+        hist_w = tk.history(period="3wk", interval="1wk")
+        if len(hist_w) < 2:
+            return {"P": p_d, "S1": s1_d, "S2": s2_d, "R2": r2_d, "W_S2": s2_d, "W_R2": r2_d}
+        
+        last_week = hist_w.iloc[-2]
+        h_w, l_w, c_w = last_week['High'], last_week['Low'], last_week['Close']
+        p_w = (h_w + l_w + c_w) / 3
+        return {"P": p_d, "S1": s1_d, "S2": s2_d, "R2": r2_d, "W_S2": p_w - (h_w - l_w), "W_R2": p_w + (h_w - l_w)}
     except: return None
 
-# --- 3. ANALYSE-FUNKTIONEN ---
+# --- 3. ANALYSE-FUNKTIONEN (WICHTIG: HIER DEFINIERT FÜR ALLE SEKTIONEN) ---
+def get_openclaw_analysis(symbol):
+    """KI-News Sentiment Analyse."""
+    try:
+        tk = yf.Ticker(symbol)
+        all_news = tk.news
+        if not all_news: return "Neutral", "🤖 Keine News-Daten.", 0.5
+        
+        huge_blob = str(all_news).lower()
+        display_text = ""
+        for n in all_news:
+            for val in n.values():
+                if isinstance(val, str) and val.count(" ") > 3:
+                    display_text = val
+                    break
+            if display_text: break
+        
+        if not display_text: display_text = all_news[0].get('title', 'Markt aktiv')
+
+        score = 0.5
+        bull_words = ['earnings', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'up', 'upgrade']
+        bear_words = ['sell-off', 'disruption', 'miss', 'down', 'risk', 'decline', 'warning', 'sell']
+        for w in bull_words: 
+            if w in huge_blob: score += 0.08
+        for w in bear_words: 
+            if w in huge_blob: score -= 0.08
+            
+        score = max(0.1, min(0.9, score))
+        status = "Bullish" if score > 0.55 else "Bearish" if score < 0.45 else "Neutral"
+        icon = "🟢" if status == "Bullish" else "🔴" if status == "Bearish" else "🟡"
+        return status, f"{icon} OpenClaw: {display_text[:90]}", score
+    except: return "N/A", "🤖 OpenClaw: System-Reset...", 0.5
+
 def get_analyst_conviction(info):
     try:
         current = info.get('currentPrice', 1)
@@ -41,6 +86,7 @@ def get_analyst_conviction(info):
         rev_growth = info.get('revenueGrowth', 0) * 100
         if rev_growth > 40: return f"🚀 HYPER-GROWTH (+{rev_growth:.0f}%)", "#9b59b6"
         elif upside > 15: return f"✅ Stark (Ziel: +{upside:.0f}%)", "#27ae60"
+        elif upside > 25: return f"💎 Quality-Dip (+{upside:.0f}%)", "#2980b9"
         return f"⚖️ Neutral", "#7f8c8d"
     except: return "🔍 Check nötig", "#7f8c8d"
 
@@ -48,12 +94,12 @@ def get_analyst_conviction(info):
 def get_stock_data_full(symbol):
     try:
         tk = yf.Ticker(symbol)
-        hist = tk.history(period="250d") 
+        hist = tk.history(period="200d") 
         if hist.empty: return None, [], "", 50, True, False, 0, None
         price = hist['Close'].iloc[-1]
         dates = list(tk.options)
         rsi_val = calculate_rsi(hist['Close']).iloc[-1]
-        sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1]
+        sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1] if len(hist) >= 200 else hist['Close'].mean()
         atr = (hist['High'] - hist['Low']).rolling(window=14).mean().iloc[-1]
         pivots = calculate_pivots(symbol)
         earn_str = ""
@@ -65,7 +111,7 @@ def get_stock_data_full(symbol):
         return price, dates, earn_str, rsi_val, (price > sma_200), False, atr, pivots
     except: return None, [], "", 50, True, False, 0, None
 
-# --- 4. SIDEBAR (Design wie in 180.png) ---
+# --- 4. SIDEBAR (Design wie gewünscht) ---
 with st.sidebar:
     st.header("🛡️ Strategie-Einstellungen")
     otm_puffer_slider = st.slider("Puffer (%)", 3, 25, 15, key="puffer_sid")
@@ -77,26 +123,26 @@ with st.sidebar:
     only_uptrend = st.checkbox("Nur Aufwärtstrend", value=False, key="trend_sid")
     test_modus = st.checkbox("🛠️ Simulations-Modus", value=True, key="sim_sid")
 
-# --- 5. GLOBAL MONITORING (Layout wie in 185.png) ---
+# --- 5. GLOBAL MONITORING ---
 def get_market_data():
     try:
         ndq = yf.Ticker("^NDX")
         vix = yf.Ticker("^VIX")
         btc = yf.Ticker("BTC-USD")
-        h_ndq = ndq.history(period="60d")
+        h_ndq = ndq.history(period="30d")
         cp_ndq = ndq.fast_info.last_price
         sma20_ndq = h_ndq['Close'].rolling(window=20).mean().iloc[-1]
         dist_ndq = ((cp_ndq - sma20_ndq) / sma20_ndq) * 100
+        rsi_ndq = calculate_rsi(h_ndq['Close']).iloc[-1]
         v_val = vix.fast_info.last_price
         b_val = btc.fast_info.last_price
-        return cp_ndq, dist_ndq, v_val, b_val
-    except: return 0, 0, 0, 0
+        return cp_ndq, rsi_ndq, dist_ndq, v_val, b_val
+    except: return 0, 50, 0, 20, 0
 
 st.markdown("## 🌍 Globales Markt-Monitoring")
+cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
 
-cp_ndq, dist_ndq, vix_val, btc_val = get_market_data()
-
-# Das grüne/rote Banner (Status-Logik)
+# Banner Logik
 if dist_ndq < -2 or vix_val > 25:
     m_color, m_text, m_advice = "#e74c3c", "🚨 MARKT-ALARM: Nasdaq Schwäche", "Defensiv agieren. Fokus auf Depot-Absicherung."
 else:
@@ -109,14 +155,10 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# Die Metriken-Reihe
 m1, m2, m3 = st.columns(3)
-with m1:
-    st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20", delta_color="normal")
-with m2:
-    st.metric("Bitcoin", f"{btc_val:,.0f} $")
-with m3:
-    st.metric("VIX (Angst)", f"{vix_val:.2f}", delta="Normal" if vix_val < 22 else "Hoch", delta_color="inverse")
+m1.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
+m2.metric("Bitcoin", f"{btc_val:,.0f} $")
+m3.metric("VIX (Angst)", f"{vix_val:.2f}", delta="Hoch" if vix_val > 22 else "Normal", delta_color="inverse")
 
 st.markdown("---")
 
@@ -430,6 +472,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Engine: curl_cffi v1.0")
+
 
 
 
