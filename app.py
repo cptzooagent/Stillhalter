@@ -184,11 +184,9 @@ mkt_cap_limit = min_mkt_cap * 1_000_000_000
 
 if st.button("🔍 Scan jetzt starten"):
     with st.spinner("Analysiere Markt mit parallelen Threads..."):
-        # Ticker Liste bestimmen
         if test_modus:
             ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR"]
         else:
-            # Hier käme deine get_combined_watchlist() zum Einsatz
             ticker_liste = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META"] 
 
         all_results = []
@@ -197,7 +195,6 @@ if st.button("🔍 Scan jetzt starten"):
         def check_single_stock(symbol):
             try:
                 tk = yf.Ticker(symbol)
-                # Fast_Info für Vor-Filterung (Mkt Cap & Preis)
                 f_info = tk.fast_info
                 curr_price = f_info.get('last_price') or f_info.get('lastPrice')
                 m_cap = f_info.get('market_cap') or f_info.get('marketCap')
@@ -205,14 +202,12 @@ if st.button("🔍 Scan jetzt starten"):
                 if not curr_price or m_cap < mkt_cap_limit: return None
                 if not (min_stock_price <= curr_price <= max_stock_price): return None
 
-                # Volle Analyse (RSI, SMA, Pivots)
                 res = get_stock_data_full(symbol)
                 if res[0] is None: return None
                 price, dates, earn, rsi, uptrend, _, atr, pivots = res
 
                 if only_uptrend and not uptrend: return None
 
-                # Options-Check (Laufzeit 11-24 Tage)
                 valid_dates = [d for d in dates if 11 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 24]
                 if not valid_dates: return None
                 
@@ -224,24 +219,36 @@ if st.button("🔍 Scan jetzt starten"):
                 if not opts.empty:
                     o = opts.iloc[0]
                     bid_val = o['bid'] if o['bid'] > 0 else o['lastPrice']
-                    days = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
-                    y_pa = (bid_val / o['strike']) * (365 / max(1, days)) * 100
+                    days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
+                    y_pa = (bid_val / o['strike']) * (365 / max(1, days_to_exp)) * 100
                     
                     if y_pa >= min_yield_pa:
                         info = tk.info
                         analyst_txt, analyst_col = get_analyst_conviction(info)
                         
+                        # Fix: Sterne-String generieren
+                        stars_count = 3 if "HYPER" in analyst_txt else 2 if "Stark" in analyst_txt else 1
+                        stars_str = "⭐" * stars_count
+                        
+                        # Alle Keys definieren, die unten gebraucht werden!
                         return {
-                            'symbol': symbol, 'price': price, 'y_pa': y_pa, 
-                            'strike': o['strike'], 'puffer': ((price - o['strike']) / price) * 100,
-                            'rsi': rsi, 'earn': earn if earn else "n.a.", 
+                            'symbol': symbol, 
+                            'price': price, 
+                            'y_pa': y_pa, 
+                            'strike': o['strike'], 
+                            'bid': bid_val,
+                            'tage': days_to_exp,
+                            'puffer': ((price - o['strike']) / price) * 100,
+                            'rsi': rsi, 
+                            'earn': earn if earn else "n.a.", 
                             'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                            'analyst_txt': analyst_txt, 'analyst_col': analyst_col,
-                            'stars_val': 3 if "HYPER" in analyst_txt else 2 if "Stark" in analyst_txt else 1
+                            'analyst_txt': analyst_txt, 
+                            'analyst_col': analyst_col,
+                            'stars_val': stars_count,
+                            'stars_str': stars_str
                         }
             except: return None
 
-        # Parallelisierung (moderate Worker-Anzahl für Stabilität)
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = [executor.submit(check_single_stock, s) for s in ticker_liste]
             for future in concurrent.futures.as_completed(futures):
@@ -250,14 +257,11 @@ if st.button("🔍 Scan jetzt starten"):
 
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
 
-          
-
-# --- RESULTATE ANZEIGEN (Außerhalb des Buttons, damit sie stehen bleiben) ---
+# --- RESULTATE ANZEIGEN ---
 if st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
     st.markdown(f"### 🎯 Top-Setups ({len(all_results)} Treffer)")
     
-    # Optional: Button zum Löschen der Ergebnisse
     if st.button("Ergebnisse löschen"):
         st.session_state.profi_scan_results = []
         st.rerun()
@@ -270,6 +274,7 @@ if st.session_state.profi_scan_results:
             rsi_col = "#e74c3c" if res['rsi'] > 70 or res['rsi'] < 30 else "#7f8c8d"
             
             with st.container(border=True):
+                # UI-Kachel
                 st.markdown(f"**{res['symbol']}** {res['stars_str']} <span style='float:right; font-size:0.75em; color:{s_color}; font-weight:bold;'>{res['status']}</span>", unsafe_allow_html=True)
                 st.metric("Yield p.a.", f"{res['y_pa']:.1f}%")
                 
@@ -477,6 +482,7 @@ if symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Engine: curl_cffi v1.0")
+
 
 
 
