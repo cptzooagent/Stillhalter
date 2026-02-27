@@ -202,30 +202,42 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     l = (-delta.where(delta < 0, 0)).rolling(window=14).mean().iloc[-1]
                     rsi_val = int(100 - (100 / (1 + (g / l)))) if l != 0 else 50
 
-                # --- 3. DER BRUTE-FORCE EARNINGS FIX ---
-                earn_str = "---"
-                # Versuch A: info-Objekt
-                inf = tk.info
-                e_val = inf.get('nextEarningsDate')
+                # --- 3. DER "KEINE AUSREDEN MEHR" EARNINGS-FIX ---
+                earn_date_final = None
                 
-                # Versuch B: Kalender-Tabelle (Sehr zuverlässig für US-Stocks)
-                if not e_val:
+                # Weg A: Yahoo Info (Unix-Timestamp)
+                inf = tk.info
+                e_raw = inf.get('nextEarningsDate')
+                
+                # Weg B: Yahoo Kalender (Dataframe)
+                if not e_raw:
                     try:
-                        cal = tk.calendar
+                        cal = tk.get_calendar() # Neuere yfinance Version Methode
                         if cal is not None and not cal.empty:
-                            # Das erste Datum im Kalender ist meistens das Earnings-Date
-                            e_val = cal.iloc[0, 0]
+                            e_raw = cal.iloc[0, 0] if 'Earnings Date' in cal.index else cal.iloc[0, 0]
                     except: pass
 
-                if e_val:
-                    if isinstance(e_val, (int, float)):
-                        earn_str = datetime.fromtimestamp(e_val).strftime("%d.%m.%Y")
-                    else:
-                        earn_str = pd.to_datetime(e_val).strftime("%d.%m.%Y")
-                elif test_modus:
-                    earn_str = (datetime.now() + timedelta(days=random.randint(2, 10))).strftime("%d.%m.%Y")
+                # Weg C: Metadata (Sicherheitsnetz)
+                if not e_raw:
+                    try: e_raw = tk.metadata.get('nextEarningsDate')
+                    except: pass
 
-                # Sterne & Wachstum (Backup-Werte falls info leer)
+                # Umwandlung in lesbares Datum
+                if e_raw:
+                    try:
+                        if isinstance(e_raw, (int, float)):
+                            earn_date_final = datetime.fromtimestamp(e_raw)
+                        else:
+                            earn_date_final = pd.to_datetime(e_raw)
+                    except: earn_date_final = None
+
+                # Weg D: Simulation (NUR wenn aktiv)
+                if not earn_date_final and test_modus:
+                    earn_date_final = datetime.now() + timedelta(days=random.randint(2, 12))
+
+                earn_str = earn_date_final.strftime("%d.%m.%Y") if earn_date_final else "---"
+
+                # Sterne & Wachstum
                 rev_growth = inf.get('revenueGrowth', 0) * 100
                 s_val = min((1 + (1 if rev_growth >= 15 else 0) + (1 if uptrend and 30 <= rsi_val <= 65 else 0)), 3)
                 
@@ -233,46 +245,43 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 elif s_val == 2: g_label, g_bg, g_txt = f"💪 STARK (+{rev_growth:.0f}%)", "#dcfce7", "#10b981"
                 else: g_label, g_bg, g_txt = "⚪ NEUTRAL", "#f3f4f6", "#6b7280"
 
-                t_status, t_icon, t_col = ("Trend", "🛡️", "#10b981") if uptrend else ("Abwärts", "⚠️", "#ef4444")
-
                 return {
                     'symbol': symbol, 'price': cp, 'y_pa': yield_pa, 'strike': strike_price,
                     'puffer': ((cp - strike_price) / cp) * 100, 'bid': bid, 'delta': 0.15, 
-                    'rsi': rsi_val, 'earn': earn_str, 'tage': days_display, 'stars_val': s_val, 
-                    'stars_str': "⭐" * s_val, 'trend_status': t_status, 'trend_icon': t_icon, 
-                    'trend_color': t_col, 'growth_label': g_label, 'growth_color': g_bg, 
-                    'growth_text_color': g_txt, 'em_pct': 10.0, 'em_safety': (((cp - strike_price) / cp) * 100) / 10.0
+                    'rsi': rsi_val, 'earn': earn_str, 'earn_obj': earn_date_final, 'tage': days_display, 'stars_val': s_val, 
+                    'stars_str': "⭐" * s_val, 'trend_status': "Trend" if uptrend else "Abwärts", 
+                    'trend_icon': "🛡️" if uptrend else "⚠️", 'trend_color': "#10b981" if uptrend else "#ef4444",
+                    'growth_label': g_label, 'growth_color': g_bg, 'growth_text_color': g_txt, 
+                    'em_pct': 10.0, 'em_safety': (((cp - strike_price) / cp) * 100) / 10.0
                 }
-            except: return None
+            except Exception as e:
+                st.write(f"Fehler bei {symbol}: {e}") # Debugging Info
+                return None
 
+        # Loop
         for s in ticker_liste_to_scan:
             res = check_single_stock(s)
             if res: all_results.append(res)
-        
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
 
-# --- ANZEIGE-SCHLEIFE (FIXED HTML) ---
-
+# --- ANZEIGE-SCHLEIFE (HTML) ---
 if st.session_state.profi_scan_results:
     res_list = st.session_state.profi_scan_results
     cols = st.columns(4)
-    heute_dt = datetime.now()
+    heute = datetime.now()
 
     for idx, res in enumerate(res_list):
         with cols[idx % 4]:
-            # Risiko Check
+            # Risiko Check basierend auf dem echten Datumsobjekt
             is_earning_risk = False
-            try:
-                if res['earn'] != "---":
-                    e_dt = datetime.strptime(res['earn'], "%d.%m.%Y")
-                    if 0 <= (e_dt - heute_dt).days <= 7:
-                        is_earning_risk = True
-            except: pass
+            if res['earn_obj']:
+                diff = (res['earn_obj'] - heute).days
+                if 0 <= diff <= 7:
+                    is_earning_risk = True
             
             card_border = "3px solid #ef4444" if is_earning_risk else "1px solid #e5e7eb"
             earn_warning = f"<div style='background:#ef4444;color:white;font-size:0.65em;font-weight:bold;text-align:center;border-radius:4px;padding:3px;margin-bottom:8px;'>⚠️ EARNINGS DANGER</div>" if is_earning_risk else ""
 
-            # HTML MUSS LINKSBÜNDIG STEHEN
             html_code = f"""
 <div style="background: white; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif; min-height: 480px; display: flex; flex-direction: column; justify-content: space-between;">
 <div>
@@ -545,6 +554,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler: {e}")
+
 
 
 
