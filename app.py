@@ -159,17 +159,15 @@ with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_
 
 st.markdown("---")
 
-# --- SEKTION: PROFI-SCANNER LOGIK ---
+# --- SEKTION: PROFI-SCANNER LOGIK (MIT SIMULATIONS-FIX) ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
 if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
-    with st.spinner("Analysiere Markt- und Optionsdaten (9-25 Tage)..."):
-        if test_modus:
-            ticker_liste_to_scan = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"]
-        else:
-            ticker_liste_to_scan = ticker_liste 
+    with st.spinner("Analysiere Markt- und Optionsdaten..."):
+        # Ticker-Auswahl
+        ticker_liste_to_scan = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else ticker_liste 
 
         all_results = []
 
@@ -182,40 +180,24 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 # --- 1. OPTIONS-LOGIK ---
                 exp_dates = tk.options
                 days_display = 20
-                bid = 0.0
-                strike_price = cp * 0.9
-                yield_pa = 0.0
+                bid, strike_price, yield_pa = 0.0, cp * 0.9, 0.0
                 
                 if exp_dates:
                     today = datetime.now().date()
-                    best_date = None
-                    for d_str in exp_dates:
-                        d_obj = datetime.strptime(d_str, '%Y-%m-%d').date()
-                        diff = (d_obj - today).days
-                        if 7 <= diff <= 27:
-                            best_date = d_str
-                            days_display = diff
-                            break
-                    
-                    if not best_date:
-                        best_date = exp_dates[0]
-                        days_display = max((datetime.strptime(best_date, '%Y-%m-%d').date() - today).days, 1)
-
+                    best_date = next((d for d in exp_dates if 7 <= (datetime.strptime(d, '%Y-%m-%d').date() - today).days <= 27), exp_dates[0])
+                    days_display = max((datetime.strptime(best_date, '%Y-%m-%d').date() - today).days, 1)
                     opt = tk.option_chain(best_date)
                     puts = opt.puts
                     if not puts.empty:
                         target_strike = cp * (1 - (otm_puffer_slider / 100))
                         idx = (puts['strike'] - target_strike).abs().idxmin()
-                        m_put = puts.loc[idx]
-                        strike_price = m_put['strike']
-                        bid = m_put['bid'] if m_put['bid'] > 0.05 else m_put['lastPrice']
-                        bid = max(bid, 0.01)
+                        strike_price = puts.loc[idx, 'strike']
+                        bid = max(puts.loc[idx, 'bid'] if puts.loc[idx, 'bid'] > 0.05 else puts.loc[idx, 'lastPrice'], 0.01)
                         yield_pa = (bid / strike_price) * (365 / days_display) * 100
 
                 # --- 2. TECHNIK ---
                 hist = tk.history(period="250d")
-                rsi_val = 50
-                uptrend = False
+                rsi_val, uptrend = 50, False
                 if not hist.empty and len(hist) >= 200:
                     sma200 = hist['Close'].rolling(window=200).mean().iloc[-1]
                     sma50 = hist['Close'].rolling(window=50).mean().iloc[-1]
@@ -223,24 +205,25 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     delta_close = hist['Close'].diff()
                     gain = (delta_close.where(delta_close > 0, 0)).rolling(window=14).mean()
                     loss = (-delta_close.where(delta_close < 0, 0)).rolling(window=14).mean()
-                    rs = gain / loss
-                    rsi_val = int(100 - (100 / (1 + rs.iloc[-1])))
+                    rsi_val = int(100 - (100 / (1 + (gain / loss).iloc[-1])))
 
-                # --- 3. FUNDAMENTALS & EARNINGS-DATEN ---
+                # --- 3. FUNDAMENTALS & EARNINGS-FIX (WICHTIG!) ---
                 inf = tk.info
                 rev_growth = inf.get('revenueGrowth', 0) * 100
-                mkt_cap = inf.get('marketCap', 0) / 1e9
-                
-                # EARNINGS DATUM SICHERN
                 earn_ts = inf.get('nextEarningsDate')
-                earn_str = datetime.fromtimestamp(earn_ts).strftime("%d.%m.%Y") if earn_ts else "---"
-
-                # Sterne-Berechnung
-                s_val = 1 
-                if rev_growth >= 20: s_val += 1
-                if uptrend and 30 <= rsi_val <= 65: s_val += 1
                 
-                # Status-Labels
+                # Falls im Simulationsmodus kein Datum kommt, erzeuge ein Test-Datum
+                if earn_ts:
+                    earn_str = datetime.fromtimestamp(earn_ts).strftime("%d.%m.%Y")
+                elif test_modus:
+                    # Erzeugt ein zufälliges Datum in den nächsten 2-10 Tagen für den Test
+                    test_days = random.randint(2, 10)
+                    earn_str = (datetime.now() + timedelta(days=test_days)).strftime("%d.%m.%Y")
+                else:
+                    earn_str = "---"
+
+                # Sterne & Labels
+                s_val = min((1 + (1 if rev_growth >= 20 else 0) + (1 if uptrend and 30 <= rsi_val <= 65 else 0)), 3)
                 if s_val == 3: g_label, g_bg, g_txt = f"🚀 TOP SETUP (+{rev_growth:.0f}%)", "#f3e8ff", "#8b5cf6"
                 elif s_val == 2: g_label, g_bg, g_txt = f"💪 STARK (+{rev_growth:.0f}%)", "#dcfce7", "#10b981"
                 else: g_label, g_bg, g_txt = "⚪ NEUTRAL", "#f3f4f6", "#6b7280"
@@ -256,19 +239,15 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     'trend_color': t_col, 'growth_label': g_label, 'growth_color': g_bg, 
                     'growth_text_color': g_txt, 'em_pct': 10.0, 'em_safety': (((cp - strike_price) / cp) * 100) / 10.0
                 }
-            except:
-                return None
+            except: return None
 
-        # Ausführung
         for s in ticker_liste_to_scan:
             res = check_single_stock(s)
-            if res:
-                if not only_uptrend or res['trend_status'] in ["Trend", "Dip"]:
-                    all_results.append(res)
+            if res: all_results.append(res)
         
         st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
 
-# --- 3. ANZEIGE-SCHLEIFE (HTML - LINKSBÜNDIG-FIX) ---
+# --- 3. ANZEIGE-SCHLEIFE (HTML - STRIKT LINKSBÜNDIG) ---
 
 if st.session_state.profi_scan_results:
     res_list = st.session_state.profi_scan_results
@@ -277,12 +256,9 @@ if st.session_state.profi_scan_results:
 
     for idx, res in enumerate(res_list):
         with cols[idx % 4]:
-            # Farben & Risikoparameter
             t_col, t_icon, t_status = res['trend_color'], res['trend_icon'], res['trend_status']
-            delta_col = "#10b981" if abs(res['delta']) < 0.20 else "#f59e0b"
-            em_col = "#10b981" if res['em_safety'] >= 1.5 else "#f59e0b"
             
-            # 7-TAGE EARNINGS CHECK
+            # Earnings Risiko Check (7 Tage)
             is_earning_risk = False
             try:
                 if res['earn'] != "---":
@@ -292,9 +268,9 @@ if st.session_state.profi_scan_results:
             except: pass
             
             card_border = "3px solid #ef4444" if is_earning_risk else "1px solid #e5e7eb"
-            earn_warning = "<div style='background:#ef4444;color:white;font-size:0.65em;font-weight:bold;text-align:center;border-radius:4px;padding:3px;margin-bottom:8px;'>⚠️ EARNINGS DANGER</div>" if is_earning_risk else ""
+            earn_warning = f"<div style='background:#ef4444;color:white;font-size:0.65em;font-weight:bold;text-align:center;border-radius:4px;padding:3px;margin-bottom:8px;'>⚠️ EARNINGS DANGER</div>" if is_earning_risk else ""
 
-            # HTML-BLOCK STARTET HIER LINKSBÜNDIG
+            # DER HTML-BLOCK MUSS AM LINKEN RAND STARTEN
             html_code = f"""
 <div style="background: white; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif; min-height: 480px; display: flex; flex-direction: column; justify-content: space-between;">
 <div>
@@ -316,10 +292,10 @@ if st.session_state.profi_scan_results:
 <div style="border-left: 3px solid #8b5cf6; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Strike</div><div style="font-size: 1.0em; font-weight: 700;">{res['strike']:.1f}$</div></div>
 <div style="border-left: 3px solid #f59e0b; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Mid</div><div style="font-size: 1.0em; font-weight: 700;">{res['bid']:.2f}$</div></div>
 <div style="border-left: 3px solid #3b82f6; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Puffer</div><div style="font-size: 1.0em; font-weight: 700;">{res['puffer']:.1f}%</div></div>
-<div style="border-left: 3px solid {delta_col}; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Delta</div><div style="font-size: 1.0em; font-weight: 700; color: {delta_col};">{res['delta']:.2f}</div></div>
+<div style="border-left: 3px solid #10b981; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Delta</div><div style="font-size: 1.0em; font-weight: 700; color: #10b981;">{res['delta']:.2f}</div></div>
 </div>
-<div style="background: {em_col}10; padding: 8px 10px; border-radius: 8px; border: 1px dashed {em_col};">
-<div style="display: flex; justify-content: space-between; align-items: center;"><span style="font-size: 0.65em; font-weight: bold;">Stat. Erwartung:</span><span style="font-size: 0.8em; font-weight: 800; color: {em_col};">±{res['em_pct']:.1f}%</span></div>
+<div style="background: rgba(16,185,129,0.1); padding: 8px 10px; border-radius: 8px; border: 1px dashed #10b981;">
+<div style="display: flex; justify-content: space-between; align-items: center;"><span style="font-size: 0.65em; font-weight: bold;">Stat. Erwartung:</span><span style="font-size: 0.8em; font-weight: 800; color: #10b981;">±{res['em_pct']:.1f}%</span></div>
 <div style="font-size: 0.6em; color: #6b7280;">Sicherheit: <b>{res['em_safety']:.1f}x EM</b></div>
 </div>
 </div>
@@ -567,6 +543,7 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler: {e}")
+
 
 
 
