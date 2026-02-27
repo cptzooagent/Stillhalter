@@ -159,7 +159,7 @@ with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_
 
 st.markdown("---")
 
-# --- SEKTION: PROFI-SCANNER LOGIK (COMPLETE KEY SYNC) ---
+# --- SEKTION: PROFI-SCANNER LOGIK (3-STERNE-MAX SYNC) ---
 
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
@@ -182,7 +182,6 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 fast = tk.fast_info
                 cp = fast.last_price
                 
-                # Standard-Werte zur Absicherung
                 days_display = 20
                 bid = 0.0
                 strike_price = cp * 0.9
@@ -191,7 +190,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 rsi_val = 50
                 uptrend = False
                 
-                # --- 1. OPTIONS-LOGIK (9-25 TAGE) ---
+                # --- 1. OPTIONS-LOGIK ---
                 exp_dates = tk.options
                 if exp_dates:
                     today = datetime.now().date()
@@ -234,26 +233,31 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     rs = gain / loss
                     rsi_val = int(100 - (100 / (1 + rs.iloc[-1])))
 
-                # --- 3. FUNDAMENTALS & FARB-LOGIK ---
+                # --- 3. FUNDAMENTALS & 3-STERNE-LOGIK ---
                 inf = tk.info
                 rev_growth = inf.get('revenueGrowth', 0) * 100
                 mkt_cap = inf.get('marketCap', 0) / 1e9
                 earn_ts = inf.get('nextEarningsDate')
                 earn_str = datetime.fromtimestamp(earn_ts).strftime("%d.%m.%Y") if earn_ts else "---"
 
-                # Wachstum-Styling (Fix für KeyError growth_color/growth_text_color)
-                if rev_growth >= 40:
-                    g_label, g_bg, g_txt, s_val = f"🚀 HYPER (+{rev_growth:.0f}%)", "#f3e8ff", "#8b5cf6", 5
-                elif rev_growth >= 20:
-                    g_label, g_bg, g_txt, s_val = f"💪 STARK (+{rev_growth:.0f}%)", "#dcfce7", "#10b981", 4
-                else:
-                    g_label, g_bg, g_txt, s_val = "⚪ NEUTRAL", "#f3f4f6", "#6b7280", 2
+                # Sterne-Berechnung (Max 3)
+                # 1 Stern Basis, +1 für Wachstum > 20%, +1 für Technik (Uptrend & RSI gesund)
+                s_val = 1 
+                if rev_growth >= 20: s_val += 1
+                if uptrend and 30 <= rsi_val <= 65: s_val += 1
+                s_val = min(s_val, 3)
 
-                # EM-Sicherheit
+                # Styling für das Label (angepasst auf 3 Sterne)
+                if s_val == 3:
+                    g_label, g_bg, g_txt = f"🚀 TOP SETUP (+{rev_growth:.0f}%)", "#f3e8ff", "#8b5cf6"
+                elif s_val == 2:
+                    g_label, g_bg, g_txt = f"💪 STARK (+{rev_growth:.0f}%)", "#dcfce7", "#10b981"
+                else:
+                    g_label, g_bg, g_txt = "⚪ NEUTRAL", "#f3f4f6", "#6b7280"
+
                 em_pct = 10.0 
                 em_safety = puffer_val / em_pct
 
-                # Trend-Status
                 if uptrend and cp >= sma50:
                     t_status, t_icon, t_col = "Trend", "🛡️", "#10b981"
                 elif uptrend and cp < sma50:
@@ -272,7 +276,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
             except Exception:
                 return None
 
-        # --- 4. EXECUTION ---
+        # --- 4. EXECUTION & SORTIERUNG ---
         for s in ticker_liste_to_scan:
             res = check_single_stock(s)
             if res:
@@ -282,9 +286,11 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 else:
                     all_results.append(res)
         
+        # Sortierung: Erst nach Sternen (3 oben), dann nach Rendite p.a.
         st.session_state.profi_scan_results = sorted(
             all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True
         )
+        
 # --- 3. ANZEIGE-SCHLEIFE (HTML) ---
 if st.session_state.profi_scan_results:
     res_list = st.session_state.profi_scan_results
@@ -578,4 +584,5 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler: {e}")
+
 
