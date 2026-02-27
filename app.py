@@ -305,49 +305,58 @@ if st.session_state.profi_scan_results:
             delta_col = "#10b981" if delta_val < 0.20 else "#f59e0b" if delta_val < 0.30 else "#ef4444"
             em_col = "#10b981" if res['em_safety'] >= 1.5 else "#f59e0b" if res['em_safety'] >= 1.0 else "#ef4444"
             
-            # Earnings-Check für Rahmen
+            # --- UPDATE: Earnings-Check für Rahmen (7 Tage) ---
             is_earning_risk = False
             try:
-                e_dt = datetime.strptime(res['earn'], "%d.%m.%Y")
-                if 0 <= (e_dt - heute_dt).days <= 14: is_earning_risk = True
-            except: pass
+                if res['earn'] and res['earn'] != "---":
+                    e_dt = datetime.strptime(res['earn'], "%d.%m.%Y")
+                    # Nur rot, wenn das Event in den nächsten 7 Tagen liegt
+                    if 0 <= (e_dt - heute_dt).days <= 7: 
+                        is_earning_risk = True
+            except: 
+                pass
+            
+            # Dynamischer Rahmen: Rot bei Earnings-Gefahr, sonst Standard-Grau
             card_border = "3px solid #ef4444" if is_earning_risk else "1px solid #e5e7eb"
 
             html_code = f"""
 <div style="background: white; border: {card_border}; border-radius: 16px; padding: 18px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); font-family: sans-serif; min-height: 460px; display: flex; flex-direction: column; justify-content: space-between;">
 <div>
-<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
-<div style="display: flex; align-items: center; gap: 8px;">
-<span style="font-size: 1.2em; font-weight: 800; color: #111827;">{res['symbol']}</span>
-<span style="font-size: 0.9em;">{res['stars_str']}</span>
-</div>
-<div style="display: flex; align-items: center; gap: 4px; color: {t_col}; font-weight: 700; font-size: 0.8em; background: {t_col}10; padding: 2px 8px; border-radius: 6px;">
-<span>{t_icon}</span><span style="text-transform: uppercase;">{t_status}</span>
-</div>
-</div>
-<div style="margin: 10px 0;">
-<div style="font-size: 0.7em; color: #6b7280; font-weight: 600; text-transform: uppercase;">Yield p.a.</div>
-<div style="font-size: 2.2em; font-weight: 900; color: #111827;">{res['y_pa']:.1f}%</div>
-</div>
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
-<div style="border-left: 3px solid #8b5cf6; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Strike</div><div style="font-size: 1.0em; font-weight: 700;">{res['strike']:.1f}$</div></div>
-<div style="border-left: 3px solid #f59e0b; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Mid</div><div style="font-size: 1.0em; font-weight: 700;">{res['bid']:.2f}$</div></div>
-<div style="border-left: 3px solid #3b82f6; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Puffer</div><div style="font-size: 1.0em; font-weight: 700;">{res['puffer']:.1f}%</div></div>
-<div style="border-left: 3px solid {delta_col}; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Delta</div><div style="font-size: 1.0em; font-weight: 700; color: {delta_col};">{delta_val:.2f}</div></div>
-</div>
-<div style="background: {em_col}10; padding: 8px 10px; border-radius: 8px; border: 1px dashed {em_col};">
-<div style="display: flex; justify-content: space-between; align-items: center;"><span style="font-size: 0.65em; font-weight: bold;">Stat. Erwartung:</span><span style="font-size: 0.8em; font-weight: 800; color: {em_col};">±{res['em_pct']:.1f}%</span></div>
-<div style="font-size: 0.6em; color: #6b7280;">Sicherheit: <b>{res['em_safety']:.1f}x EM</b></div>
-</div>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 1.2em; font-weight: 800; color: #111827;">{res['symbol']}</span>
+            <span style="font-size: 0.9em;">{res['stars_str']}</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 4px; color: {t_col}; font-weight: 700; font-size: 0.8em; background: {t_col}10; padding: 2px 8px; border-radius: 6px;">
+            <span>{t_icon}</span><span style="text-transform: uppercase;">{t_status}</span>
+        </div>
+    </div>
+    
+    {"<div style='background: #ef4444; color: white; font-size: 0.6em; font-weight: bold; text-align: center; border-radius: 4px; padding: 2px; margin-bottom: 8px;'>⚠️ EARNINGS WEEK</div>" if is_earning_risk else ""}
+
+    <div style="margin: 10px 0;">
+        <div style="font-size: 0.7em; color: #6b7280; font-weight: 600; text-transform: uppercase;">Yield p.a.</div>
+        <div style="font-size: 2.2em; font-weight: 900; color: #111827;">{res['y_pa']:.1f}%</div>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+        <div style="border-left: 3px solid #8b5cf6; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Strike</div><div style="font-size: 1.0em; font-weight: 700;">{res['strike']:.1f}$</div></div>
+        <div style="border-left: 3px solid #f59e0b; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Mid</div><div style="font-size: 1.0em; font-weight: 700;">{res['bid']:.2f}$</div></div>
+        <div style="border-left: 3px solid #3b82f6; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Puffer</div><div style="font-size: 1.0em; font-weight: 700;">{res['puffer']:.1f}%</div></div>
+        <div style="border-left: 3px solid {delta_col}; padding-left: 8px;"><div style="font-size: 0.6em; color: #6b7280;">Delta</div><div style="font-size: 1.0em; font-weight: 700; color: {delta_col};">{delta_val:.2f}</div></div>
+    </div>
+    <div style="background: {em_col}10; padding: 8px 10px; border-radius: 8px; border: 1px dashed {em_col};">
+        <div style="display: flex; justify-content: space-between; align-items: center;"><span style="font-size: 0.65em; font-weight: bold;">Stat. Erwartung:</span><span style="font-size: 0.8em; font-weight: 800; color: {em_col};">±{res['em_pct']:.1f}%</span></div>
+        <div style="font-size: 0.6em; color: #6b7280;">Sicherheit: <b>{res['em_safety']:.1f}x EM</b></div>
+    </div>
 </div>
 <div>
-<hr style="border: 0; border-top: 1px solid #f3f4f6; margin: 10px 0;">
-<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72em;">
-<span>⏳ <b>{res['tage']}d</b></span>
-<span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px;">RSI: {res['rsi']}</span>
-<span style="font-weight: 800; color: {'#ef4444' if is_earning_risk else '#6b7280'};">🗓️ {res['earn']}</span>
-</div>
-<div style="background: {res['growth_color']}; color: {res['growth_text_color']}; padding: 8px; border-radius: 8px; font-size: 0.65em; font-weight: 800; text-align: center; margin-top: 10px;">{res['growth_label']}</div>
+    <hr style="border: 0; border-top: 1px solid #f3f4f6; margin: 10px 0;">
+    <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.72em;">
+        <span>⏳ <b>{res['tage']}d</b></span>
+        <span style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px;">RSI: {res['rsi']}</span>
+        <span style="font-weight: 800; color: {'#ef4444' if is_earning_risk else '#6b7280'};">🗓️ {res['earn']}</span>
+    </div>
+    <div style="background: {res['growth_color']}; color: {res['growth_text_color']}; padding: 8px; border-radius: 8px; font-size: 0.65em; font-weight: 800; text-align: center; margin-top: 10px;">{res['growth_label']}</div>
 </div>
 </div>
 """
@@ -584,3 +593,4 @@ if symbol_input:
 
     except Exception as e:
         st.error(f"Fehler: {e}")
+
