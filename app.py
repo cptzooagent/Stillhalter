@@ -194,45 +194,76 @@ with r2c1: st.metric("Fear & Greed (Stock)", f"{stock_fg}")
 with r2c2: st.metric("Fear & Greed (Crypto)", f"{crypto_fg}")
 with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_ndq > 70 else None, delta_color="inverse")
 
-# --- SEKTION 1: PROFI-SCANNER (OPTIMIERT MIT FAST_INFO) ---
+# --- SEKTION 1: PROFI-SCANNER (TURBO-HYBRID-VERSION) ---
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
-if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
+if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_width=True):
     p_puffer = otm_puffer_slider / 100 
     p_min_yield = min_yield_pa
     p_min_cap = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
-    with st.spinner("Markt-Scanner analysiert Ticker..."):
+    with st.spinner("🏁 Phase 1: Batch-Download & Vor-Filterung..."):
+        # Ticker-Liste bestimmen
         ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else get_combined_watchlist()
-        status_text = st.empty()
+        
+        # 1. BATCH-DOWNLOAD: Alle Kurse in einem Rutsch laden (spart hunderte Einzel-Requests)
+        try:
+            batch_df = yf.download(ticker_liste, period="150d", session=session, group_by='ticker', threads=True, progress=False)
+        except Exception as e:
+            st.error(f"Batch-Download fehlgeschlagen: {e}")
+            batch_df = pd.DataFrame()
+
+        # 2. VOR-FILTERUNG: Wer passt überhaupt ins Raster?
+        filtered_tickers = []
+        for symbol in ticker_liste:
+            try:
+                # Prüfen, ob Daten für den Ticker im Batch vorhanden sind
+                if symbol not in batch_df.columns.levels[0]: continue
+                s_hist = batch_df[symbol]
+                if s_hist.empty or len(s_hist) < 2: continue
+                
+                last_price = s_hist['Close'].iloc[-1]
+                
+                # Schneller Preis-Check
+                if not (min_stock_price <= last_price <= max_stock_price):
+                    continue
+                
+                # Wenn Preis passt, ab in die Detail-Analyse
+                filtered_tickers.append(symbol)
+            except:
+                continue
+
+    if not filtered_tickers:
+        st.warning("Keine Aktien gefunden, die den Preis-Filter erfüllen.")
+    else:
+        st.info(f"🔎 Phase 2: Detail-Analyse für {len(filtered_tickers)} Top-Kandidaten...")
+        
         progress_bar = st.progress(0)
+        status_text = st.empty()
         all_results = []
 
-        def check_single_stock(symbol):
+        # Interne Funktion für Multithreading
+        def check_single_stock_optimized(symbol):
             try:
-                time.sleep(0.7) # Sicherheitspause für Yahoo
+                # 0. Kurze Pause für API-Stabilität
+                time.sleep(0.5)
                 tk = yf.Ticker(symbol, session=session)
                 
-                # --- 1. TURBO-CHECK (fast_info) ---
-                # Greift auf optimierte Endpunkte zu (Preis & Market Cap)
+                # 1. FAST_INFO für Market Cap & Preis-Validierung
                 fast = tk.fast_info
                 price = fast.get("last_price") or fast.get("lastPrice")
                 m_cap = fast.get("market_cap") or fast.get("marketCap")
-                
-                # Sofortiger Abbruch, wenn Basiskriterien nicht erfüllt sind
                 if not price or m_cap < p_min_cap: return None
-                if not (min_stock_price <= price <= max_stock_price): return None
 
-                # --- 2. TECHNIK-CHECK ---
+                # 2. TECHNIK-CHECK (RSI & Trend)
                 res = get_stock_data_full(symbol)
                 if res is None or res[0] is None: return None
                 _, dates, earn, rsi, uptrend, near_lower, atr, pivots = res
-                
                 if only_uptrend and not uptrend: return None
 
-                # --- 3. OPTIONS-CHECK ---
+                # 3. OPTIONS-CHECK
                 valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 30]
                 if not valid_dates: return None
                 
@@ -242,27 +273,25 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                 
                 opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
                 if opts.empty: return None
-                
                 o = opts.iloc[0]
-                days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 
-                # Rendite-Check vor dem Laden der schweren Analystendaten
+                # Rendite-Check
+                days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
                 bid, ask = o['bid'], o['ask']
                 fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o['lastPrice']
                 y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
                 
                 if y_pa < p_min_yield: return None
 
-                # --- 4. QUALITÄTS-CHECK (tk.info erst jetzt!) ---
-                info = tk.info # Erst hier wird das "schwere" Paket geladen
+                # 4. QUALITÄTS-CHECK (Sterne-Rating)
+                info = tk.info
                 analyst_txt, analyst_col = get_analyst_conviction(info)
                 
-                # Sterne-Vergabe
                 s_val = 3.0 if "HYPER" in analyst_txt else 2.0 if "Stark" in analyst_txt else 1.0 if "Neutral" in analyst_txt else 0.0
                 if rsi < 35: s_val += 0.5
                 if uptrend: s_val += 0.5
                 
-                # Statistik
+                # Risiko-Metriken
                 iv = o.get('impliedVolatility', 0.4)
                 exp_move_pct = (price * (iv * np.sqrt(days_to_exp / 365)) / price) * 100
                 current_puffer = ((price - o['strike']) / price) * 100
@@ -277,21 +306,27 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro"):
                     'analyst_label': analyst_txt, 'analyst_color': analyst_col, 'mkt_cap': m_cap / 1e9,
                     'em_pct': exp_move_pct, 'em_safety': em_safety
                 }
-            except: return None
+            except:
+                return None
 
-        # Parallelisierung (max_workers=3 ist sicher für Yahoo)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            futures = {executor.submit(check_single_stock, s): s for s in ticker_liste}
+        # PARALLELE AUSFÜHRUNG (10 Workers für maximalen Speed)
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {executor.submit(check_single_stock_optimized, s): s for s in filtered_tickers}
             for i, future in enumerate(concurrent.futures.as_completed(futures)):
                 res_data = future.result()
                 if res_data: all_results.append(res_data)
-                progress_bar.progress((i + 1) / len(ticker_liste))
-                if i % 5 == 0: status_text.text(f"Checke {i}/{len(ticker_liste)} Ticker...")
+                progress_bar.progress((i + 1) / len(filtered_tickers))
+                if i % 10 == 0: status_text.text(f"Analysiere Kandidat {i}/{len(filtered_tickers)}...")
         
-        status_text.empty(); progress_bar.empty()
+        status_text.empty()
+        progress_bar.empty()
+        
         if all_results:
             st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
-            st.success(f"Scan abgeschlossen: {len(all_results)} Treffer gefunden!")
+            st.success(f"✅ Scan beendet: {len(all_results)} profitable Trades gefunden!")
+        else:
+            st.warning("Keine Treffer mit den aktuellen Filtern (Puffer/Rendite) gefunden.")
 
 # --- KORRIGIERTER ANZEIGEBLOCK (HTML-FIX) ---
 if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
@@ -624,6 +659,7 @@ if submit_button and symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
