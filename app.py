@@ -8,105 +8,104 @@ import concurrent.futures
 import time
 from curl_cffi import requests as crequests
 
-# Globale curl_cffi Session für stabilen Datenabruf
+# Globale Session für Stabilität
 session = crequests.Session(impersonate="chrome")
 
 # --- SETUP ---
-st.set_page_config(page_title="Stillhalter Market Dashboard", layout="wide")
+st.set_page_config(page_title="Stillhalter Pro-Scanner", layout="wide")
 
-# --- 1. MATHE & HILFSFUNKTIONEN ---
-def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
-    if T <= 0 or sigma <= 0: return 0
-    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-    return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
+# --- 1. DATEN-STRUKTUR (DIE TOP 200) ---
+tickers_dict = {
+    "BIG_TECH": ["AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "NVDA", "NFLX", "ADBE", "AVGO", "ORCL", "CRM", "INTU", "CSCO", "ASML", "AMD", "QCOM", "TXN", "AMAT", "MU"],
+    "SOFTWARE_GROWTH": ["PLTR", "SNOW", "PANW", "SNPS", "CDNS", "WDAY", "ROP", "TEAM", "DDOG", "NET", "OKTA", "ZS", "SHOP", "SPOT", "UBER", "ABNB", "SQ", "PYPL", "COIN", "MSTR"],
+    "CHIPS_HARDWARE": ["LRCX", "ADI", "KLAC", "NXPI", "MRVL", "MCHP", "MPWR", "ON", "INTC", "ARM", "SMCI", "STX", "WDC", "HPQ", "DELL", "HPE", "VRT", "ANET", "TEL", "APH"],
+    "FINANZ_BANKEN": ["JPM", "BAC", "GS", "MS", "V", "MA", "AXP", "BLK", "PYPL", "COF", "WFC", "C", "USB", "PNC", "TFC", "BK", "STT", "SCHW", "IBKR", "BRK-B"],
+    "KONSUM_RETAIL": ["WMT", "COST", "TGT", "HD", "LOW", "NKE", "SBUX", "EL", "CL", "PG", "KO", "PEP", "MDLZ", "PM", "MO", "TJX", "DG", "DLTR", "ROST"],
+    "PHARMA_HEALTH": ["LLY", "JNJ", "PFE", "MRK", "ABBV", "AMGN", "UNH", "CVS", "ISRG", "GILD", "VRTX", "REGN", "BSX", "SYK", "ZTS", "BDX", "MCK", "ABC", "CI", "HUM"],
+    "ENERGIE_INDUSTRIE": ["XOM", "CVX", "SLB", "COP", "EOG", "PXD", "MPC", "PSX", "CAT", "DE", "BA", "LMT", "GD", "NOC", "RTX", "HON", "GE", "MMM", "UPS", "FDX"],
+    "COMMUNICATION_UTILITIES": ["VZ", "T", "TMUS", "CMCSA", "DIS", "WBD", "PARA", "CHTR", "NEE", "DUK", "SO", "D", "AEP", "EXC", "SRE", "PCG", "FE", "ETR", "PEG", "ED"],
+    "ETFS_INDICES": ["SPY", "QQQ", "IWM", "DIA", "XBI", "GDX", "GLD", "SLV", "TLT", "EEM", "ARKK", "SMH", "XLF", "XLV", "XLE", "XLI", "XLK", "XLU", "XLY", "XLP"],
+    "SPECIAL_WATCH": ["AFRM", "HOOD", "RIVN", "LCID", "DKNG", "PINS", "SNAP", "ZM", "DOCU", "ROKU", "AI", "SOFI", "UPST", "MARA", "RIOT", "U", "BABA", "PDD", "JD", "BIDU"]
+}
 
+# --- 2. HILFSFUNKTIONEN ---
 def get_cnn_fear_greed():
-    """Holt den aktuellen CNN Fear & Greed Index Stand"""
     try:
         url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0 Safari/537.36'}
         r = session.get(url, headers=headers, timeout=5)
         return int(r.json()['fear_and_greed']['score'])
-    except:
-        return 50 # Neutraler Fallback bei Fehlern
+    except: return 50
 
 def get_market_data():
-    """Holt Marktindizes und berechnet Metriken (Gibt exakt 5 Werte zurück)"""
     try:
-        # Daten für Nasdaq und VIX
-        tickers = ["^IXIC", "^VIX"]
-        data = yf.download(tickers, period="6mo", interval="1d", progress=False)
-        
-        # Nasdaq Close & RSI
-        ndq_series = data['Close']['^IXIC'].dropna()
-        cp_ndq = ndq_series.iloc[-1]
-        
-        delta = ndq_series.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        rsi_ndq = 100 - (100 / (1 + rs.iloc[-1]))
-        
-        # Abstand SMA20
-        sma20 = ndq_series.rolling(window=20).mean().iloc[-1]
-        dist_ndq = ((cp_ndq - sma20) / sma20) * 100
-        
-        # VIX
+        data = yf.download(["^IXIC", "^VIX"], period="6mo", interval="1d", progress=False)
+        ndq = data['Close']['^IXIC'].dropna()
+        cp_ndq = ndq.iloc[-1]
         vix_val = data['Close']['^VIX'].iloc[-1]
         
-        # Sentiment
-        stock_fg = get_cnn_fear_greed()
+        # RSI
+        delta = ndq.diff(); gain = (delta.where(delta > 0, 0)).rolling(14).mean(); loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rsi_ndq = 100 - (100 / (1 + (gain / loss).iloc[-1]))
+        dist_ndq = ((cp_ndq - ndq.rolling(20).mean().iloc[-1]) / ndq.rolling(20).mean().iloc[-1]) * 100
+        
+        return cp_ndq, rsi_ndq, dist_ndq, vix_val, get_cnn_fear_greed()
+    except: return 17000, 50, 0, 15, 50
 
-        return cp_ndq, rsi_ndq, dist_ndq, vix_val, stock_fg
-    except Exception as e:
-        # Fallback-Werte, damit der Unpack-Error (expected 5, got X) verschwindet
-        return 17000, 50, 0, 15, 50
+# --- SIDEBAR (DIE STEUERZENTRALE) ---
+with st.sidebar:
+    st.header("⚙️ Scanner Settings")
+    
+    # Sektoren-Auswahl
+    selected_sectors = st.multiselect(
+        "Sektoren wählen", 
+        options=list(tickers_dict.keys()), 
+        default=["BIG_TECH", "SOFTWARE_GROWTH", "CHIPS_HARDWARE", "ETFS_INDICES"]
+    )
+    
+    st.divider()
+    
+    # Stillhalter Parameter
+    st.subheader("Stillhalter Parameter")
+    target_delta = st.slider("Ziel Delta (Put)", 0.05, 0.30, 0.15, 0.01)
+    min_yield = st.slider("Min. Rendite p.a. %", 5, 50, 15)
+    dte_range = st.slider("Laufzeit (DTE)", 7, 60, (14, 45))
+    
+    st.divider()
+    if st.button("🚀 SCAN STARTEN", use_container_width=True):
+        st.session_state.run_scan = True
 
-# --- DATENABRUF ---
+# --- MAIN UI ---
 cp_ndq, rsi_ndq, dist_ndq, vix_val, stock_fg = get_market_data()
 
-# --- GRAFISCHES DASHBOARD ---
 st.title("🦅 Stillhalter Pro-Scanner")
 
-# Logik für den Trendbalken
-if dist_ndq < -2 or vix_val > 25 or stock_fg < 30:
-    m_color, m_text, m_advice = "#e74c3c", "🚨 MARKT-ALARM", "Erhöhtes Risiko. Fokus auf Cash-Quote oder sehr tiefe Strikes."
-elif rsi_ndq > 72 or stock_fg > 78:
-    m_color, m_text, m_advice = "#f39c12", "⚠️ ÜBERHITZT", "Gier dominiert. Vorsicht bei neuen Puts, Gewinne sichern."
-else:
-    m_color, m_text, m_advice = "#27ae60", "✅ TRENDSTARK", "Marktumfeld konstruktiv. Stillhalter-Strategien ideal."
+# Der Trendbalken
+m_color = "#e74c3c" if dist_ndq < -2 or vix_val > 25 or stock_fg < 30 else "#f39c12" if rsi_ndq > 72 or stock_fg > 78 else "#27ae60"
+m_text = "🚨 MARKT-ALARM" if m_color == "#e74c3c" else "⚠️ ÜBERHITZT" if m_color == "#f39c12" else "✅ TRENDSTARK"
 
-# Der optimierte grüne/rote Trendbalken
 st.markdown(f"""
     <div style="background: linear-gradient(90deg, {m_color}dd, {m_color}); 
-                color: white; padding: 22px; border-radius: 15px; 
-                text-align: center; margin-bottom: 25px; 
-                box-shadow: 0 10px 20px rgba(0,0,0,0.1); border: 1px solid rgba(255,255,255,0.1);">
-        <h2 style="margin:0; font-size: 1.8em; font-weight: 800; letter-spacing: 1px;">{m_text}</h2>
-        <p style="margin:8px 0 0 0; opacity: 0.9; font-size: 1.1em;">{m_advice}</p>
+                color: white; padding: 20px; border-radius: 15px; text-align: center; margin-bottom: 25px;">
+        <h2 style="margin:0;">{m_text}</h2>
+        <p style="margin:5px 0 0 0; opacity: 0.9;">Basis für Stillhalter-Entscheidungen</p>
     </div>
     """, unsafe_allow_html=True)
 
-# KPI Sektion in 4 Spalten
+# KPI Kacheln
 c1, c2, c3, c4 = st.columns(4)
-
-with c1:
-    st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
-
-with c2:
-    v_status = "Erhöht" if vix_val > 20 else "Niedrig"
-    st.metric("VIX (Angst)", f"{vix_val:.2f}", delta=v_status, delta_color="inverse")
-
-with c3:
-    # Sentiment Label
-    fg_label = "Panik" if stock_fg < 25 else "Angst" if stock_fg < 45 else "Neutral" if stock_fg < 55 else "Gier" if stock_fg < 75 else "Extreme Gier"
-    st.metric("CNN Fear & Greed", f"{stock_fg}", fg_label)
-
-with c4:
-    rsi_status = "Überkauft" if rsi_ndq > 70 else "Günstig" if rsi_ndq < 35 else "Neutral"
-    st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", rsi_status)
+c1.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
+c2.metric("VIX (Angst)", f"{vix_val:.2f}", delta="Erhöht" if vix_val > 20 else "Niedrig", delta_color="inverse")
+c3.metric("Fear & Greed", f"{stock_fg}", "CNN Business")
+c4.metric("Nasdaq RSI", f"{int(rsi_ndq)}", "Überkauft" if rsi_ndq > 70 else "Neutral")
 
 st.divider()
+
+# Vorbereitung der Ticker-Liste basierend auf Sidebar-Wahl
+final_tickers = []
+for sector in selected_sectors:
+    final_tickers.extend(tickers_dict[sector])
+
 
 # --- HIER STARTET DEIN PROFI-SCANNER ---
 
@@ -575,5 +574,6 @@ if submit_button and symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
