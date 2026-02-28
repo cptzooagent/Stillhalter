@@ -142,26 +142,26 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# Metriken in 4 Spalten (Layout optimiert)
+# Metriken in 4 Spalten (Fehlerkorrektur für Streamlit Labels)
 m1, m2, m3, m4 = st.columns(4)
 
 with m1:
     st.markdown('<p class="metric-label">Nasdaq 100 Index</p>', unsafe_allow_html=True)
-    st.metric("", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
+    st.metric(label="Nasdaq", value=f"{cp_ndq:,.0f}", delta=f"{dist_ndq:.1f}% vs SMA20", label_visibility="collapsed")
 
 with m2:
     st.markdown('<p class="metric-label">VIX (Volatilität)</p>', unsafe_allow_html=True)
     vix_label = "Panik" if vix_val > 25 else "Ruhig"
-    st.metric("", f"{vix_val:.2f}", f"Modus: {vix_label}", delta_color="inverse")
+    st.metric(label="VIX", value=f"{vix_val:.2f}", delta=f"Modus: {vix_label}", delta_color="inverse", label_visibility="collapsed")
 
 with m3:
     st.markdown('<p class="metric-label">CNN Fear & Greed</p>', unsafe_allow_html=True)
     fg_status = "Angst" if stock_fg < 40 else "Gier" if stock_fg > 60 else "Neutral"
-    st.metric("", f"{int(stock_fg)}", f"Status: {fg_status}")
+    st.metric(label="CNN FG", value=f"{int(stock_fg)}", delta=f"Status: {fg_status}", label_visibility="collapsed")
 
 with m4:
     st.markdown('<p class="metric-label">Nasdaq RSI (14)</p>', unsafe_allow_html=True)
-    st.metric("", f"{int(rsi_ndq)}", "Momentum-Check", delta_color="inverse" if rsi_ndq > 70 else "normal")
+    st.metric(label="RSI", value=f"{int(rsi_ndq)}", delta="Momentum-Check", delta_color="inverse" if rsi_ndq > 70 else "normal", label_visibility="collapsed")
 
 st.markdown("<hr>", unsafe_allow_html=True)
 
@@ -631,5 +631,6 @@ if submit_button and symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
