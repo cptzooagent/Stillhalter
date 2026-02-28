@@ -133,50 +133,67 @@ if st.button("🚀 Profi-Scan starten", use_container_width=True):
         batch_df = yf.download(ticker_liste, period="250d", session=session, group_by='ticker', threads=True, progress=False)
 
     with st.spinner("🔎 Phase 2: Detail-Analyse..."):
+        # Sicherstellen, dass nur Ticker mit Daten verarbeitet werden
         pre_filtered = [s for s in ticker_liste if s in batch_df.columns.levels[0] and not batch_df[s].empty]
         all_results = []
         progress_bar = st.progress(0)
 
         def check_single_stock_optimized(symbol, b_df):
             try:
-                # 1. LOKAL
+                # 1. LOKAL: Technische Vorfilterung
                 tech = get_stock_data_from_batch(symbol, b_df)
                 if not tech: return None
                 price, rsi, uptrend, earn_str = tech
+                
                 if not (min_stock_price <= price <= max_stock_price): return None
                 if only_uptrend and not uptrend: return None
 
-                # 2. ONLINE
+                # 2. ONLINE: Optionen & Fundamentaldaten
                 tk = yf.Ticker(symbol, session=session)
                 m_cap = tk.fast_info.get("market_cap", 0)
                 if m_cap < p_min_cap: return None
 
                 dates = tk.options
-                target_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
+                # Suche nach Fälligkeiten in 10-45 Tagen (etwas großzügiger)
+                target_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
                 if not target_dates: return None
                 
                 chain = tk.option_chain(target_dates[0]).puts
                 target_strike = price * (1 - p_puffer)
+                
+                # Finde den Strike, der am nächsten am Ziel-Puffer liegt
                 opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
                 if opts.empty: return None
                 o = opts.iloc[0]
                 
-                # Rendite & Risiko Metriken
+                # --- ROBUSTE PREIS-LOGIK ---
+                bid = o['bid'] if o['bid'] > 0 else o['lastPrice']
+                ask = o['ask'] if o['ask'] > 0 else o['lastPrice']
+                fair = (bid + ask) / 2
+                
+                # Wenn kein Preis ermittelbar, überspringen
+                if fair <= 0.01: return None 
+                
                 days = (datetime.strptime(target_dates[0], '%Y-%m-%d') - heute).days
-                fair = (o['bid'] + o['ask']) / 2 if o['bid'] > 0 else o['lastPrice']
                 y_pa = (fair / o['strike']) * (365 / max(1, days)) * 100
+                
+                # Rendite-Filter
                 if y_pa < p_min_yield: return None
 
-                iv = o.get('impliedVolatility', 0.5)
+                # --- RISIKO-METRIKEN ---
+                iv = o['impliedVolatility'] if o.get('impliedVolatility', 0) > 0.05 else 0.40
                 exp_move_pct = (iv * np.sqrt(days/365)) * 100
                 current_puffer = ((price - o['strike']) / price) * 100
                 em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 1.0
                 delta_val = calculate_bsm_delta(price, o['strike'], days/365, iv)
 
-                # Analysten
+                # Analysten-Check (Info-Abfrage)
                 info = tk.info
                 analyst_txt, analyst_col = get_analyst_conviction(info)
-                s_val = 2.0 if "Stark" in analyst_txt else 1.0
+                
+                # Sterne-Rating Logik
+                s_val = 1.0
+                if "Stark" in analyst_txt or "HYPER" in analyst_txt: s_val += 1.0
                 if rsi < 35: s_val += 0.5
                 if uptrend: s_val += 0.5
 
@@ -188,8 +205,11 @@ if st.button("🚀 Profi-Scan starten", use_container_width=True):
                     'analyst_color': analyst_col, 'mkt_cap': m_cap / 1e9,
                     'em_pct': exp_move_pct, 'em_safety': em_safety, 'sent_icon': "🟢" if uptrend else "🔵"
                 }
-            except: return None
+            except Exception as e:
+                # Debugging (optional): print(f"Fehler bei {symbol}: {e}")
+                return None
 
+        # Multithreading für Speed
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             check_func = partial(check_single_stock_optimized, b_df=batch_df)
             futures = {executor.submit(check_func, s): s for s in pre_filtered}
@@ -499,6 +519,7 @@ if submit_button and symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
