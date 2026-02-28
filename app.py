@@ -56,11 +56,14 @@ def get_market_data():
 with st.sidebar:
     st.header("⚙️ Scanner Settings")
     
+    # NEU: Test-Modus Toggle
+    test_modus = st.toggle("🛠️ Test-Modus (Schnellscan)", value=True, help="Scannt nur eine kleine Auswahl für schnelles Testing.")
+    
     # Sektoren-Auswahl
     selected_sectors = st.multiselect(
         "Sektoren wählen", 
         options=list(tickers_dict.keys()), 
-        default=["BIG_TECH", "SOFTWARE_GROWTH", "CHIPS_HARDWARE", "ETFS_INDICES"]
+        default=["BIG_TECH", "ETFS_INDICES"]
     )
     
     st.divider()
@@ -72,8 +75,16 @@ with st.sidebar:
     dte_range = st.slider("Laufzeit (DTE)", 7, 60, (14, 45))
     
     st.divider()
-    if st.button("🚀 SCAN STARTEN", use_container_width=True):
-        st.session_state.run_scan = True
+    scan_button = st.button("🚀 SCAN STARTEN", use_container_width=True)
+
+# --- TICKER LOGIK ANPASSEN ---
+final_tickers = []
+for sector in selected_sectors:
+    final_tickers.extend(tickers_dict[sector])
+
+# Wenn Test-Modus aktiv, Liste kürzen, damit es keine Timeouts gibt
+if test_modus:
+    final_tickers = final_tickers[:15] # Nur die ersten 15 Aktien zum Testen
 
 # --- MAIN UI ---
 cp_ndq, rsi_ndq, dist_ndq, vix_val, stock_fg = get_market_data()
@@ -574,6 +585,7 @@ if submit_button and symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
