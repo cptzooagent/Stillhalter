@@ -10,13 +10,13 @@ from curl_cffi import requests as crequests
 from io import StringIO
 from functools import partial
 
-# Globale curl_cffi Session für yfinance
+# --- GLOBALE SESSION ---
 session = crequests.Session(impersonate="chrome")
 
 # --- SETUP ---
 st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
-# --- 1. MATHE & LOKALE TECHNIK (BATCH-BASIERT) ---
+# --- 1. MATHE & LOKALE TECHNIK ---
 
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     if T <= 0 or sigma <= 0: return 0
@@ -24,43 +24,26 @@ def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
 def get_stock_data_from_batch(symbol, batch_df):
-    """Berechnet RSI, Trend, ATR und Pivots rein lokal aus dem Batch-Dataframe."""
+    """Berechnet RSI, Trend, ATR und Pivots lokal aus dem Batch-Dataframe."""
     try:
-        # Daten für den Ticker extrahieren
         hist = batch_df[symbol].dropna()
         if len(hist) < 30: return None
-        
         close = hist['Close']
         price = close.iloc[-1]
         
-        # 1. RSI (Lokal)
+        # RSI
         delta = close.diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        rsi_val = 100 - (100 / (1 + rs.iloc[-1]))
+        rsi_val = 100 - (100 / (1 + (gain.iloc[-1] / loss.iloc[-1])))
         
-        # 2. Trend (SMA 200)
+        # Trend & ATR
         sma_200 = close.rolling(window=200).mean().iloc[-1] if len(close) >= 200 else close.mean()
         is_uptrend = price > sma_200
-        
-        # 3. ATR (Lokal)
         atr = (hist['High'] - hist['Low']).rolling(window=14).mean().iloc[-1]
         
-        # 4. Pivots (S2 Daily & Weekly)
-        # Daily: Basierend auf vorletztem Tag
-        last_day = hist.iloc[-2]
-        p_d = (last_day['High'] + last_day['Low'] + last_day['Close']) / 3
-        s2_d = p_d - (last_day['High'] - last_day['Low'])
-        
-        # Weekly: Letzte 5 Tage als Woche simuliert
-        last_5 = hist.iloc[-6:-1]
-        p_w = (last_5['High'].max() + last_5['Low'].min() + last_5['Close'].iloc[-1]) / 3
-        s2_w = p_w - (last_5['High'].max() - last_5['Low'].min())
-        
-        return price, rsi_val, is_uptrend, atr, {"S2": s2_d, "W_S2": s2_w}
-    except:
-        return None
+        return price, rsi_val, is_uptrend, atr
+    except: return None
 
 def get_analyst_conviction(info):
     try:
@@ -68,121 +51,153 @@ def get_analyst_conviction(info):
         target = info.get('targetMedianPrice', 0)
         upside = ((target / current) - 1) * 100 if target > 0 else 0
         rev_growth = info.get('revenueGrowth', 0) * 100
-        if rev_growth > 40: return f"🚀 HYPER-GROWTH (+{rev_growth:.0f}%)", "#9b59b6"
-        elif upside > 15 and rev_growth > 5: return f"✅ Stark (Ziel: +{upside:.0f}%)", "#27ae60"
-        elif upside > 25: return f"💎 Quality-Dip (Ziel: +{upside:.0f}%)", "#2980b9"
-        return f"⚖️ Neutral (Ziel: {upside:.0f}%)", "#7f8c8d"
-    except: return "🔍 Check nötig", "#7f8c8d"
+        if rev_growth > 40: return f"🚀 HYPER (+{rev_growth:.0f}%)", "#9b59b6"
+        elif upside > 15: return f"✅ Stark (+{upside:.0f}%)", "#27ae60"
+        return f"⚖️ Neutral (+{upside:.0f}%)", "#7f8c8d"
+    except: return "🔍 Check", "#7f8c8d"
 
-# --- UI & SIDEBAR ---
+@st.cache_data(ttl=86400)
+def get_combined_watchlist():
+    try:
+        url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
+        resp = crequests.get(url, impersonate="chrome")
+        df = pd.read_csv(StringIO(resp.text))
+        tickers = [t.replace('.', '-') for t in df['Symbol'].tolist()]
+        extra = ["TSLA", "COIN", "MSTR", "PLTR", "HOOD", "SQ"]
+        return list(set(tickers + extra))
+    except: return ["AAPL", "MSFT", "NVDA", "TSLA", "AMD"]
+
+# --- 2. GLOBAL MARKET MONITORING ---
+
+def get_market_data():
+    try:
+        # Batch Download für Markt-Indikatoren
+        m_tickers = ["^NDX", "^VIX", "BTC-USD"]
+        m_data = yf.download(m_tickers, period="1mo", session=session, group_by='ticker', progress=False)
+        
+        # Nasdaq
+        ndx = m_data["^NDX"]
+        cp_ndx = ndx['Close'].iloc[-1]
+        sma20_ndx = ndx['Close'].rolling(window=20).mean().iloc[-1]
+        dist_ndx = ((cp_ndx - sma20_ndx) / sma20_ndx) * 100
+        
+        # VIX & BTC
+        vix_val = m_data["^VIX"]['Close'].iloc[-1]
+        btc_val = m_data["BTC-USD"]['Close'].iloc[-1]
+        
+        return cp_ndx, 50, dist_ndx, vix_val, btc_val
+    except: return 0, 50, 0, 20, 0
+
+st.markdown("## 🌍 Globales Markt-Monitoring")
+cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
+
+# Markt-Ampel Logik
+if vix_val > 25 or dist_ndq < -3:
+    m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Hohe Volatilität / Schwäche"
+elif vix_val < 15 and dist_ndq > 2:
+    m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT: Nasdaq weit über SMA20"
+else:
+    m_color, m_text = "#27ae60", "✅ TRENDSTARK: Marktumfeld konstruktiv"
+
+st.markdown(f'<div style="background-color: {m_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;"><h3 style="margin:0;">{m_text}</h3></div>', unsafe_allow_html=True)
+
+c1, c2, c3 = st.columns(3)
+with c1: st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
+with c2: st.metric("VIX (Angst)", f"{vix_val:.2f}", delta="HOCH" if vix_val > 22 else "Normal", delta_color="inverse")
+with c3: st.metric("Bitcoin", f"{btc_val:,.0f} $")
+
+# --- 3. SIDEBAR ---
 with st.sidebar:
-    st.header("🛡️ Strategie-Einstellungen")
-    otm_puffer_slider = st.slider("Gewünschter Puffer (%)", 3, 25, 15, key="puffer_sid")
-    min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 0, 100, 12, key="yield_sid")
-    min_stock_price, max_stock_price = st.slider("Aktienpreis-Spanne ($)", 0, 1000, (60, 500), key="price_sid")
+    st.header("🛡️ Strategie")
+    otm_puffer_slider = st.slider("Puffer (%)", 3, 25, 15)
+    min_yield_pa = st.number_input("Rendite p.a. (%)", 0, 100, 12)
+    min_stock_price, max_stock_price = st.slider("Preis ($)", 0, 1000, (60, 500))
     st.markdown("---")
-    min_mkt_cap = st.slider("Mindest-Marktkapitalisierung (Mrd. $)", 1, 1000, 20, key="mkt_cap_sid")
-    only_uptrend = st.checkbox("Nur Aufwärtstrend (SMA 200)", value=False, key="trend_sid")
-    test_modus = st.checkbox("🛠️ Simulations-Modus (Test)", value=False, key="sim_checkbox")
+    min_mkt_cap = st.slider("Market Cap (Mrd. $)", 1, 1000, 20)
+    only_uptrend = st.checkbox("Nur SMA 200 Aufwärts", value=False)
+    test_modus = st.checkbox("🛠️ Simulations-Modus", value=False)
 
-# --- SEKTION 1: PROFI-SCANNER (BATCH-OPTIMIERT) ---
+# --- 4. PROFI-SCANNER ---
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
-if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_width=True):
+if st.button("🚀 Profi-Scan starten", use_container_width=True):
     p_puffer = otm_puffer_slider / 100 
     p_min_yield = min_yield_pa
     p_min_cap = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
     
-    with st.spinner("🏁 Phase 1: Globaler Batch-Download..."):
-        ticker_liste = ["APP", "AVGO", "NVDA", "TSLA", "PLTR", "COIN", "MSTR"] if test_modus else get_combined_watchlist()
-        
-        # Einziger großer Download für alle technischen Daten
+    ticker_liste = ["APP", "NVDA", "TSLA", "PLTR", "COIN"] if test_modus else get_combined_watchlist()
+    
+    with st.spinner("🏁 Phase 1: Batch-Download Historie..."):
         batch_df = yf.download(ticker_liste, period="250d", session=session, group_by='ticker', threads=True, progress=False)
 
-    with st.spinner("🔎 Phase 2: Lokale Vor-Filterung & Detail-Scan..."):
-        # Vor-Filtern: Wer hat Daten und passt preislich?
-        pre_filtered = []
-        for s in ticker_liste:
-            if s in batch_df.columns.levels[0] and not batch_df[s].empty:
-                last_p = batch_df[s]['Close'].dropna().iloc[-1]
-                if min_stock_price <= last_p <= max_stock_price:
-                    pre_filtered.append(s)
-        
+    with st.spinner("🔎 Phase 2: Detail-Analyse (Optionen & Analysten)..."):
+        pre_filtered = [s for s in ticker_liste if s in batch_df.columns.levels[0] and not batch_df[s].empty]
         all_results = []
         progress_bar = st.progress(0)
-        status_text = st.empty()
 
         def check_single_stock_optimized(symbol, b_df):
             try:
-                # 1. LOKALER CHECK (Kein Internet nötig!)
+                # 1. LOKAL
                 tech = get_stock_data_from_batch(symbol, b_df)
                 if not tech: return None
-                price, rsi, uptrend, atr, pivots = tech
+                price, rsi, uptrend, atr = tech
+                if not (min_stock_price <= price <= max_stock_price): return None
                 if only_uptrend and not uptrend: return None
 
-                # 2. OPTIONEN & INFO (Internet-Abfrage)
+                # 2. ONLINE (Nur Optionen & Info)
                 tk = yf.Ticker(symbol, session=session)
-                
-                # Market Cap Check via fast_info (sehr schnell)
                 m_cap = tk.fast_info.get("market_cap", 0)
                 if m_cap < p_min_cap: return None
 
-                # Optionsketten
                 dates = tk.options
-                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
-                if not valid_dates: return None
+                target_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 35]
+                if not target_dates: return None
                 
-                target_date = valid_dates[0]
-                chain = tk.option_chain(target_date).puts
+                chain = tk.option_chain(target_dates[0]).puts
                 target_strike = price * (1 - p_puffer)
-                
                 opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
                 if opts.empty: return None
                 o = opts.iloc[0]
                 
-                # Rendite & Sicherheit
-                days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
-                bid, ask = o['bid'], o['ask']
-                fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o['lastPrice']
-                y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
+                days = (datetime.strptime(target_dates[0], '%Y-%m-%d') - heute).days
+                fair = (o['bid'] + o['ask']) / 2 if o['bid'] > 0 else o['lastPrice']
+                y_pa = (fair / o['strike']) * (365 / max(1, days)) * 100
                 
                 if y_pa < p_min_yield: return None
 
-                # 3. ANALYSTEN (Nur für Top-Treffer)
+                # Analysten
                 info = tk.info
                 analyst_txt, analyst_col = get_analyst_conviction(info)
-                
-                # Sterne
-                s_val = 2.0 if "Stark" in analyst_txt or "HYPER" in analyst_txt else 1.0
+                s_val = 2.0 if "Stark" in analyst_txt else 1.0
                 if rsi < 35: s_val += 0.5
                 if uptrend: s_val += 0.5
-                
+
                 return {
                     'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'], 
-                    'puffer': ((price - o['strike']) / price) * 100, 'bid': fair_price, 'rsi': rsi, 
-                    'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                    'stars_val': s_val, 'stars_str': "⭐" * int(s_val),
-                    'analyst_label': analyst_txt, 'analyst_color': analyst_col, 'mkt_cap': m_cap / 1e9
+                    'puffer': ((price - o['strike']) / price) * 100, 'rsi': rsi, 
+                    'tage': days, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
+                    'stars_str': "⭐" * int(s_val), 'analyst_label': analyst_txt, 
+                    'analyst_color': analyst_col, 'mkt_cap': m_cap / 1e9
                 }
             except: return None
 
-        # Multithreading mit 10 Workers (da wir viel lokal rechnen)
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
-            # Wir übergeben batch_df per partial an die Funktion
             check_func = partial(check_single_stock_optimized, b_df=batch_df)
             futures = {executor.submit(check_func, s): s for s in pre_filtered}
-            
             for i, future in enumerate(concurrent.futures.as_completed(futures)):
-                res_data = future.result()
-                if res_data: all_results.append(res_data)
+                res = future.result()
+                if res: all_results.append(res)
                 progress_bar.progress((i + 1) / len(pre_filtered))
-                if i % 10 == 0: status_text.text(f"Verarbeite {i}/{len(pre_filtered)}...")
 
-        status_text.empty(); progress_bar.empty()
-        st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
-        st.success(f"Scan fertig! {len(all_results)} profitable Trades gefunden.")
+        st.session_state.profi_scan_results = sorted(all_results, key=lambda x: x['y_pa'], reverse=True)
+        st.success(f"Gefunden: {len(all_results)} Trades")
+
+# --- 5. ERGEBNIS-TABELLE ---
+if st.session_state.profi_scan_results:
+    df_res = pd.DataFrame(st.session_state.profi_scan_results)
+    st.dataframe(df_res, use_container_width=True)
 
 # --- KORRIGIERTER ANZEIGEBLOCK (HTML-FIX) ---
 if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
@@ -515,4 +530,5 @@ if submit_button and symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
