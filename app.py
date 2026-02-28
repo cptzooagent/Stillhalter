@@ -226,7 +226,7 @@ with r2c2:
 with r2c3:
     st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_ndq > 70 else None, delta_color="inverse")
 
-# --- SEKTION 1: PROFI-SCANNER (optimiert) ---
+# --- SEKTION 1: PROFI-SCANNER (optimiert + Analysten-Top-N) ---
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
@@ -288,7 +288,6 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_widt
 
                 price = s_hist['Close'].iloc[-1]
 
-                # FAST_INFO nur für Market Cap (leicht)
                 tk = yf.Ticker(symbol, session=session)
                 fi = tk.fast_info
                 m_cap = fi.get("market_cap") or fi.get("marketCap")
@@ -333,7 +332,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_widt
                 em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
                 delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp / 365, iv)
 
-                # Sterne & Analysten-Label im Scanner: leichtgewichtig, ohne info()
+                # leichte Basis-Sterne (ohne Analysten)
                 s_val = 1.0
                 if rsi < 35:
                     s_val += 0.5
@@ -383,12 +382,61 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_widt
         progress_bar.empty()
 
         if all_results:
-            st.session_state.profi_scan_results = sorted(all_results, key=lambda x: (x['stars_val'], x['y_pa']), reverse=True)
+            # Phase 2: erste Sortierung nach Basis-Sternen + Yield
+            st.session_state.profi_scan_results = sorted(
+                all_results,
+                key=lambda x: (x['stars_val'], x['y_pa']),
+                reverse=True
+            )
+
+            # --- PHASE 3: Analysten-Daten nur für die Top-N nachladen ---
+            TOP_N = 20
+            top_for_analyst = st.session_state.profi_scan_results[:TOP_N]
+
+            for item in top_for_analyst:
+                try:
+                    tk = yf.Ticker(item['symbol'], session=session)
+                    info = tk.info  # nur wenige Aufrufe -> stabil
+
+                    analyst_txt, analyst_col = get_analyst_conviction(info)
+
+                    s_val = 0
+                    if "HYPER" in analyst_txt:
+                        s_val = 3
+                    elif "Stark" in analyst_txt:
+                        s_val = 2
+                    elif "Neutral" in analyst_txt:
+                        s_val = 1
+                    else:
+                        s_val = 0
+
+                    if item['rsi'] < 35:
+                        s_val += 0.5
+                    if "Trend" in item['status']:
+                        s_val += 0.5
+                    if item['em_safety'] >= 1.5:
+                        s_val += 0.5
+
+                    item['analyst_label'] = analyst_txt
+                    item['analyst_color'] = analyst_col
+                    item['stars_val'] = s_val
+                    item['stars_str'] = "⭐" * int(s_val) if s_val >= 1 else "⚠️"
+
+                except:
+                    continue
+
+            # Phase 4: finale Sortierung nach aktualisierten Sternen + Yield
+            st.session_state.profi_scan_results = sorted(
+                st.session_state.profi_scan_results,
+                key=lambda x: (x['stars_val'], x['y_pa']),
+                reverse=True
+            )
+
             st.success(f"✅ Scan beendet: {len(all_results)} profitable Trades gefunden!")
         else:
             st.warning("Keine Treffer mit den aktuellen Filtern (Puffer/Rendite) gefunden.")
 
-# --- KORRIGIERTER ANZEIGEBLOCK (HTML-FIX) ---
+# --- ANZEIGEBLOCK: Karten-Rendering ---
 if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
     all_results = st.session_state.profi_scan_results
     st.subheader(f"🎯 Top-Setups nach Qualität ({len(all_results)} Treffer)")
@@ -658,3 +706,4 @@ if submit_button and symbol_input:
                 """, unsafe_allow_html=True)
     except:
         st.error("Analyse fehlgeschlagen – bitte Ticker prüfen oder später erneut versuchen.")
+
