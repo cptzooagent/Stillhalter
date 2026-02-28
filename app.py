@@ -290,26 +290,18 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_widt
 
     def check_single_stock_optimized(symbol):
         try:
-            # Kleine Verzögerung gegen Rate-Limiting
-            time.sleep(random.uniform(0.3, 0.7))
+            # Schutz vor Rate-Limiting
+            time.sleep(random.uniform(0.2, 0.5))
 
             if symbol not in batch_df.columns.levels[0]:
                 return None
-            s_hist = batch_df[symbol]
-            if s_hist.empty:
+            s_hist = batch_df[symbol].dropna()
+            if len(s_hist) < 30:
                 return None
 
             price = s_hist['Close'].iloc[-1]
 
-            # Marktkapitalisierungs-Check
-            tk = yf.Ticker(symbol, session=session)
-            fi = tk.fast_info
-            # [cite_start]Hier lag der Fehler: Das [cite: 30] muss weg!
-            m_cap = fi.get("market_cap") or fi.get("marketCap") or 0
-            if m_cap < p_min_cap:
-                return None
-
-            # Technische Indikatoren
+            # 1. Schneller Vorfilter (Technik)
             rsi_series = calculate_rsi(s_hist['Close'])
             rsi = rsi_series.iloc[-1]
             sma_200 = s_hist['Close'].rolling(window=200).mean().iloc[-1] if len(s_hist) >= 200 else s_hist['Close'].mean()
@@ -317,24 +309,48 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_widt
             if only_uptrend and not uptrend:
                 return None
 
-            # Optionen-Daten abrufen
+            # 2. Fundamentaldaten & Optionen
+            tk = yf.Ticker(symbol, session=session)
+            
+            # Market Cap Check
+            m_cap = tk.fast_info.get("market_cap", 0)
+            if m_cap < p_min_cap:
+                return None
+
+            # Earnings Logik (Direkt hier!)
+            earn_str = "---"
+            is_earning_risk = False
+            try:
+                cal = tk.calendar
+                if cal is not None and 'Earnings Date' in cal:
+                    earn_date = cal['Earnings Date'][0]
+                    earn_str = earn_date.strftime('%d.%m.')
+                    # Wir prüfen das Risiko später nach der Options-Laufzeit
+            except: pass
+
+            # Optionen
             dates = tk.options or []
             valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
             if not valid_dates:
                 return None
 
             target_date = valid_dates[0]
-            chain = tk.option_chain(target_date).puts
+            days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
             
+            # Risiko-Check: Liegen Earnings in der Laufzeit?
+            if earn_str != "---":
+                try:
+                    days_to_earn = (datetime.strptime(f"{earn_str}{heute.year}", "%d.%m.%Y") - heute).days
+                    is_earning_risk = (0 <= days_to_earn <= days_to_exp)
+                except: pass
+
+            chain = tk.option_chain(target_date).puts
             target_strike = price * (1 - p_puffer)
             opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
             if opts.empty:
                 return None
 
             o = opts.iloc[0]
-            days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
-
-            # ROBUSTE PREIS-LOGIK
             bid, ask = o.get('bid', 0), o.get('ask', 0)
             fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o.get('lastPrice', 0)
             if fair_price <= 0: return None
@@ -343,18 +359,15 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_widt
             if y_pa < p_min_yield:
                 return None
 
-            # --- EARNINGS-LOGIK ---
-            earn_str = "---"
-            is_earning_risk = False
-            try:
-                cal = tk.calendar
-                if cal is not None and 'Earnings Date' in cal:
-                    earn_date = cal['Earnings Date'][0]
-                    earn_str = earn_date.strftime('%d.%m.')
-                    days_to_earn = (earn_date - heute).days
-                    is_earning_risk = (0 <= days_to_earn <= days_to_exp)
-            except:
-                pass
+            # 3. Pivots berechnen (Wichtig für die Anzeige unten!)
+            h, l, c = s_hist['High'].iloc[-1], s_hist['Low'].iloc[-1], s_hist['Close'].iloc[-1]
+            pivots = {
+                'P': (h + l + c) / 3,
+                'S1': (2 * ((h + l + c) / 3)) - h,
+                'S2': ((h + l + c) / 3) - (h - l),
+                'R1': (2 * ((h + l + c) / 3)) - l,
+                'R2': ((h + l + c) / 3) + (h - l)
+            }
 
             # Risiko-Metriken
             iv = o.get('impliedVolatility', 0.4)
@@ -363,23 +376,17 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_widt
             em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 1.0
             delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp / 365, iv)
 
-            # Sterne-Rating
-            s_val = 1.0
-            if rsi < 35: s_val += 0.5
-            if uptrend: s_val += 0.5
-            if em_safety >= 1.5: s_val += 0.5
-
             return {
                 'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'],
                 'puffer': current_puffer, 'bid': fair_price, 'rsi': rsi,
                 'earn': earn_str, 'tage': days_to_exp, 'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                'delta': delta_val, 'stars_val': s_val, 'stars_str': "⭐" * int(s_val),
-                'analyst_label': "Check läuft...", 'analyst_color': "#7f8c8d",
+                'delta': delta_val, 'stars_str': "⭐" * (2 if uptrend else 1),
                 'mkt_cap': m_cap / 1e9, 'em_pct': exp_move_pct, 'em_safety': em_safety,
-                'earning_risk': is_earning_risk, 'sent_icon': "🟢" if uptrend else "🔵"
+                'earning_risk': is_earning_risk, 'pivots': pivots, 
+                'analyst_label': "Check...", 'analyst_col': "#7f8c8d"
             }
         except:
-            return None
+            return Nonefor res in st.session_state.profi_scan_results
             
     workers = 3 if len(filtered_tickers) > 200 else 5
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
@@ -440,28 +447,6 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_widt
         except:
             continue
 
-    # -------------------------------
-    # PHASE 3b: Earnings für Top-N
-    # -------------------------------
-    for item in top_for_analyst:
-        try:
-            tk = yf.Ticker(item['symbol'], session=session)
-            cal = tk.calendar
-
-            if cal is not None and 'Earnings Date' in cal:
-                earn_date = cal['Earnings Date'][0]
-                earn_str = earn_date.strftime('%d.%m.')
-                item['earn'] = earn_str
-
-                days_to_earn = (earn_date - heute).days
-                item['earning_risk'] = (0 <= days_to_earn <= item['tage'])
-            else:
-                item['earn'] = "---"
-                item['earning_risk'] = False
-
-        except:
-            item['earn'] = "---"
-            item['earning_risk'] = False
 
     # -------------------------------
     # PHASE 4: Finale Sortierung
@@ -762,6 +747,7 @@ if submit_button and symbol_input:
                 """, unsafe_allow_html=True)
     except:
         st.error("Analyse fehlgeschlagen – bitte Ticker prüfen oder später erneut versuchen.")
+
 
 
 
