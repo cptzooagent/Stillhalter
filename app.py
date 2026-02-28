@@ -311,7 +311,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_widt
 
         # PARALLELE AUSFÜHRUNG (10 Workers für maximalen Speed)
         
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = {executor.submit(check_single_stock_optimized, s): s for s in filtered_tickers}
             for i, future in enumerate(concurrent.futures.as_completed(futures)):
                 res_data = future.result()
@@ -659,6 +659,7 @@ if submit_button and symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
 
 
