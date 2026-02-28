@@ -291,7 +291,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_widt
     def check_single_stock_optimized(symbol):
         try:
             # Kleine Verzögerung gegen Rate-Limiting
-            time.sleep(random.uniform(0.3, 0.7)) [cite: 29]
+            time.sleep(random.uniform(0.3, 0.7))
 
             if symbol not in batch_df.columns.levels[0]:
                 return None
@@ -299,74 +299,75 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_widt
             if s_hist.empty:
                 return None
 
-            price = s_hist['Close'].iloc[-1] [cite: 27]
+            price = s_hist['Close'].iloc[-1]
 
             # Marktkapitalisierungs-Check
-            tk = yf.Ticker(symbol, session=session) [cite: 30]
+            tk = yf.Ticker(symbol, session=session)
             fi = tk.fast_info
+            # [cite_start]Hier lag der Fehler: Das [cite: 30] muss weg!
             m_cap = fi.get("market_cap") or fi.get("marketCap") or 0
-            if m_cap < p_min_cap: [cite: 30]
+            if m_cap < p_min_cap:
                 return None
 
             # Technische Indikatoren
-            rsi_series = calculate_rsi(s_hist['Close']) [cite: 30]
-            rsi = rsi_series.iloc[-1] [cite: 31]
-            sma_200 = s_hist['Close'].rolling(window=200).mean().iloc[-1] if len(s_hist) >= 200 else s_hist['Close'].mean() [cite: 31]
-            uptrend = price > sma_200 [cite: 31]
-            if only_uptrend and not uptrend: [cite: 31]
+            rsi_series = calculate_rsi(s_hist['Close'])
+            rsi = rsi_series.iloc[-1]
+            sma_200 = s_hist['Close'].rolling(window=200).mean().iloc[-1] if len(s_hist) >= 200 else s_hist['Close'].mean()
+            uptrend = price > sma_200
+            if only_uptrend and not uptrend:
                 return None
 
             # Optionen-Daten abrufen
-            dates = tk.options or [] [cite: 31, 32]
-            valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45] [cite: 32]
+            dates = tk.options or []
+            valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 45]
             if not valid_dates:
                 return None
 
             target_date = valid_dates[0]
-            chain = tk.option_chain(target_date).puts [cite: 33]
+            chain = tk.option_chain(target_date).puts
             
-            target_strike = price * (1 - p_puffer) [cite: 33]
-            opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False) [cite: 33]
+            target_strike = price * (1 - p_puffer)
+            opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
             if opts.empty:
                 return None
 
             o = opts.iloc[0]
-            days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days [cite: 34]
+            days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
 
-            # ROBUSTE PREIS-LOGIK (Wochenend-Sicherung)
+            # ROBUSTE PREIS-LOGIK
             bid, ask = o.get('bid', 0), o.get('ask', 0)
-            fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o.get('lastPrice', 0) [cite: 34]
+            fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o.get('lastPrice', 0)
             if fair_price <= 0: return None
 
-            y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100 [cite: 35]
-            if y_pa < p_min_yield: [cite: 35]
+            y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
+            if y_pa < p_min_yield:
                 return None
 
-            # --- NEU: EARNINGS-LOGIK DIREKT HIER ---
+            # --- EARNINGS-LOGIK ---
             earn_str = "---"
             is_earning_risk = False
             try:
-                cal = tk.calendar [cite: 15, 48]
+                cal = tk.calendar
                 if cal is not None and 'Earnings Date' in cal:
                     earn_date = cal['Earnings Date'][0]
-                    earn_str = earn_date.strftime('%d.%m.') [cite: 15, 49]
+                    earn_str = earn_date.strftime('%d.%m.')
                     days_to_earn = (earn_date - heute).days
-                    is_earning_risk = (0 <= days_to_earn <= days_to_exp) [cite: 49]
+                    is_earning_risk = (0 <= days_to_earn <= days_to_exp)
             except:
                 pass
 
             # Risiko-Metriken
-            iv = o.get('impliedVolatility', 0.4) [cite: 35]
-            exp_move_pct = (iv * np.sqrt(days_to_exp / 365)) * 100 [cite: 35, 36]
-            current_puffer = ((price - o['strike']) / price) * 100 [cite: 36]
-            em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 1.0 [cite: 36]
-            delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp / 365, iv) [cite: 36]
+            iv = o.get('impliedVolatility', 0.4)
+            exp_move_pct = (iv * np.sqrt(days_to_exp / 365)) * 100
+            current_puffer = ((price - o['strike']) / price) * 100
+            em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 1.0
+            delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp / 365, iv)
 
-            # Sterne-Rating (Basis)
+            # Sterne-Rating
             s_val = 1.0
-            if rsi < 35: s_val += 0.5 [cite: 37]
-            if uptrend: s_val += 0.5 [cite: 37]
-            if em_safety >= 1.5: s_val += 0.5 [cite: 37]
+            if rsi < 35: s_val += 0.5
+            if uptrend: s_val += 0.5
+            if em_safety >= 1.5: s_val += 0.5
 
             return {
                 'symbol': symbol, 'price': price, 'y_pa': y_pa, 'strike': o['strike'],
@@ -379,6 +380,7 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_widt
             }
         except:
             return None
+            
     workers = 3 if len(filtered_tickers) > 200 else 5
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {executor.submit(check_single_stock_optimized, s): s for s in filtered_tickers}
@@ -760,6 +762,7 @@ if submit_button and symbol_input:
                 """, unsafe_allow_html=True)
     except:
         st.error("Analyse fehlgeschlagen – bitte Ticker prüfen oder später erneut versuchen.")
+
 
 
 
