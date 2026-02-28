@@ -226,7 +226,7 @@ with r2c2:
 with r2c3:
     st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_ndq > 70 else None, delta_color="inverse")
 
-# --- SEKTION 1: PROFI-SCANNER (optimiert + Analysten-Top-N) ---
+# --- SEKTION 1: PROFI-SCANNER (optimiert + Analysten-Top-N + Earnings-Top-N) ---
 if 'profi_scan_results' not in st.session_state:
     st.session_state.profi_scan_results = []
 
@@ -236,8 +236,15 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_widt
     p_min_cap = min_mkt_cap * 1_000_000_000
     heute = datetime.now()
 
+    # -------------------------------
+    # PHASE 1: Batch-Download
+    # -------------------------------
     with st.spinner("🏁 Phase 1: Batch-Download & Vor-Filterung..."):
-        ticker_liste = ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB", "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"] if test_modus else get_combined_watchlist()
+        ticker_liste = (
+            ["APP", "AVGO", "NET", "CRWD", "MRVL", "NVDA", "CRDO", "HOOD", "SE", "ALAB",
+             "TSLA", "PLTR", "COIN", "MSTR", "TER", "DELL", "DDOG", "MU", "LRCX", "RTX", "UBER"]
+            if test_modus else get_combined_watchlist()
+        )
 
         try:
             batch_df = yf.download(
@@ -270,171 +277,202 @@ if st.button("🚀 Profi-Scan starten", key="kombi_scan_pro", use_container_widt
 
     if not filtered_tickers:
         st.warning("Keine Aktien gefunden, die den Preis-Filter erfüllen.")
-    else:
-        st.info(f"🔎 Phase 2: Detail-Analyse für {len(filtered_tickers)} Top-Kandidaten...")
+        st.stop()
 
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        all_results = []
+    # -------------------------------
+    # PHASE 2: Detail-Analyse
+    # -------------------------------
+    st.info(f"🔎 Phase 2: Detail-Analyse für {len(filtered_tickers)} Kandidaten...")
 
-        def check_single_stock_optimized(symbol):
-            try:
-                time.sleep(random.uniform(0.3, 0.9))
-                if symbol not in batch_df.columns.levels[0]:
-                    return None
-                s_hist = batch_df[symbol]
-                if s_hist.empty:
-                    return None
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    all_results = []
 
-                price = s_hist['Close'].iloc[-1]
+    def check_single_stock_optimized(symbol):
+        try:
+            time.sleep(random.uniform(0.3, 0.9))
 
-                tk = yf.Ticker(symbol, session=session)
-                fi = tk.fast_info
-                m_cap = fi.get("market_cap") or fi.get("marketCap")
-                if not m_cap or m_cap < p_min_cap:
-                    return None
-
-                rsi_series = calculate_rsi(s_hist['Close'])
-                rsi = rsi_series.iloc[-1]
-                sma_200 = s_hist['Close'].rolling(window=200).mean().iloc[-1] if len(s_hist) >= 200 else s_hist['Close'].mean()
-                uptrend = price > sma_200
-                if only_uptrend and not uptrend:
-                    return None
-
-                pivots = calculate_pivots_from_hist(s_hist)
-
-                dates = tk.options or []
-                valid_dates = [d for d in dates if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 30]
-                if not valid_dates:
-                    return None
-
-                target_date = valid_dates[0]
-                chain = tk.option_chain(target_date).puts
-                chain = chain[["strike", "bid", "ask", "impliedVolatility", "lastPrice"]]
-
-                target_strike = price * (1 - p_puffer)
-                opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
-                if opts.empty:
-                    return None
-                o = opts.iloc[0]
-
-                days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
-                bid, ask = o['bid'], o['ask']
-                fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o['lastPrice']
-                y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
-                if y_pa < p_min_yield:
-                    return None
-
-                iv = o.get('impliedVolatility', 0.4)
-                exp_move_abs = price * (iv * np.sqrt(days_to_exp / 365))
-                exp_move_pct = (exp_move_abs / price) * 100 if price > 0 else 0
-                current_puffer = ((price - o['strike']) / price) * 100 if price > 0 else 0
-                em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
-                delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp / 365, iv)
-
-                # leichte Basis-Sterne (ohne Analysten)
-                s_val = 1.0
-                if rsi < 35:
-                    s_val += 0.5
-                if uptrend:
-                    s_val += 0.5
-                if em_safety >= 1.5:
-                    s_val += 0.5
-
-                analyst_txt = "Fundamental-Check empfohlen"
-                analyst_col = "#7f8c8d"
-
-                return {
-                    'symbol': symbol,
-                    'price': price,
-                    'y_pa': y_pa,
-                    'strike': o['strike'],
-                    'puffer': current_puffer,
-                    'bid': fair_price,
-                    'rsi': rsi,
-                    'earn': "---",
-                    'tage': days_to_exp,
-                    'status': "🛡️ Trend" if uptrend else "💎 Dip",
-                    'delta': delta_val,
-                    'stars_val': s_val,
-                    'stars_str': "⭐" * int(s_val) if s_val >= 1 else "⚠️",
-                    'analyst_label': analyst_txt,
-                    'analyst_color': analyst_col,
-                    'mkt_cap': m_cap / 1e9,
-                    'em_pct': exp_move_pct,
-                    'em_safety': em_safety
-                }
-            except:
+            if symbol not in batch_df.columns.levels[0]:
+                return None
+            s_hist = batch_df[symbol]
+            if s_hist.empty:
                 return None
 
-        workers = 3 if len(filtered_tickers) > 200 else 5
-        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(check_single_stock_optimized, s): s for s in filtered_tickers}
-            for i, future in enumerate(concurrent.futures.as_completed(futures)):
-                res_data = future.result()
-                if res_data:
-                    all_results.append(res_data)
-                progress_bar.progress((i + 1) / len(filtered_tickers))
-                if i % 10 == 0:
-                    status_text.text(f"Analysiere Kandidat {i}/{len(filtered_tickers)}...")
+            price = s_hist['Close'].iloc[-1]
 
-        status_text.empty()
-        progress_bar.empty()
+            tk = yf.Ticker(symbol, session=session)
+            fi = tk.fast_info
+            m_cap = fi.get("market_cap") or fi.get("marketCap")
+            if not m_cap or m_cap < p_min_cap:
+                return None
 
-        if all_results:
-            # Phase 2: erste Sortierung nach Basis-Sternen + Yield
-            st.session_state.profi_scan_results = sorted(
-                all_results,
-                key=lambda x: (x['stars_val'], x['y_pa']),
-                reverse=True
-            )
+            rsi_series = calculate_rsi(s_hist['Close'])
+            rsi = rsi_series.iloc[-1]
+            sma_200 = s_hist['Close'].rolling(window=200).mean().iloc[-1] if len(s_hist) >= 200 else s_hist['Close'].mean()
+            uptrend = price > sma_200
+            if only_uptrend and not uptrend:
+                return None
 
-            # --- PHASE 3: Analysten-Daten nur für die Top-N nachladen ---
-            TOP_N = 20
-            top_for_analyst = st.session_state.profi_scan_results[:TOP_N]
+            pivots = calculate_pivots_from_hist(s_hist)
 
-            for item in top_for_analyst:
-                try:
-                    tk = yf.Ticker(item['symbol'], session=session)
-                    info = tk.info  # nur wenige Aufrufe -> stabil
+            dates = tk.options or []
+            valid_dates = [
+                d for d in dates
+                if 10 <= (datetime.strptime(d, '%Y-%m-%d') - heute).days <= 30
+            ]
+            if not valid_dates:
+                return None
 
-                    analyst_txt, analyst_col = get_analyst_conviction(info)
+            target_date = valid_dates[0]
+            chain = tk.option_chain(target_date).puts
+            chain = chain[["strike", "bid", "ask", "impliedVolatility", "lastPrice"]]
 
-                    s_val = 0
-                    if "HYPER" in analyst_txt:
-                        s_val = 3
-                    elif "Stark" in analyst_txt:
-                        s_val = 2
-                    elif "Neutral" in analyst_txt:
-                        s_val = 1
-                    else:
-                        s_val = 0
+            target_strike = price * (1 - p_puffer)
+            opts = chain[chain['strike'] <= target_strike].sort_values('strike', ascending=False)
+            if opts.empty:
+                return None
 
-                    if item['rsi'] < 35:
-                        s_val += 0.5
-                    if "Trend" in item['status']:
-                        s_val += 0.5
-                    if item['em_safety'] >= 1.5:
-                        s_val += 0.5
+            o = opts.iloc[0]
+            days_to_exp = (datetime.strptime(target_date, '%Y-%m-%d') - heute).days
 
-                    item['analyst_label'] = analyst_txt
-                    item['analyst_color'] = analyst_col
-                    item['stars_val'] = s_val
-                    item['stars_str'] = "⭐" * int(s_val) if s_val >= 1 else "⚠️"
+            bid, ask = o['bid'], o['ask']
+            fair_price = (bid + ask) / 2 if (bid > 0 and ask > 0) else o['lastPrice']
+            y_pa = (fair_price / o['strike']) * (365 / max(1, days_to_exp)) * 100
+            if y_pa < p_min_yield:
+                return None
 
-                except:
-                    continue
+            iv = o.get('impliedVolatility', 0.4)
+            exp_move_abs = price * (iv * np.sqrt(days_to_exp / 365))
+            exp_move_pct = (exp_move_abs / price) * 100 if price > 0 else 0
+            current_puffer = ((price - o['strike']) / price) * 100 if price > 0 else 0
+            em_safety = current_puffer / exp_move_pct if exp_move_pct > 0 else 0
+            delta_val = calculate_bsm_delta(price, o['strike'], days_to_exp / 365, iv)
 
-            # Phase 4: finale Sortierung nach aktualisierten Sternen + Yield
-            st.session_state.profi_scan_results = sorted(
-                st.session_state.profi_scan_results,
-                key=lambda x: (x['stars_val'], x['y_pa']),
-                reverse=True
-            )
+            # Basis-Sterne
+            s_val = 1.0
+            if rsi < 35:
+                s_val += 0.5
+            if uptrend:
+                s_val += 0.5
+            if em_safety >= 1.5:
+                s_val += 0.5
 
-            st.success(f"✅ Scan beendet: {len(all_results)} profitable Trades gefunden!")
-        else:
-            st.warning("Keine Treffer mit den aktuellen Filtern (Puffer/Rendite) gefunden.")
+            return {
+                'symbol': symbol,
+                'price': price,
+                'y_pa': y_pa,
+                'strike': o['strike'],
+                'puffer': current_puffer,
+                'bid': fair_price,
+                'rsi': rsi,
+                'earn': "---",
+                'tage': days_to_exp,
+                'status': "🛡️ Trend" if uptrend else "💎 Dip",
+                'delta': delta_val,
+                'stars_val': s_val,
+                'stars_str': "⭐" * int(s_val),
+                'analyst_label': "Fundamental-Check empfohlen",
+                'analyst_color': "#7f8c8d",
+                'mkt_cap': m_cap / 1e9,
+                'em_pct': exp_move_pct,
+                'em_safety': em_safety,
+                'earning_risk': False
+            }
+        except:
+            return None
+
+    workers = 3 if len(filtered_tickers) > 200 else 5
+    with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(check_single_stock_optimized, s): s for s in filtered_tickers}
+        for i, future in enumerate(concurrent.futures.as_completed(futures)):
+            res_data = future.result()
+            if res_data:
+                all_results.append(res_data)
+            progress_bar.progress((i + 1) / len(filtered_tickers))
+            if i % 10 == 0:
+                status_text.text(f"Analysiere Kandidat {i}/{len(filtered_tickers)}...")
+
+    status_text.empty()
+    progress_bar.empty()
+
+    if not all_results:
+        st.warning("Keine Treffer mit den aktuellen Filtern gefunden.")
+        st.stop()
+
+    # -------------------------------
+    # PHASE 3: Analysten für Top-N
+    # -------------------------------
+    st.session_state.profi_scan_results = sorted(
+        all_results,
+        key=lambda x: (x['stars_val'], x['y_pa']),
+        reverse=True
+    )
+
+    TOP_N = 20
+    top_for_analyst = st.session_state.profi_scan_results[:TOP_N]
+
+    for item in top_for_analyst:
+        try:
+            tk = yf.Ticker(item['symbol'], session=session)
+            info = tk.info
+            analyst_txt, analyst_col = get_analyst_conviction(info)
+
+            s_val = 0
+            if "HYPER" in analyst_txt:
+                s_val = 3
+            elif "Stark" in analyst_txt:
+                s_val = 2
+            elif "Neutral" in analyst_txt:
+                s_val = 1
+
+            if item['rsi'] < 35:
+                s_val += 0.5
+            if "Trend" in item['status']:
+                s_val += 0.5
+            if item['em_safety'] >= 1.5:
+                s_val += 0.5
+
+            item['analyst_label'] = analyst_txt
+            item['analyst_color'] = analyst_col
+            item['stars_val'] = s_val
+            item['stars_str'] = "⭐" * int(s_val)
+
+        except:
+            continue
+
+    # -------------------------------
+    # PHASE 3b: Earnings für Top-N
+    # -------------------------------
+    for item in top_for_analyst:
+        try:
+            tk = yf.Ticker(item['symbol'], session=session)
+            cal = tk.calendar
+
+            if cal is not None and 'Earnings Date' in cal:
+                earn_date = cal['Earnings Date'][0]
+                earn_str = earn_date.strftime('%d.%m.')
+                item['earn'] = earn_str
+
+                days_to_earn = (earn_date - heute).days
+                item['earning_risk'] = (0 <= days_to_earn <= item['tage'])
+            else:
+                item['earn'] = "---"
+                item['earning_risk'] = False
+
+        except:
+            item['earn'] = "---"
+            item['earning_risk'] = False
+
+    # -------------------------------
+    # PHASE 4: Finale Sortierung
+    # -------------------------------
+    st.session_state.profi_scan_results = sorted(
+        st.session_state.profi_scan_results,
+        key=lambda x: (x['stars_val'], x['y_pa']),
+        reverse=True
+    )
+
+    st.success(f"✅ Scan beendet: {len(all_results)} profitable Trades gefunden!")
 
 # --- ANZEIGEBLOCK: Karten-Rendering ---
 if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_results:
@@ -446,30 +484,35 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
     for idx, res in enumerate(all_results):
         with cols[idx % 4]:
             earn_str = res.get('earn', "---")
+            is_earning_risk = res.get('earning_risk', False)
+
             status_txt = res.get('status', "Trend")
             sent_icon = res.get('sent_icon', "🟢")
             stars = res.get('stars_str', "⭐")
             s_color = "#10b981" if "Trend" in status_txt else "#3b82f6"
             a_label = res.get('analyst_label', "Keine Analyse")
             a_color = res.get('analyst_color', "#8b5cf6")
-            mkt_cap = res.get('mkt_cap', 0)
             rsi_val = int(res.get('rsi', 50))
 
-            rsi_style = "color: #ef4444;" if rsi_val >= 70 else "color: #10b981;" if rsi_val <= 35 else "color: #4b5563;"
+            rsi_style = (
+                "color: #ef4444;" if rsi_val >= 70 else
+                "color: #10b981;" if rsi_val <= 35 else
+                "color: #4b5563;"
+            )
+
             delta_val = abs(res.get('delta', 0))
-            delta_col = "#10b981" if delta_val < 0.20 else "#f59e0b" if delta_val < 0.30 else "#ef4444"
+            delta_col = (
+                "#10b981" if delta_val < 0.20 else
+                "#f59e0b" if delta_val < 0.30 else
+                "#ef4444"
+            )
 
             em_safety = res.get('em_safety', 1.0)
-            em_col = "#10b981" if em_safety >= 1.5 else "#f59e0b" if em_safety >= 1.0 else "#ef4444"
-
-            is_earning_risk = False
-            if earn_str and earn_str != "---":
-                try:
-                    earn_date = datetime.strptime(f"{earn_str}2026", "%d.%m.%Y")
-                    if 0 <= (earn_date - heute_dt).days <= res.get('tage', 14):
-                        is_earning_risk = True
-                except:
-                    pass
+            em_col = (
+                "#10b981" if em_safety >= 1.5 else
+                "#f59e0b" if em_safety >= 1.0 else
+                "#ef4444"
+            )
 
             card_border, card_shadow, card_bg = (
                 ("3px solid #ef4444", "0 4px 12px rgba(239,68,68,0.2)", "#fffcfc")
@@ -477,50 +520,63 @@ if 'profi_scan_results' in st.session_state and st.session_state.profi_scan_resu
                 ("1px solid #e5e7eb", "0 2px 4px rgba(0,0,0,0.05)", "#ffffff")
             )
 
-            html_code = f"""<div style="background: {card_bg}; border: {card_border}; border-radius: 12px; padding: 15px; margin-bottom: 15px; box-shadow: {card_shadow}; font-family: sans-serif; text-align: left;">
+            html_code = f"""
+<div style="background: {card_bg}; border: {card_border}; border-radius: 12px; padding: 15px; margin-bottom: 15px; box-shadow: {card_shadow}; font-family: sans-serif; text-align: left;">
+
 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
 <span style="font-size: 1.1em; font-weight: 800; color: #111827;">{res['symbol']} <span style="font-size: 0.8em;">{stars}</span></span>
 <span style="font-size: 0.7em; font-weight: 700; color: {s_color}; background: {s_color}10; padding: 2px 6px; border-radius: 4px;">{sent_icon} {status_txt}</span>
 </div>
+
 <div style="margin: 8px 0; text-align: left;">
-<div style="font-size: 0.6em; color: #6b7280; font-weight: 700; text-transform: uppercase;">Yield p.a.</div>
-<div style="font-size: 1.7em; font-weight: 900; color: #111827; line-height: 1.1;">{res['y_pa']:.1f}%</div>
+<div style="font-size: 0.6em; color: #6b7280; font-weight: 700;">Yield p.a.</div>
+<div style="font-size: 1.7em; font-weight: 900; color: #111827;">{res['y_pa']:.1f}%</div>
 </div>
-<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; text-align: left;">
+
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
 <div style="border-left: 2px solid #8b5cf6; padding-left: 6px;">
 <div style="font-size: 0.55em; color: #6b7280;">Strike</div>
 <div style="font-size: 0.85em; font-weight: 700;">{res['strike']:.1f}$</div>
 </div>
+
 <div style="border-left: 2px solid #f59e0b; padding-left: 6px;">
 <div style="font-size: 0.55em; color: #6b7280;">Mid</div>
 <div style="font-size: 0.85em; font-weight: 700;">{res['bid']:.2f}$</div>
 </div>
+
 <div style="border-left: 2px solid #3b82f6; padding-left: 6px;">
 <div style="font-size: 0.55em; color: #6b7280;">Puffer</div>
 <div style="font-size: 0.85em; font-weight: 700;">{res['puffer']:.1f}%</div>
 </div>
+
 <div style="border-left: 2px solid {delta_col}; padding-left: 6px;">
 <div style="font-size: 0.55em; color: #6b7280;">Delta</div>
 <div style="font-size: 0.85em; font-weight: 700; color: {delta_col};">{delta_val:.2f}</div>
 </div>
 </div>
-<div style="background: {em_col}10; padding: 5px 8px; border-radius: 6px; margin-bottom: 10px; border: 1px dashed {em_col}; text-align: left;">
-<div style="display: flex; justify-content: space-between; align-items: center;">
+
+<div style="background: {em_col}10; padding: 5px 8px; border-radius: 6px; margin-top: 10px; border: 1px dashed {em_col};">
+<div style="display: flex; justify-content: space-between;">
 <span style="font-size: 0.6em; color: #4b5563; font-weight: bold;">Stat. Erwartung:</span>
 <span style="font-size: 0.7em; font-weight: 800; color: {em_col};">±{res['em_pct']:.1f}%</span>
 </div>
 <div style="font-size: 0.55em; color: #6b7280;">Sicherheit: <b>{em_safety:.1f}x EM</b></div>
 </div>
+
 <hr style="border: 0; border-top: 1px solid #f3f4f6; margin: 8px 0;">
-<div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.65em; color: #4b5563; margin-bottom: 8px;">
+
+<div style="display: flex; justify-content: space-between; font-size: 0.65em; color: #4b5563;">
 <span>⏳ <b>{res['tage']}d</b></span>
 <span style="background: #f3f4f6; padding: 1px 5px; border-radius: 3px; {rsi_style} font-weight: 700;">RSI: {rsi_val}</span>
 <span style="font-weight: 800; color: {'#ef4444' if is_earning_risk else '#6b7280'};">{'⚠️' if is_earning_risk else '🗓️'} {earn_str}</span>
 </div>
-<div style="background: {a_color}10; color: {a_color}; padding: 6px; border-radius: 6px; border-left: 3px solid {a_color}; font-size: 0.65em; font-weight: 800; text-align: left;">
+
+<div style="background: {a_color}10; color: {a_color}; padding: 6px; border-radius: 6px; border-left: 3px solid {a_color}; font-size: 0.65em; font-weight: 800;">
 🚀 {a_label}
 </div>
-</div>"""
+
+</div>
+"""
             st.markdown(html_code, unsafe_allow_html=True)
 
 # --- SEKTION 2: DEPOT-MANAGER ---
@@ -706,4 +762,5 @@ if submit_button and symbol_input:
                 """, unsafe_allow_html=True)
     except:
         st.error("Analyse fehlgeschlagen – bitte Ticker prüfen oder später erneut versuchen.")
+
 
