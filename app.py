@@ -7,118 +7,192 @@ from datetime import datetime, timedelta
 import concurrent.futures
 import time
 from curl_cffi import requests as crequests
+from io import StringIO
 
-# Globale Session für Stabilität
+# Globale curl_cffi Session für yfinance
 session = crequests.Session(impersonate="chrome")
 
 # --- SETUP ---
-st.set_page_config(page_title="Stillhalter Pro-Scanner", layout="wide")
+st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
 
-# --- 1. DATEN-STRUKTUR (DIE TOP 200) ---
-tickers_dict = {
-    "BIG_TECH": ["AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "NVDA", "NFLX", "ADBE", "AVGO", "ORCL", "CRM", "INTU", "CSCO", "ASML", "AMD", "QCOM", "TXN", "AMAT", "MU"],
-    "SOFTWARE_GROWTH": ["PLTR", "SNOW", "PANW", "SNPS", "CDNS", "WDAY", "ROP", "TEAM", "DDOG", "NET", "OKTA", "ZS", "SHOP", "SPOT", "UBER", "ABNB", "SQ", "PYPL", "COIN", "MSTR"],
-    "CHIPS_HARDWARE": ["LRCX", "ADI", "KLAC", "NXPI", "MRVL", "MCHP", "MPWR", "ON", "INTC", "ARM", "SMCI", "STX", "WDC", "HPQ", "DELL", "HPE", "VRT", "ANET", "TEL", "APH"],
-    "FINANZ_BANKEN": ["JPM", "BAC", "GS", "MS", "V", "MA", "AXP", "BLK", "PYPL", "COF", "WFC", "C", "USB", "PNC", "TFC", "BK", "STT", "SCHW", "IBKR", "BRK-B"],
-    "KONSUM_RETAIL": ["WMT", "COST", "TGT", "HD", "LOW", "NKE", "SBUX", "EL", "CL", "PG", "KO", "PEP", "MDLZ", "PM", "MO", "TJX", "DG", "DLTR", "ROST"],
-    "PHARMA_HEALTH": ["LLY", "JNJ", "PFE", "MRK", "ABBV", "AMGN", "UNH", "CVS", "ISRG", "GILD", "VRTX", "REGN", "BSX", "SYK", "ZTS", "BDX", "MCK", "ABC", "CI", "HUM"],
-    "ENERGIE_INDUSTRIE": ["XOM", "CVX", "SLB", "COP", "EOG", "PXD", "MPC", "PSX", "CAT", "DE", "BA", "LMT", "GD", "NOC", "RTX", "HON", "GE", "MMM", "UPS", "FDX"],
-    "COMMUNICATION_UTILITIES": ["VZ", "T", "TMUS", "CMCSA", "DIS", "WBD", "PARA", "CHTR", "NEE", "DUK", "SO", "D", "AEP", "EXC", "SRE", "PCG", "FE", "ETR", "PEG", "ED"],
-    "ETFS_INDICES": ["SPY", "QQQ", "IWM", "DIA", "XBI", "GDX", "GLD", "SLV", "TLT", "EEM", "ARKK", "SMH", "XLF", "XLV", "XLE", "XLI", "XLK", "XLU", "XLY", "XLP"],
-    "SPECIAL_WATCH": ["AFRM", "HOOD", "RIVN", "LCID", "DKNG", "PINS", "SNAP", "ZM", "DOCU", "ROKU", "AI", "SOFI", "UPST", "MARA", "RIOT", "U", "BABA", "PDD", "JD", "BIDU"]
-}
+# --- 1. MATHE & TECHNIK ---
+def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
+    if T <= 0 or sigma <= 0: return 0
+    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
-# --- 2. HILFSFUNKTIONEN ---
-def get_cnn_fear_greed():
+def calculate_rsi(data, window=14):
+    if len(data) < window + 1: return pd.Series([50] * len(data))
+    delta = data.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+def calculate_pivots(symbol):
     try:
-        url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0 Safari/537.36'}
-        r = session.get(url, headers=headers, timeout=5)
-        return int(r.json()['fear_and_greed']['score'])
-    except: return 50
+        tk = yf.Ticker(symbol, session=session)
+        hist_d = tk.history(period="5d")
+        if len(hist_d) < 2: return None
+        last_day = hist_d.iloc[-2]
+        h_d, l_d, c_d = last_day['High'], last_day['Low'], last_day['Close']
+        p_d = (h_d + l_d + c_d) / 3
+        s1_d = (2 * p_d) - h_d
+        s2_d = p_d - (h_d - l_d)
+        r2_d = p_d + (h_d - l_d)
+        hist_w = tk.history(period="3wk", interval="1wk")
+        if len(hist_w) < 2: 
+            return {"P": p_d, "S1": s1_d, "S2": s2_d, "R2": r2_d, "W_S2": s2_d, "W_R2": r2_d}
+        last_week = hist_w.iloc[-2]
+        h_w, l_w, c_w = last_week['High'], last_week['Low'], last_week['Close']
+        p_w = (h_w + l_w + c_w) / 3
+        s2_w = p_w - (h_w - l_w)
+        r2_w = p_w + (h_w - l_w)
+        return {"P": p_d, "S1": s1_d, "S2": s2_d, "R2": r2_d, "W_S2": s2_w, "W_R2": r2_w}
+    except: return None
+
+def get_openclaw_analysis(symbol):
+    try:
+        tk = yf.Ticker(symbol, session=session)
+        all_news = tk.news
+        if not all_news:
+            return "Neutral", "🤖 OpenClaw: Yahoo liefert aktuell keine Daten.", 0.5
+        huge_blob = str(all_news).lower()
+        display_text = ""
+        for n in all_news:
+            for val in n.values():
+                if isinstance(val, str) and val.count(" ") > 3:
+                    display_text = val
+                    break
+            if display_text: break
+        if not display_text:
+            display_text = all_news[0].get('title', 'Marktstimmung aktiv')
+        score = 0.5
+        bull_words = ['earnings', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'up', 'bull', 'upgrade']
+        bear_words = ['sell-off', 'disruption', 'miss', 'down', 'risk', 'decline', 'short', 'warning', 'sell']
+        for w in bull_words:
+            if w in huge_blob: score += 0.08
+        for w in bear_words:
+            if w in huge_blob: score -= 0.08
+        score = max(0.1, min(0.9, score))
+        status = "Bullish" if score > 0.55 else "Bearish" if score < 0.45 else "Neutral"
+        icon = "🟢" if status == "Bullish" else "🔴" if status == "Bearish" else "🟡"
+        return status, f"{icon} OpenClaw: {display_text[:90]}", score
+    except Exception: return "N/A", "🤖 OpenClaw: System-Reset...", 0.5
+
+@st.cache_data(ttl=86400)
+def get_combined_watchlist():
+    try:
+        url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
+        resp = crequests.get(url, impersonate="chrome")
+        df = pd.read_csv(StringIO(resp.text))
+        tickers = df['Symbol'].tolist()
+        nasdaq_extra = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR", "HOOD", "PLTR", "SQ"]
+        full_list = list(set(tickers + nasdaq_extra))
+        return [t.replace('.', '-') for t in full_list]
+    except: return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META"]
+
+def get_stock_data_full(symbol):
+    try:
+        tk = yf.Ticker(symbol, session=session)
+        hist = tk.history(period="150d")
+        if hist.empty: return None, [], "", 50, True, False, 0, None
+        price = hist['Close'].iloc[-1]
+        dates = list(tk.options)
+        rsi_series = calculate_rsi(hist['Close'])
+        rsi_val = rsi_series.iloc[-1]
+        sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1] if len(hist) >= 200 else hist['Close'].mean()
+        is_uptrend = price > sma_200
+        sma_20 = hist['Close'].rolling(window=20).mean()
+        std_20 = hist['Close'].rolling(window=20).std()
+        lower_band = (sma_20 - 2 * std_20).iloc[-1]
+        is_near_lower = price <= (lower_band * 1.02)
+        atr = (hist['High'] - hist['Low']).rolling(window=14).mean().iloc[-1]
+        pivots = calculate_pivots(symbol)
+        earn_str = ""
+        try:
+            cal = tk.calendar
+            if cal is not None and 'Earnings Date' in cal:
+                earn_str = cal['Earnings Date'][0].strftime('%d.%m.')
+        except: pass
+        return price, dates, earn_str, rsi_val, is_uptrend, is_near_lower, atr, pivots
+    except: return None, [], "", 50, True, False, 0, None
+
+def get_analyst_conviction(info):
+    try:
+        current = info.get('currentPrice', info.get('current_price', 1))
+        target = info.get('targetMedianPrice', 0)
+        upside = ((target / current) - 1) * 100 if target > 0 else 0
+        rev_growth = info.get('revenueGrowth', 0) * 100
+        if rev_growth > 40: return f"🚀 HYPER-GROWTH (+{rev_growth:.0f}% Wachst.)", "#9b59b6"
+        elif upside > 15 and rev_growth > 5: return f"✅ Stark (Ziel: +{upside:.0f}%, Wachst.: {rev_growth:.1f}%)", "#27ae60"
+        elif upside > 25: return f"💎 Quality-Dip (Ziel: +{upside:.0f}%)", "#2980b9"
+        elif upside < 0 or rev_growth < -2: return f"⚠️ Warnung (Ziel: {upside:.1f}%, Wachst.: {rev_growth:.1f}%)", "#e67e22"
+        return f"⚖️ Neutral (Ziel: {upside:.0f}%)", "#7f8c8d"
+    except: return "🔍 Check nötig", "#7f8c8d"
+
+# --- UI & SIDEBAR ---
+with st.sidebar:
+    st.header("🛡️ Strategie-Einstellungen")
+    otm_puffer_slider = st.slider("Gewünschter Puffer (%)", 3, 25, 15, key="puffer_sid")
+    min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 0, 100, 12, key="yield_sid")
+    min_stock_price, max_stock_price = st.slider("Aktienpreis-Spanne ($)", 0, 1000, (60, 500), key="price_sid")
+    st.markdown("---")
+    st.subheader("Qualitäts-Filter")
+    min_mkt_cap = st.slider("Mindest-Marktkapitalisierung (Mrd. $)", 1, 1000, 20, key="mkt_cap_sid")
+    only_uptrend = st.checkbox("Nur Aufwärtstrend (SMA 200)", value=False, key="trend_sid")
+    test_modus = st.checkbox("🛠️ Simulations-Modus (Test)", value=False, key="sim_checkbox")
 
 def get_market_data():
     try:
-        data = yf.download(["^IXIC", "^VIX"], period="6mo", interval="1d", progress=False)
-        ndq = data['Close']['^IXIC'].dropna()
-        cp_ndq = ndq.iloc[-1]
-        vix_val = data['Close']['^VIX'].iloc[-1]
-        
-        # RSI
-        delta = ndq.diff(); gain = (delta.where(delta > 0, 0)).rolling(14).mean(); loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rsi_ndq = 100 - (100 / (1 + (gain / loss).iloc[-1]))
-        dist_ndq = ((cp_ndq - ndq.rolling(20).mean().iloc[-1]) / ndq.rolling(20).mean().iloc[-1]) * 100
-        
-        return cp_ndq, rsi_ndq, dist_ndq, vix_val, get_cnn_fear_greed()
-    except: return 17000, 50, 0, 15, 50
+        ndq = yf.Ticker("^NDX", session=session); vix = yf.Ticker("^VIX", session=session); btc = yf.Ticker("BTC-USD", session=session)
+        h_ndq = ndq.history(period="1mo"); h_vix = vix.history(period="1d"); h_btc = btc.history(period="1d")
+        if h_ndq.empty: return 0, 50, 0, 20, 0
+        cp_ndq = h_ndq['Close'].iloc[-1]
+        sma20_ndq = h_ndq['Close'].rolling(window=20).mean().iloc[-1]
+        dist_ndq = ((cp_ndq - sma20_ndq) / sma20_ndq) * 100
+        delta = h_ndq['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        rsi_ndq = 100 - (100 / (1 + rs)).iloc[-1]
+        v_val = h_vix['Close'].iloc[-1] if not h_vix.empty else 20
+        b_val = h_btc['Close'].iloc[-1] if not h_btc.empty else 0
+        return cp_ndq, rsi_ndq, dist_ndq, v_val, b_val
+    except: return 0, 50, 0, 20, 0
 
-# --- SIDEBAR (DIE STEUERZENTRALE) ---
-with st.sidebar:
-    st.header("⚙️ Scanner Settings")
-    
-    # NEU: Test-Modus Toggle
-    test_modus = st.toggle("🛠️ Test-Modus (Schnellscan)", value=True, help="Scannt nur eine kleine Auswahl für schnelles Testing.")
-    
-    # Sektoren-Auswahl
-    selected_sectors = st.multiselect(
-        "Sektoren wählen", 
-        options=list(tickers_dict.keys()), 
-        default=["BIG_TECH", "ETFS_INDICES"]
-    )
-    
-    st.divider()
-    
-    # Stillhalter Parameter
-    st.subheader("Stillhalter Parameter")
-    target_delta = st.slider("Ziel Delta (Put)", 0.05, 0.30, 0.15, 0.01)
-    min_yield = st.slider("Min. Rendite p.a. %", 5, 50, 15)
-    dte_range = st.slider("Laufzeit (DTE)", 7, 60, (14, 45))
-    
-    st.divider()
-    scan_button = st.button("🚀 SCAN STARTEN", use_container_width=True)
+def get_crypto_fg():
+    try:
+        r = crequests.get("https://api.alternative.me/fng/", impersonate="chrome")
+        return int(r.json()['data'][0]['value'])
+    except: return 50
 
-# --- TICKER LOGIK ANPASSEN ---
-final_tickers = []
-for sector in selected_sectors:
-    final_tickers.extend(tickers_dict[sector])
+# --- MAIN DASHBOARD ---
+st.markdown("## 🌍 Globales Markt-Monitoring")
+cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
+crypto_fg = get_crypto_fg()
+stock_fg = 50 
 
-# Wenn Test-Modus aktiv, Liste kürzen, damit es keine Timeouts gibt
-if test_modus:
-    final_tickers = final_tickers[:15] # Nur die ersten 15 Aktien zum Testen
+if dist_ndq < -2 or vix_val > 25:
+    m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Nasdaq-Schwäche / Hohe Volatilität"
+    m_advice = "Defensiv agieren. Fokus auf Call-Verkäufe zur Depot-Absicherung."
+elif rsi_ndq > 72 or stock_fg > 80:
+    m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT: Korrekturgefahr (Gier/RSI hoch)"
+    m_advice = "Keine neuen Puts mit engem Puffer. Gewinne sichern."
+else:
+    m_color, m_text = "#27ae60", "✅ TRENDSTARK: Marktumfeld ist konstruktiv"
+    m_advice = "Puts auf starke Aktien bei Rücksetzern möglich."
 
-# --- MAIN UI ---
-cp_ndq, rsi_ndq, dist_ndq, vix_val, stock_fg = get_market_data()
+st.markdown(f'<div style="background-color: {m_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;"><h3 style="margin:0; font-size: 1.4em;">{m_text}</h3><p style="margin:0; opacity: 0.9;">{m_advice}</p></div>', unsafe_allow_html=True)
 
-st.title("🦅 Stillhalter Pro-Scanner")
-
-# Der Trendbalken
-m_color = "#e74c3c" if dist_ndq < -2 or vix_val > 25 or stock_fg < 30 else "#f39c12" if rsi_ndq > 72 or stock_fg > 78 else "#27ae60"
-m_text = "🚨 MARKT-ALARM" if m_color == "#e74c3c" else "⚠️ ÜBERHITZT" if m_color == "#f39c12" else "✅ TRENDSTARK"
-
-st.markdown(f"""
-    <div style="background: linear-gradient(90deg, {m_color}dd, {m_color}); 
-                color: white; padding: 20px; border-radius: 15px; text-align: center; margin-bottom: 25px;">
-        <h2 style="margin:0;">{m_text}</h2>
-        <p style="margin:5px 0 0 0; opacity: 0.9;">Basis für Stillhalter-Entscheidungen</p>
-    </div>
-    """, unsafe_allow_html=True)
-
-# KPI Kacheln
-c1, c2, c3, c4 = st.columns(4)
-c1.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
-c2.metric("VIX (Angst)", f"{vix_val:.2f}", delta="Erhöht" if vix_val > 20 else "Niedrig", delta_color="inverse")
-c3.metric("Fear & Greed", f"{stock_fg}", "CNN Business")
-c4.metric("Nasdaq RSI", f"{int(rsi_ndq)}", "Überkauft" if rsi_ndq > 70 else "Neutral")
-
-st.divider()
-
-# Vorbereitung der Ticker-Liste basierend auf Sidebar-Wahl
-final_tickers = []
-for sector in selected_sectors:
-    final_tickers.extend(tickers_dict[sector])
-
-
-# --- HIER STARTET DEIN PROFI-SCANNER ---
+r1c1, r1c2, r1c3 = st.columns(3)
+r2c1, r2c2, r2c3 = st.columns(3)
+with r1c1: st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
+with r1c2: st.metric("Bitcoin", f"{btc_val:,.0f} $")
+with r1c3: st.metric("VIX (Angst)", f"{vix_val:.2f}", delta="HOCH" if vix_val > 22 else "Normal", delta_color="inverse")
+with r2c1: st.metric("Fear & Greed (Stock)", f"{stock_fg}")
+with r2c2: st.metric("Fear & Greed (Crypto)", f"{crypto_fg}")
+with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_ndq > 70 else None, delta_color="inverse")
 
 # --- SEKTION 1: PROFI-SCANNER (TURBO-HYBRID-VERSION) ---
 if 'profi_scan_results' not in st.session_state:
@@ -585,7 +659,3 @@ if submit_button and symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
-
-
-
-
