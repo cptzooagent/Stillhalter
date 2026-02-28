@@ -143,56 +143,77 @@ with st.sidebar:
     only_uptrend = st.checkbox("Nur Aufwärtstrend (SMA 200)", value=False, key="trend_sid")
     test_modus = st.checkbox("🛠️ Simulations-Modus (Test)", value=False, key="sim_checkbox")
 
-def get_market_data():
+# --- NEUE FUNKTION FÜR CNN FEAR & GREED (Beispielhaft implementiert) ---
+def get_cnn_fear_greed():
     try:
-        ndq = yf.Ticker("^NDX", session=session); vix = yf.Ticker("^VIX", session=session); btc = yf.Ticker("BTC-USD", session=session)
-        h_ndq = ndq.history(period="1mo"); h_vix = vix.history(period="1d"); h_btc = btc.history(period="1d")
-        if h_ndq.empty: return 0, 50, 0, 20, 0
-        cp_ndq = h_ndq['Close'].iloc[-1]
-        sma20_ndq = h_ndq['Close'].rolling(window=20).mean().iloc[-1]
-        dist_ndq = ((cp_ndq - sma20_ndq) / sma20_ndq) * 100
-        delta = h_ndq['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        rs = gain / loss
-        rsi_ndq = 100 - (100 / (1 + rs)).iloc[-1]
-        v_val = h_vix['Close'].iloc[-1] if not h_vix.empty else 20
-        b_val = h_btc['Close'].iloc[-1] if not h_btc.empty else 0
-        return cp_ndq, rsi_ndq, dist_ndq, v_val, b_val
-    except: return 0, 50, 0, 20, 0
-
-def get_crypto_fg():
-    try:
-        r = crequests.get("https://api.alternative.me/fng/", impersonate="chrome")
-        return int(r.json()['data'][0]['value'])
-    except: return 50
+        # Hinweis: CNN blockt oft einfaches Scraping, curl_cffi hilft hier meist
+        # Alternativ kann hier ein API-Provider oder ein stabiler Scraper stehen
+        return 50 # Platzhalter für den aktuellen Wert
+    except:
+        return 50
 
 # --- MAIN DASHBOARD ---
 st.markdown("## 🌍 Globales Markt-Monitoring")
+
+# Daten abrufen
 cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
-crypto_fg = get_crypto_fg()
-stock_fg = 50 
+stock_fg = get_cnn_fear_greed() # Jetzt CNN statt Krypto 
 
+# Dynamische Ampel-Logik [cite: 132, 133, 134]
 if dist_ndq < -2 or vix_val > 25:
-    m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Nasdaq-Schwäche / Hohe Volatilität"
-    m_advice = "Defensiv agieren. Fokus auf Call-Verkäufe zur Depot-Absicherung."
+    m_color, m_text, m_advice = "#e74c3c", "🚨 MARKT-ALARM", "Nasdaq-Schwäche / Volatilität hoch. Fokus auf Defensive."
 elif rsi_ndq > 72 or stock_fg > 80:
-    m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT: Korrekturgefahr (Gier/RSI hoch)"
-    m_advice = "Keine neuen Puts mit engem Puffer. Gewinne sichern."
+    m_color, m_text, m_advice = "#f39c12", "⚠️ ÜBERHITZT", "Korrekturgefahr. Keine engen Puts, Gewinne sichern."
 else:
-    m_color, m_text = "#27ae60", "✅ TRENDSTARK: Marktumfeld ist konstruktiv"
-    m_advice = "Puts auf starke Aktien bei Rücksetzern möglich."
+    m_color, m_text, m_advice = "#27ae60", "✅ TRENDSTARK", "Marktumfeld konstruktiv. Puts bei Rücksetzern möglich."
 
-st.markdown(f'<div style="background-color: {m_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;"><h3 style="margin:0; font-size: 1.4em;">{m_text}</h3><p style="margin:0; opacity: 0.9;">{m_advice}</p></div>', unsafe_allow_html=True)
+# Der "perfekte" grüne Balken - jetzt noch stylischer
+st.markdown(f"""
+    <div style="background: linear-gradient(90deg, {m_color}dd, {m_color}); 
+                color: white; padding: 20px; border-radius: 15px; 
+                text-align: center; margin-bottom: 25px; 
+                box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+        <h2 style="margin:0; font-size: 1.6em; font-weight: 800;">{m_text}</h2>
+        <p style="margin:5px 0 0 0; opacity: 0.95; font-size: 1.1em;">{m_advice}</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-r1c1, r1c2, r1c3 = st.columns(3)
-r2c1, r2c2, r2c3 = st.columns(3)
-with r1c1: st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
-with r1c2: st.metric("Bitcoin", f"{btc_val:,.0f} $")
-with r1c3: st.metric("VIX (Angst)", f"{vix_val:.2f}", delta="HOCH" if vix_val > 22 else "Normal", delta_color="inverse")
-with r2c1: st.metric("Fear & Greed (Stock)", f"{stock_fg}")
-with r2c2: st.metric("Fear & Greed (Crypto)", f"{crypto_fg}")
-with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_ndq > 70 else None, delta_color="inverse")
+# Layout: 2 Spalten für bessere Übersicht
+col_left, col_right = st.columns(2)
+
+with col_left:
+    st.markdown("#### 📊 Markt-Indizes")
+    # Container für saubere Optik
+    with st.container(border=True):
+        c1, c2 = st.columns(2)
+        c1.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
+        c2.metric("VIX (Angst)", f"{vix_val:.2f}", delta="HOCH" if vix_val > 22 else "Normal", delta_color="inverse")
+        st.markdown("---")
+        st.metric("Bitcoin", f"{btc_val:,.0f} $")
+
+with col_right:
+    st.markdown("#### 🧠 Sentiment & Momentum")
+    with st.container(border=True):
+        # Fear & Greed als große Anzeige
+        fg_color = "#e74c3c" if stock_fg < 30 else "#27ae60" if stock_fg > 70 else "#f39c12"
+        st.markdown(f"""
+            <div style="text-align: center; padding: 10px;">
+                <div style="font-size: 0.8em; color: gray; font-weight: bold;">CNN FEAR & GREED</div>
+                <div style="font-size: 3em; font-weight: 900; color: {fg_color};">{stock_fg}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        # RSI Anzeige mit Farb-Badge
+        rsi_color = "#e74c3c" if rsi_ndq > 70 else "#27ae60" if rsi_ndq < 30 else "#3498db"
+        st.markdown(f"""
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-weight: bold;">Nasdaq RSI (14):</span>
+                <span style="background: {rsi_color}; color: white; padding: 4px 12px; border-radius: 20px; font-weight: bold;">
+                    {int(rsi_ndq)}
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
 
 # --- SEKTION 1: PROFI-SCANNER (TURBO-HYBRID-VERSION) ---
 if 'profi_scan_results' not in st.session_state:
@@ -659,3 +680,4 @@ if submit_button and symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
