@@ -7,213 +7,108 @@ from datetime import datetime, timedelta
 import concurrent.futures
 import time
 from curl_cffi import requests as crequests
-from io import StringIO
 
-# Globale curl_cffi Session für yfinance
+# Globale curl_cffi Session für stabilen Datenabruf
 session = crequests.Session(impersonate="chrome")
 
 # --- SETUP ---
-st.set_page_config(page_title="CapTrader AI Market Scanner", layout="wide")
+st.set_page_config(page_title="Stillhalter Market Dashboard", layout="wide")
 
-# --- 1. MATHE & TECHNIK ---
+# --- 1. MATHE & HILFSFUNKTIONEN ---
 def calculate_bsm_delta(S, K, T, sigma, r=0.04, option_type='put'):
     if T <= 0 or sigma <= 0: return 0
     d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
     return norm.cdf(d1) if option_type == 'call' else norm.cdf(d1) - 1
 
-def calculate_rsi(data, window=14):
-    if len(data) < window + 1: return pd.Series([50] * len(data))
-    delta = data.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
-
-def calculate_pivots(symbol):
-    try:
-        tk = yf.Ticker(symbol, session=session)
-        hist_d = tk.history(period="5d")
-        if len(hist_d) < 2: return None
-        last_day = hist_d.iloc[-2]
-        h_d, l_d, c_d = last_day['High'], last_day['Low'], last_day['Close']
-        p_d = (h_d + l_d + c_d) / 3
-        s1_d = (2 * p_d) - h_d
-        s2_d = p_d - (h_d - l_d)
-        r2_d = p_d + (h_d - l_d)
-        hist_w = tk.history(period="3wk", interval="1wk")
-        if len(hist_w) < 2: 
-            return {"P": p_d, "S1": s1_d, "S2": s2_d, "R2": r2_d, "W_S2": s2_d, "W_R2": r2_d}
-        last_week = hist_w.iloc[-2]
-        h_w, l_w, c_w = last_week['High'], last_week['Low'], last_week['Close']
-        p_w = (h_w + l_w + c_w) / 3
-        s2_w = p_w - (h_w - l_w)
-        r2_w = p_w + (h_w - l_w)
-        return {"P": p_d, "S1": s1_d, "S2": s2_d, "R2": r2_d, "W_S2": s2_w, "W_R2": r2_w}
-    except: return None
-
-def get_openclaw_analysis(symbol):
-    try:
-        tk = yf.Ticker(symbol, session=session)
-        all_news = tk.news
-        if not all_news:
-            return "Neutral", "🤖 OpenClaw: Yahoo liefert aktuell keine Daten.", 0.5
-        huge_blob = str(all_news).lower()
-        display_text = ""
-        for n in all_news:
-            for val in n.values():
-                if isinstance(val, str) and val.count(" ") > 3:
-                    display_text = val
-                    break
-            if display_text: break
-        if not display_text:
-            display_text = all_news[0].get('title', 'Marktstimmung aktiv')
-        score = 0.5
-        bull_words = ['earnings', 'growth', 'beat', 'buy', 'profit', 'ai', 'demand', 'up', 'bull', 'upgrade']
-        bear_words = ['sell-off', 'disruption', 'miss', 'down', 'risk', 'decline', 'short', 'warning', 'sell']
-        for w in bull_words:
-            if w in huge_blob: score += 0.08
-        for w in bear_words:
-            if w in huge_blob: score -= 0.08
-        score = max(0.1, min(0.9, score))
-        status = "Bullish" if score > 0.55 else "Bearish" if score < 0.45 else "Neutral"
-        icon = "🟢" if status == "Bullish" else "🔴" if status == "Bearish" else "🟡"
-        return status, f"{icon} OpenClaw: {display_text[:90]}", score
-    except Exception: return "N/A", "🤖 OpenClaw: System-Reset...", 0.5
-
-@st.cache_data(ttl=86400)
-def get_combined_watchlist():
-    try:
-        url = "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv"
-        resp = crequests.get(url, impersonate="chrome")
-        df = pd.read_csv(StringIO(resp.text))
-        tickers = df['Symbol'].tolist()
-        nasdaq_extra = ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META", "COIN", "MSTR", "HOOD", "PLTR", "SQ"]
-        full_list = list(set(tickers + nasdaq_extra))
-        return [t.replace('.', '-') for t in full_list]
-    except: return ["AAPL", "MSFT", "NVDA", "AMD", "TSLA", "GOOGL", "AMZN", "META"]
-
-def get_stock_data_full(symbol):
-    try:
-        tk = yf.Ticker(symbol, session=session)
-        hist = tk.history(period="150d")
-        if hist.empty: return None, [], "", 50, True, False, 0, None
-        price = hist['Close'].iloc[-1]
-        dates = list(tk.options)
-        rsi_series = calculate_rsi(hist['Close'])
-        rsi_val = rsi_series.iloc[-1]
-        sma_200 = hist['Close'].rolling(window=200).mean().iloc[-1] if len(hist) >= 200 else hist['Close'].mean()
-        is_uptrend = price > sma_200
-        sma_20 = hist['Close'].rolling(window=20).mean()
-        std_20 = hist['Close'].rolling(window=20).std()
-        lower_band = (sma_20 - 2 * std_20).iloc[-1]
-        is_near_lower = price <= (lower_band * 1.02)
-        atr = (hist['High'] - hist['Low']).rolling(window=14).mean().iloc[-1]
-        pivots = calculate_pivots(symbol)
-        earn_str = ""
-        try:
-            cal = tk.calendar
-            if cal is not None and 'Earnings Date' in cal:
-                earn_str = cal['Earnings Date'][0].strftime('%d.%m.')
-        except: pass
-        return price, dates, earn_str, rsi_val, is_uptrend, is_near_lower, atr, pivots
-    except: return None, [], "", 50, True, False, 0, None
-
-def get_analyst_conviction(info):
-    try:
-        current = info.get('currentPrice', info.get('current_price', 1))
-        target = info.get('targetMedianPrice', 0)
-        upside = ((target / current) - 1) * 100 if target > 0 else 0
-        rev_growth = info.get('revenueGrowth', 0) * 100
-        if rev_growth > 40: return f"🚀 HYPER-GROWTH (+{rev_growth:.0f}% Wachst.)", "#9b59b6"
-        elif upside > 15 and rev_growth > 5: return f"✅ Stark (Ziel: +{upside:.0f}%, Wachst.: {rev_growth:.1f}%)", "#27ae60"
-        elif upside > 25: return f"💎 Quality-Dip (Ziel: +{upside:.0f}%)", "#2980b9"
-        elif upside < 0 or rev_growth < -2: return f"⚠️ Warnung (Ziel: {upside:.1f}%, Wachst.: {rev_growth:.1f}%)", "#e67e22"
-        return f"⚖️ Neutral (Ziel: {upside:.0f}%)", "#7f8c8d"
-    except: return "🔍 Check nötig", "#7f8c8d"
-
-# --- UI & SIDEBAR ---
-with st.sidebar:
-    st.header("🛡️ Strategie-Einstellungen")
-    otm_puffer_slider = st.slider("Gewünschter Puffer (%)", 3, 25, 15, key="puffer_sid")
-    min_yield_pa = st.number_input("Mindestrendite p.a. (%)", 0, 100, 12, key="yield_sid")
-    min_stock_price, max_stock_price = st.slider("Aktienpreis-Spanne ($)", 0, 1000, (60, 500), key="price_sid")
-    st.markdown("---")
-    st.subheader("Qualitäts-Filter")
-    min_mkt_cap = st.slider("Mindest-Marktkapitalisierung (Mrd. $)", 1, 1000, 20, key="mkt_cap_sid")
-    only_uptrend = st.checkbox("Nur Aufwärtstrend (SMA 200)", value=False, key="trend_sid")
-    test_modus = st.checkbox("🛠️ Simulations-Modus (Test)", value=False, key="sim_checkbox")
-
-# --- NEUE FUNKTION FÜR CNN FEAR & GREED (Beispielhaft implementiert) ---
 def get_cnn_fear_greed():
+    """Holt den aktuellen CNN Fear & Greed Index Stand"""
     try:
-        # Hinweis: CNN blockt oft einfaches Scraping, curl_cffi hilft hier meist
-        # Alternativ kann hier ein API-Provider oder ein stabiler Scraper stehen
-        return 50 # Platzhalter für den aktuellen Wert
+        url = "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/121.0.0.0 Safari/537.36'}
+        r = session.get(url, headers=headers, timeout=5)
+        return int(r.json()['fear_and_greed']['score'])
     except:
-        return 50
+        return 50 # Neutraler Fallback bei Fehlern
 
-# --- MAIN DASHBOARD ---
-st.markdown("## 🌍 Globales Markt-Monitoring")
+def get_market_data():
+    """Holt Marktindizes und berechnet Metriken (Gibt exakt 5 Werte zurück)"""
+    try:
+        # Daten für Nasdaq und VIX
+        tickers = ["^IXIC", "^VIX"]
+        data = yf.download(tickers, period="6mo", interval="1d", progress=False)
+        
+        # Nasdaq Close & RSI
+        ndq_series = data['Close']['^IXIC'].dropna()
+        cp_ndq = ndq_series.iloc[-1]
+        
+        delta = ndq_series.diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        rsi_ndq = 100 - (100 / (1 + rs.iloc[-1]))
+        
+        # Abstand SMA20
+        sma20 = ndq_series.rolling(window=20).mean().iloc[-1]
+        dist_ndq = ((cp_ndq - sma20) / sma20) * 100
+        
+        # VIX
+        vix_val = data['Close']['^VIX'].iloc[-1]
+        
+        # Sentiment
+        stock_fg = get_cnn_fear_greed()
 
-# Daten abrufen
-cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
-stock_fg = get_cnn_fear_greed() # Jetzt CNN statt Krypto 
+        return cp_ndq, rsi_ndq, dist_ndq, vix_val, stock_fg
+    except Exception as e:
+        # Fallback-Werte, damit der Unpack-Error (expected 5, got X) verschwindet
+        return 17000, 50, 0, 15, 50
 
-# Dynamische Ampel-Logik [cite: 132, 133, 134]
-if dist_ndq < -2 or vix_val > 25:
-    m_color, m_text, m_advice = "#e74c3c", "🚨 MARKT-ALARM", "Nasdaq-Schwäche / Volatilität hoch. Fokus auf Defensive."
-elif rsi_ndq > 72 or stock_fg > 80:
-    m_color, m_text, m_advice = "#f39c12", "⚠️ ÜBERHITZT", "Korrekturgefahr. Keine engen Puts, Gewinne sichern."
+# --- DATENABRUF ---
+cp_ndq, rsi_ndq, dist_ndq, vix_val, stock_fg = get_market_data()
+
+# --- GRAFISCHES DASHBOARD ---
+st.title("🦅 Stillhalter Pro-Scanner")
+
+# Logik für den Trendbalken
+if dist_ndq < -2 or vix_val > 25 or stock_fg < 30:
+    m_color, m_text, m_advice = "#e74c3c", "🚨 MARKT-ALARM", "Erhöhtes Risiko. Fokus auf Cash-Quote oder sehr tiefe Strikes."
+elif rsi_ndq > 72 or stock_fg > 78:
+    m_color, m_text, m_advice = "#f39c12", "⚠️ ÜBERHITZT", "Gier dominiert. Vorsicht bei neuen Puts, Gewinne sichern."
 else:
-    m_color, m_text, m_advice = "#27ae60", "✅ TRENDSTARK", "Marktumfeld konstruktiv. Puts bei Rücksetzern möglich."
+    m_color, m_text, m_advice = "#27ae60", "✅ TRENDSTARK", "Marktumfeld konstruktiv. Stillhalter-Strategien ideal."
 
-# Der "perfekte" grüne Balken - jetzt noch stylischer
+# Der optimierte grüne/rote Trendbalken
 st.markdown(f"""
     <div style="background: linear-gradient(90deg, {m_color}dd, {m_color}); 
-                color: white; padding: 20px; border-radius: 15px; 
+                color: white; padding: 22px; border-radius: 15px; 
                 text-align: center; margin-bottom: 25px; 
-                box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
-        <h2 style="margin:0; font-size: 1.6em; font-weight: 800;">{m_text}</h2>
-        <p style="margin:5px 0 0 0; opacity: 0.95; font-size: 1.1em;">{m_advice}</p>
+                box-shadow: 0 10px 20px rgba(0,0,0,0.1); border: 1px solid rgba(255,255,255,0.1);">
+        <h2 style="margin:0; font-size: 1.8em; font-weight: 800; letter-spacing: 1px;">{m_text}</h2>
+        <p style="margin:8px 0 0 0; opacity: 0.9; font-size: 1.1em;">{m_advice}</p>
     </div>
     """, unsafe_allow_html=True)
 
-# Layout: 2 Spalten für bessere Übersicht
-col_left, col_right = st.columns(2)
+# KPI Sektion in 4 Spalten
+c1, c2, c3, c4 = st.columns(4)
 
-with col_left:
-    st.markdown("#### 📊 Markt-Indizes")
-    # Container für saubere Optik
-    with st.container(border=True):
-        c1, c2 = st.columns(2)
-        c1.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
-        c2.metric("VIX (Angst)", f"{vix_val:.2f}", delta="HOCH" if vix_val > 22 else "Normal", delta_color="inverse")
-        st.markdown("---")
-        st.metric("Bitcoin", f"{btc_val:,.0f} $")
+with c1:
+    st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
 
-with col_right:
-    st.markdown("#### 🧠 Sentiment & Momentum")
-    with st.container(border=True):
-        # Fear & Greed als große Anzeige
-        fg_color = "#e74c3c" if stock_fg < 30 else "#27ae60" if stock_fg > 70 else "#f39c12"
-        st.markdown(f"""
-            <div style="text-align: center; padding: 10px;">
-                <div style="font-size: 0.8em; color: gray; font-weight: bold;">CNN FEAR & GREED</div>
-                <div style="font-size: 3em; font-weight: 900; color: {fg_color};">{stock_fg}</div>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        st.markdown("---")
-        # RSI Anzeige mit Farb-Badge
-        rsi_color = "#e74c3c" if rsi_ndq > 70 else "#27ae60" if rsi_ndq < 30 else "#3498db"
-        st.markdown(f"""
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-weight: bold;">Nasdaq RSI (14):</span>
-                <span style="background: {rsi_color}; color: white; padding: 4px 12px; border-radius: 20px; font-weight: bold;">
-                    {int(rsi_ndq)}
-                </span>
-            </div>
-            """, unsafe_allow_html=True)
+with c2:
+    v_status = "Erhöht" if vix_val > 20 else "Niedrig"
+    st.metric("VIX (Angst)", f"{vix_val:.2f}", delta=v_status, delta_color="inverse")
+
+with c3:
+    # Sentiment Label
+    fg_label = "Panik" if stock_fg < 25 else "Angst" if stock_fg < 45 else "Neutral" if stock_fg < 55 else "Gier" if stock_fg < 75 else "Extreme Gier"
+    st.metric("CNN Fear & Greed", f"{stock_fg}", fg_label)
+
+with c4:
+    rsi_status = "Überkauft" if rsi_ndq > 70 else "Günstig" if rsi_ndq < 35 else "Neutral"
+    st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", rsi_status)
+
+st.divider()
+
+# --- HIER STARTET DEIN PROFI-SCANNER ---
 
 # --- SEKTION 1: PROFI-SCANNER (TURBO-HYBRID-VERSION) ---
 if 'profi_scan_results' not in st.session_state:
@@ -680,4 +575,5 @@ if submit_button and symbol_input:
 # --- FOOTER ---
 st.markdown("---")
 st.caption(f"Letztes Update: {datetime.now().strftime('%H:%M:%S')} | Modus: {'🛠️ Simulation' if test_modus else '🚀 Live-Scan'}")
+
 
