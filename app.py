@@ -222,52 +222,69 @@ def get_cnn_fear_greed():
     except: 
         return 43 # Aktueller Wert als Backup
 
-# --- MAIN DASHBOARD ---
+# --- MAIN DASHBOARD (RE-DESIGNED) ---
 st.markdown("## 🌍 Globales Markt-Monitoring")
+
+# Datenabruf (Nutzt deine bestehenden Funktionen)
 cp_ndq, rsi_ndq, dist_ndq, vix_val, btc_val = get_market_data()
 crypto_fg = get_crypto_fg()
-
-# NEU: Holt den echten Wert von CNN statt der statischen 50
 stock_fg = get_cnn_fear_greed() 
 
-# Status-Logik für die optische Warnung (wird oben im Banner und in der Kachel genutzt)
-if stock_fg <= 25: 
-    fg_label, fg_status = "😱 Extreme Angst", "Angst"
-elif stock_fg <= 45: 
-    fg_label, fg_status = "😨 Angst", "Angst"
+# 1. Status-Logik für Farben & Banner
+if stock_fg <= 45: 
+    fg_col, fg_label = "#e74c3c", "😨 Angst / Panik"
 elif stock_fg <= 55: 
-    fg_label, fg_status = "😐 Neutral", "Neutral"
-elif stock_fg <= 75: 
-    fg_label, fg_status = "🤑 Gier", "Gier"
+    fg_col, fg_label = "#f1c40f", "😐 Neutral"
 else: 
-    fg_label, fg_status = "🚀 Extreme Gier", "Gier"
+    fg_col, fg_label = "#27ae60", "🤑 Gier / Euphorie"
 
-# Banner-Logik (Markt-Alarm)
+# Markt-Alarm Logik (deine Logik, optisch veredelt)
 if dist_ndq < -2 or vix_val > 25:
-    m_color, m_text = "#e74c3c", "🚨 MARKT-ALARM: Nasdaq-Schwäche / Hohe Volatilität"
-    m_advice = "Defensiv agieren. Fokus auf Call-Verkäufe zur Depot-Absicherung."
+    m_color, m_text, m_advice = "#e74c3c", "🚨 MARKT-ALARM", "Nasdaq-Schwäche / Hohe Vola. Defensiv agieren!"
 elif rsi_ndq > 72 or stock_fg > 80:
-    m_color, m_text = "#f39c12", "⚠️ ÜBERHITZT: Korrekturgefahr (Gier/RSI hoch)"
-    m_advice = "Keine neuen Puts mit engem Puffer. Gewinne sichern."
+    m_color, m_text, m_advice = "#f39c12", "⚠️ ÜBERHITZT", "Korrekturgefahr! Keine neuen Puts mit engem Puffer."
 else:
-    m_color, m_text = "#27ae60", "✅ TRENDSTARK: Marktumfeld ist konstruktiv"
-    m_advice = "Puts auf starke Aktien bei Rücksetzern möglich."
+    m_color, m_text, m_advice = "#27ae60", "✅ TRENDSTARK", "Marktumfeld konstruktiv. Puts bei Rücksetzern möglich."
 
-st.markdown(f'<div style="background-color: {m_color}; color: white; padding: 15px; border-radius: 10px; text-align: center; margin-bottom: 20px;"><h3 style="margin:0; font-size: 1.4em;">{m_text}</h3><p style="margin:0; opacity: 0.9;">{m_advice}</p></div>', unsafe_allow_html=True)
+# Der neue interaktive Banner
+st.markdown(f"""
+    <div style="background: linear-gradient(90deg, {m_color} 0%, #2c3e50 100%); color: white; padding: 20px; border-radius: 15px; text-align: center; margin-bottom: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);">
+        <h2 style="margin:0; font-size: 1.6em; letter-spacing: 1px;">{m_text}</h2>
+        <p style="margin:5px 0 0 0; font-size: 1.1em; opacity: 0.9;">{m_advice}</p>
+    </div>
+""", unsafe_allow_html=True)
 
-# Layout der Kacheln
-r1c1, r1c2, r1c3 = st.columns(3)
-r2c1, r2c2, r2c3 = st.columns(3)
+# 2. Modernes Kachel-Layout (Grid)
+c1, c2, c3 = st.columns(3)
 
-with r1c1: st.metric("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:.1f}% vs SMA20")
-with r1c2: st.metric("Bitcoin", f"{btc_val:,.0f} $")
-with r1c3: st.metric("VIX (Angst)", f"{vix_val:.2f}", delta="HOCH" if vix_val > 22 else "Normal", delta_color="inverse")
+# Hilfsfunktion für Kachel-Styling
+def get_card_html(title, value, subtext, color="#3498db"):
+    return f"""
+    <div style="background-color: #1e2630; border-left: 5px solid {color}; padding: 15px; border-radius: 10px; box-shadow: 2px 2px 10px rgba(0,0,0,0.3); margin-bottom: 15px;">
+        <p style="margin:0; font-size: 0.85em; color: #bdc3c7; text-transform: uppercase; letter-spacing: 1px;">{title}</p>
+        <h2 style="margin:5px 0; color: white; font-size: 1.8em;">{value}</h2>
+        <p style="margin:0; font-size: 0.9em; color: {color}; font-weight: bold;">{subtext}</p>
+    </div>
+    """
 
-# CNN Fear & Greed mit dynamischem Label
-with r2c1: st.metric("CNN Fear & Greed", f"{stock_fg}", delta=fg_label, delta_color="normal")
+# Reihe 1
+with c1:
+    st.markdown(get_card_html("Nasdaq 100", f"{cp_ndq:,.0f}", f"{dist_ndq:+.1f}% vs SMA20", "#3498db"), unsafe_allow_html=True)
+with c2:
+    st.markdown(get_card_html("CNN Fear & Greed", stock_fg, fg_label, fg_col), unsafe_allow_html=True)
+with c3:
+    v_col = "#e74c3c" if vix_val > 22 else "#27ae60"
+    st.markdown(get_card_html("VIX (Angst)", f"{vix_val:.2f}", "HOCH" if vix_val > 22 else "NORMAL", v_col), unsafe_allow_html=True)
 
-with r2c2: st.metric("Fear & Greed (Crypto)", f"{crypto_fg}")
-with r2c3: st.metric("Nasdaq RSI (14)", f"{int(rsi_ndq)}", delta="HEISS" if rsi_ndq > 70 else None, delta_color="inverse")
+# Reihe 2
+c4, c5, c6 = st.columns(3)
+with c4:
+    st.markdown(get_card_html("Bitcoin", f"{btc_val:,.0f} $", "Digital Gold", "#f39c12"), unsafe_allow_html=True)
+with c5:
+    st.markdown(get_card_html("Crypto F&G", crypto_fg, "Sentiment", "#9b59b6"), unsafe_allow_html=True)
+with c6:
+    r_col = "#e74c3c" if rsi_ndq > 70 else "#27ae60"
+    st.markdown(get_card_html("Nasdaq RSI", int(rsi_ndq), "HEISS" if rsi_ndq > 70 else "NEUTRAL", r_col), unsafe_allow_html=True)
 
 
 # --- SEKTION 1: PROFI-SCANNER (TURBO-HYBRID-VERSION) ---
